@@ -13,7 +13,7 @@
 ;;
 ;; or directly:
 ;;
-;;   emacs -Q --batch -L . -l ert -l subsonic.el -l subsonic-tests.el \
+;;   emacs -Q --batch -L . -L vendor -l ert -l subsonic.el -l subsonic-tests.el \
 ;;     -f ert-run-tests-batch-and-exit
 ;;
 ;; Skipped automatically if mpv is not installed.
@@ -22,6 +22,7 @@
 (require 'ert)
 (require 'cl-lib)
 (require 'subsonic)
+(require 'aio)
 
 (defvar subsonic-tests--track-1 "av://lavfi:sine=frequency=440:duration=2")
 (defvar subsonic-tests--track-2 "av://lavfi:sine=frequency=660:duration=2")
@@ -85,7 +86,7 @@ Returns the final value of PREDICATE."
   "`subsonic-queue-parse' marks whichever entry mpv reports as current."
   (subsonic-tests--with-mpv
    (cl-letf (((symbol-function 'subsonic-get-json)
-              (lambda (url)
+              (aio-lambda (url)
                 `(("subsonic-response" ("song" ("title" . ,url) ("artist" . "Test")))))))
      (subsonic-mpv-start (list subsonic-tests--track-1 subsonic-tests--track-2))
      (should (subsonic-tests--wait-for (lambda () (= 2 (hash-table-count subsonic--playlist)))))
@@ -94,7 +95,7 @@ Returns the final value of PREDICATE."
         (lambda (response) (setq result response))
         "get_property" "playlist")
        (should (subsonic-tests--wait-for (lambda () (not (eq result 'pending)))))
-       (let ((entries (subsonic-queue-parse (alist-get 'data result))))
+       (let ((entries (aio-wait-for (subsonic-queue-parse (alist-get 'data result)))))
          (should (equal "▶" (aref (nth 1 (car entries)) 0)))
          (should (equal "" (aref (nth 1 (cadr entries)) 0))))))))
 
@@ -102,7 +103,7 @@ Returns the final value of PREDICATE."
   "`subsonic-queue-parse' fills in title, artist and album from the song lookup."
   (subsonic-tests--with-mpv
    (cl-letf (((symbol-function 'subsonic-get-json)
-              (lambda (url)
+              (aio-lambda (url)
                 `(("subsonic-response"
                    ("song" ("title" . ,url) ("artist" . "Test Artist") ("album" . "Test Album")))))))
      (subsonic-mpv-start (list subsonic-tests--track-1))
@@ -112,7 +113,7 @@ Returns the final value of PREDICATE."
         (lambda (response) (setq result response))
         "get_property" "playlist")
        (should (subsonic-tests--wait-for (lambda () (not (eq result 'pending)))))
-       (let ((entry (car (subsonic-queue-parse (alist-get 'data result)))))
+       (let ((entry (car (aio-wait-for (subsonic-queue-parse (alist-get 'data result))))))
          (should (equal subsonic-tests--track-1 (aref (nth 1 entry) 1)))
          (should (equal "Test Artist" (aref (nth 1 entry) 2)))
          (should (equal "Test Album" (aref (nth 1 entry) 3))))))))
@@ -121,7 +122,7 @@ Returns the final value of PREDICATE."
   "An open queue buffer refreshes itself as mpv advances, with no manual refresh."
   (subsonic-tests--with-mpv
    (cl-letf (((symbol-function 'subsonic-get-json)
-              (lambda (url)
+              (aio-lambda (url)
                 `(("subsonic-response" ("song" ("title" . ,url) ("artist" . "Test")))))))
      (let ((buff (get-buffer-create subsonic-queue-buffer-name)))
        (unwind-protect
@@ -150,7 +151,7 @@ Returns the final value of PREDICATE."
 dropping the previous queue's entries rather than appending to them."
   (subsonic-tests--with-mpv
    (cl-letf (((symbol-function 'subsonic-get-json)
-              (lambda (url)
+              (aio-lambda (url)
                 `(("subsonic-response" ("song" ("title" . ,url) ("artist" . "Test")))))))
      (let ((buff (get-buffer-create subsonic-queue-buffer-name)))
        (unwind-protect

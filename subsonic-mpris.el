@@ -2,9 +2,9 @@
 
 ;; Author: Alex McGrath <amk@amk.ie>
 ;; URL: https://git.sr.ht/~amk/subsonic.el
-;; Version: 0.1.0
+;; Version: 0.1.1
 ;; Keywords: multimedia
-;; Package-Requires: ((emacs "27.1") (subsonic "0.2.0"))
+;; Package-Requires: ((emacs "27.1") (subsonic "0.2.0") (aio "1.0"))
 
 ;; This program is free software: you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -43,6 +43,7 @@
 
 (require 'dbus)
 (require 'subsonic)
+(require 'aio)
 
 ;; fix byte-compiler complaints, as subsonic.el does for the same variable
 (defvar url-http-end-of-headers)
@@ -211,10 +212,10 @@ sending PropertiesChanged itself."
 ;;; Reacting to subsonic.el's mpv process, without subsonic.el knowing
 ;;;
 
-(defun subsonic-mpris--fetch-song (id)
+(aio-defun subsonic-mpris--fetch-song (id)
   "Fetch and cache metadata + art for track ID, then re-announce Metadata."
   (condition-case err
-      (let* ((data (subsonic-get-json (subsonic-build-url "/getSong.view" `(("id" . ,id)))))
+      (let* ((data (aio-await (subsonic-get-json (subsonic-build-url "/getSong.view" `(("id" . ,id))))))
              (song (subsonic-recursive-assoc data '("subsonic-response" "song"))))
         ;; Ignore replies for a track we have since moved on from.
         (when (equal id (subsonic-mpris--current-track-id))
@@ -240,7 +241,7 @@ longer the current track."
                             `(("id" . ,art-id) ("size" . ,(int-to-string subsonic-art-size))))
        (lambda (status)
          (when (and (not (plist-get status :error)) (equal id (subsonic-mpris--current-track-id)))
-           (write-region (+ url-http-end-of-headers 1) (point-max) file)
+           (write-region (+ url-http-end-of-headers 1) (point-max) file nil 'no-message)
            (setq subsonic-mpris--art-file file)
            (subsonic-mpris--announce-metadata)))))))
 

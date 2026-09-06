@@ -2,9 +2,9 @@
 
 ;; Author: Alex McGrath <amk@amk.ie>
 ;; URL: https://git.sr.ht/~amk/subsonic.el
-;; Version: 0.2.0
+;; Version: 0.3.0
 ;; Keywords: multimedia
-;; Package-Requires: ((emacs "27.1") (transient "0.2"))
+;; Package-Requires: ((emacs "27.1") (transient "0.2") (aio "1.0"))
 
 ;; This program is free software: you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -32,6 +32,7 @@
 (require 'url)
 (require 'tq)
 (require 'seq)
+(require 'aio)
 
 (require 'transient)
 
@@ -73,16 +74,6 @@ Used to find the correct authinfo entry."
 
 (defcustom subsonic-ssl t
   "Choose either a https or http connection to subsonic."
-  :type 'boolean
-  :group 'subsonic)
-
-(defcustom subsonic-curl-image-download nil
-  "Use curl for downloading album images, can be a performance improvement."
-  :type 'boolean
-  :group 'subsonic)
-
-(defcustom subsonic-curl-image-parallel t
-  "Use --parallel when calling curl."
   :type 'boolean
   :group 'subsonic)
 
@@ -262,22 +253,33 @@ OUTPUT is the stdout read from mpv"
         (concat accu "&" (car q) "=" (cdr q))))
     al ""))
 
-(defun subsonic-get-json (url)
-  "Return a parsed json response from URL."
-  (condition-case nil
-    (let*
-      (
-        (json-array-type 'list)
-        (json-key-type 'string))
-      (json-read-from-string
-        (with-temp-buffer
-          (url-insert-file-contents url)
-          (prog1 (buffer-string)
-            (kill-buffer)))))
-    (json-readtable-error (error "Failed to read json"))))
-
 ;; fix byte-compiler complaints
 (defvar url-http-end-of-headers)
+
+(aio-defun subsonic-get-json (url)
+  "Return a promise resolving to the parsed json response from URL."
+  (pcase-let ((`(,status . ,buffer) (aio-await (aio-url-retrieve url))))
+    (unwind-protect
+      (progn
+        (when (plist-get status :error)
+          (error "Failed to fetch %s: %S" url (plist-get status :error)))
+        (with-current-buffer buffer
+          (let*
+            (
+              (json-array-type 'list)
+              (json-key-type 'string))
+            (condition-case nil
+              (json-read-from-string
+                ;; The Subsonic API always returns UTF-8 JSON (per RFC
+                ;; 8259); `aio-url-retrieve' doesn't reliably decode the
+                ;; body for us across Emacs versions, so decode explicitly.
+                ;; Safe even if it's already decoded: `decode-coding-string'
+                ;; is a no-op on text that isn't raw undecoded bytes.
+                (decode-coding-string
+                  (buffer-substring (1+ url-http-end-of-headers) (point-max))
+                  'utf-8))
+              (json-readtable-error (error "Failed to read json"))))))
+      (kill-buffer buffer))))
 
 (defun subsonic-image-propertize (id)
   "Generate a property for a subsonic ID."
@@ -286,79 +288,61 @@ OUTPUT is the stdout read from mpv"
     'display
     (create-image (expand-file-name id subsonic-art-cache-path) nil nil :height 100)))
 
-(defun subsonic-get-image (id vec n buff)
-  "Update a tablist VEC entry with an image from ID.
-BUFF is used to specify the buffer that will be
-reverted upon image load and N specifies the index"
-  (if (file-exists-p (expand-file-name id subsonic-art-cache-path))
-    (aset vec n (subsonic-image-propertize id))
-    (url-retrieve
-     (subsonic-build-url
-        "/getCoverArt.view"
-        `(("id" . ,id) ("size" . ,(int-to-string subsonic-art-size))))
-      (lambda (_status)
-        (write-region
-          (+ url-http-end-of-headers 1)
-          (point-max)
-          (expand-file-name id subsonic-art-cache-path)
-          nil
-          'no-message)
-        (aset vec n (subsonic-image-propertize id))
-        (set-buffer buff)
-        (when (derived-mode-p 'tabulated-list-mode)
-          (tabulated-list-revert))))))
+(aio-defun subsonic--fetch-art (id)
+  "Ensure cover art ID is cached on disk, fetching it if necessary.
+Returns a promise that resolves once the fetch has settled; callers
+should re-check `file-exists-p' afterwards rather than assume success,
+since a failed fetch resolves without signalling here."
+  (unless (file-exists-p (expand-file-name id subsonic-art-cache-path))
+    (pcase-let ((`(,status . ,buffer)
+                  (aio-await
+                    (aio-url-retrieve
+                      (subsonic-build-url
+                        "/getCoverArt.view"
+                        `(("id" . ,id) ("size" . ,(int-to-string subsonic-art-size))))))))
+      (unwind-protect
+        (unless (plist-get status :error)
+          (with-current-buffer buffer
+            ;; Cover art is arbitrary binary image data, not text -- write
+            ;; the bytes as-is instead of letting Emacs guess (and
+            ;; possibly prompt for) a coding system.
+            (let ((coding-system-for-write 'no-conversion))
+              (write-region
+                (1+ url-http-end-of-headers)
+                (point-max)
+                (expand-file-name id subsonic-art-cache-path)
+                nil
+                'no-message))))
+        (kill-buffer buffer)))))
 
-(defun subsonic-curl-images (entries n buff)
-  "Use curl to download images for each of the ENTRIES.
-N specifies the tablist index and BUFF is the buffer to be
-reverted."
-  (let ((curl-args (list "curl")))
-    (when subsonic-curl-image-parallel
-      (setq curl-args (append curl-args '("-Z"))))
-    (dolist (entry entries)
-      (let
-        (
-          (id (car entry))
-          (vec (nth 1 entry)))
-        (if (file-exists-p (expand-file-name id subsonic-art-cache-path))
-          (aset vec n (subsonic-image-propertize id))
-          (setq curl-args
-            (append
-              curl-args
-              `
-              ("-o"
-                ,(expand-file-name id subsonic-art-cache-path)
-                ,
-                (subsonic-build-url
-                  "/getCoverArt.view"
-                  `(("id" . ,id) ("size" . ,(int-to-string subsonic-art-size))))))))))
-    (let ((curl-process (apply #'start-process (append (list "subsonic-curl" nil) curl-args))))
-      (set-process-sentinel
-        curl-process
-        (lambda (process _signal)
-          (when (memq (process-status process) '(exit signal))
-            (dolist (entry entries)
-              (let
-                (
-                  (id (car entry))
-                  (vec (nth 1 entry)))
-                (when (file-exists-p (expand-file-name id subsonic-art-cache-path))
-                  (aset vec n (subsonic-image-propertize id))))
-              (set-buffer buff)
-              (when (derived-mode-p 'tabulated-list-mode)
-                (tabulated-list-revert)))))))))
-
-(defun subsonic-get-images (entries n buff)
+(aio-defun subsonic-get-images (entries n buff)
+  "Fetch/cache cover art for ENTRIES and paint it into column N of BUFF.
+Fetches concurrently (fired up front, before anything is awaited) and
+tolerates individual failures via `aio-catch', leaving those entries
+without art rather than aborting the rest.  BUFF is (re)printed once
+every fetch has settled, so callers don't need to print again
+themselves."
   (if (or (not subsonic-enable-art) (not (display-graphic-p)))
-    (dolist (entry tabulated-list-entries)
+    (dolist (entry entries)
       (aset (nth 1 entry) n ""))
     (progn
-      (when (not (file-exists-p subsonic-art-cache-path))
+      (unless (file-exists-p subsonic-art-cache-path)
         (mkdir subsonic-art-cache-path))
-      (if subsonic-curl-image-download
-        (subsonic-curl-images entries n (current-buffer))
-        (dolist (entry tabulated-list-entries)
-          (subsonic-get-image (car entry) (nth 1 entry) n buff))))))
+      (let
+        (
+          (pending
+            (mapcar
+              (lambda (entry) (cons entry (aio-catch (subsonic--fetch-art (car entry)))))
+              entries)))
+        (dolist (item pending)
+          (aio-await (cdr item))
+          (let ((entry (car item)))
+            (when (file-exists-p (expand-file-name (car entry) subsonic-art-cache-path))
+              (aset (nth 1 entry) n (subsonic-image-propertize (car entry)))))))))
+  (when (buffer-live-p buff)
+    (with-current-buffer buff
+      (when (derived-mode-p 'tabulated-list-mode)
+        (tabulated-list-print t)))))
 
 
 (defun subsonic-recursive-assoc (data keys)
@@ -484,37 +468,58 @@ starting or ending."
     (when buff
       (subsonic-queue-fetch-and-render buff))))
 
-(defun subsonic-queue-parse (playlist)
+(aio-defun subsonic-queue-parse (playlist)
   "Turn mpv's PLAYLIST (from a \"get_property playlist\" reply) into
-tabulated-list entries."
-  (mapcar
-    (lambda (entry)
-      (let* ((mpv-id (alist-get 'id entry))
-             (track-id (gethash mpv-id subsonic--playlist))
-             (song
-               (and track-id
-                 (subsonic-recursive-assoc
-                   (subsonic-get-json (subsonic-build-url "/getSong.view" `(("id" . ,track-id))))
-                   '("subsonic-response" "song")))))
-        (list
-          (or track-id (format "%s" mpv-id))
-          (vector
-            (if (alist-get 'current entry) "▶" "")
-            (if song (assoc-default "title" song) "?")
-            (if song (or (assoc-default "artist" song) "") "")
-            (if song (or (assoc-default "album" song) "") "")))))
-    playlist))
+tabulated-list entries.
+Fetches each entry's song metadata concurrently (fired up front, below,
+before anything is awaited) and tolerates individual lookup failures
+via `aio-catch', falling back to the \"?\" placeholder row instead of
+aborting the whole render."
+  (let*
+    (
+      (pending
+        (mapcar
+          (lambda (entry)
+            (let* ((mpv-id (alist-get 'id entry))
+                   (track-id (gethash mpv-id subsonic--playlist)))
+              (list entry mpv-id track-id
+                (and track-id
+                  (aio-catch
+                    (subsonic-get-json (subsonic-build-url "/getSong.view" `(("id" . ,track-id)))))))))
+          playlist)))
+    ;; A plain `mapcar' lambda would call `aio-await' through an ordinary
+    ;; `funcall', outside of this function's own generator machinery, which
+    ;; `generator.el' cannot transform -- so this collects results via a
+    ;; `dolist', which (like `while') stays inline and awaits correctly.
+    (let (rows)
+      (dolist (item pending)
+        (pcase-let ((`(,entry ,mpv-id ,track-id ,promise) item))
+          (let* ((outcome (and promise (aio-await promise)))
+                 (song
+                   (and outcome (eq (car outcome) :success)
+                     (subsonic-recursive-assoc (cdr outcome) '("subsonic-response" "song")))))
+            (push
+              (list
+                (or track-id (format "%s" mpv-id))
+                (vector
+                  (if (alist-get 'current entry) "▶" "")
+                  (if song (assoc-default "title" song) "?")
+                  (if song (or (assoc-default "artist" song) "") "")
+                  (if song (or (assoc-default "album" song) "") "")))
+              rows))))
+      (nreverse rows))))
 
 (defun subsonic-queue-fetch-and-render (buff)
   "Query mpv for its current playlist and render it into BUFF."
   (if (subsonic-mpv-live-p)
     (subsonic-mpv-command-with-callback
-      (lambda (response)
+      (aio-lambda (response)
         (when (buffer-live-p buff)
-          (with-current-buffer buff
-            (setq tabulated-list-entries
-              (subsonic-queue-parse (alist-get 'data response)))
-            (tabulated-list-print t))))
+          (let ((entries (aio-await (subsonic-queue-parse (alist-get 'data response)))))
+            (when (buffer-live-p buff)
+              (with-current-buffer buff
+                (setq tabulated-list-entries entries)
+                (tabulated-list-print t))))))
       "get_property" "playlist")
     (when (buffer-live-p buff)
       (with-current-buffer buff
@@ -586,11 +591,13 @@ tabulated-list entries."
             (assoc-default "song" search-results)))))
     result))
 
-(defun subsonic-search-refresh (query)
-  "Refresh the list of search results from QUERY."
-  (setq tabulated-list-entries
-    (subsonic-search-parse
-      (subsonic-get-json (subsonic-build-url "/search3.view" `(("query" . ,query)))))))
+(aio-defun subsonic-search-refresh (query buff)
+  "Refresh the list of search results from QUERY into BUFF."
+  (let ((data (aio-await (subsonic-get-json (subsonic-build-url "/search3.view" `(("query" . ,query)))))))
+    (when (buffer-live-p buff)
+      (with-current-buffer buff
+        (setq tabulated-list-entries (subsonic-search-parse data))
+        (tabulated-list-print t)))))
 
 (defun subsonic-open-search-appropriate-result (result)
   "Opens the RESULT from a search in the appropriate buffer."
@@ -621,6 +628,7 @@ tabulated-list entries."
     (set-buffer new-buff)
     (setq buffer-read-only t)
     (subsonic-search-mode)
+    (subsonic-search-refresh (url-hexify-string (read-string "Query: ")) (current-buffer))
     (pop-to-buffer (current-buffer))))
 
 (define-derived-mode
@@ -630,8 +638,6 @@ tabulated-list entries."
   ;;  type: artist|album|track
   (setq tabulated-list-format [("Type" 10 t) ("Name" 30 t)])
   (setq tabulated-list-padding 2)
-  (subsonic-search-refresh (url-hexify-string (read-string "Query: ")))
-  (tabulated-list-revert)
   (tabulated-list-init-header))
 
 
@@ -674,19 +680,24 @@ tabulated-list entries."
           tracks)))
     result))
 
-(defun subsonic-tracks-json (id)
+(aio-defun subsonic-tracks-json (id)
   "Fetch the raw getAlbum/getMusicDirectory json response for ID."
-  (subsonic-get-json (if subsonic-browse-by-tags
-						 (subsonic-build-url "/getAlbum.view" `(("id" . ,id)))
-					   (subsonic-build-url "/getMusicDirectory.view" `(("id" . ,id))))))
+  (aio-await
+    (subsonic-get-json (if subsonic-browse-by-tags
+						   (subsonic-build-url "/getAlbum.view" `(("id" . ,id)))
+						 (subsonic-build-url "/getMusicDirectory.view" `(("id" . ,id)))))))
 
-(defun subsonic-get-album-track-ids (id)
+(aio-defun subsonic-get-album-track-ids (id)
   "Return the list of track ids for album/directory ID."
-  (mapcar #'car (subsonic-tracks-parse (subsonic-tracks-json id))))
+  (mapcar #'car (subsonic-tracks-parse (aio-await (subsonic-tracks-json id)))))
 
-(defun subsonic-tracks-refresh (id)
-  "Refresh the list of subsonic tracks from ID."
-  (setq tabulated-list-entries (subsonic-tracks-parse (subsonic-tracks-json id))))
+(aio-defun subsonic-tracks-refresh (id buff)
+  "Refresh the list of subsonic tracks from ID into BUFF."
+  (let ((data (aio-await (subsonic-tracks-json id))))
+    (when (buffer-live-p buff)
+      (with-current-buffer buff
+        (setq tabulated-list-entries (subsonic-tracks-parse data))
+        (tabulated-list-print t)))))
 
 (defun subsonic-play-tracks ()
   "Play all the tracks after the point in the list."
@@ -711,8 +722,7 @@ tabulated-list entries."
   (let ((new-buff (get-buffer-create "*subsonic-tracks*")))
     (set-buffer new-buff)
     (subsonic-tracks-mode)
-    (subsonic-tracks-refresh id)
-    (tabulated-list-revert)
+    (subsonic-tracks-refresh id new-buff)
     (pop-to-buffer-same-window (current-buffer))))
 
 (define-derived-mode
@@ -758,33 +768,40 @@ tabulated-list entries."
           albums)))
     result))
 
-(defun subsonic-albums-refresh (id)
-  "Refresh the albums list for a given artist ID."
-  (setq tabulated-list-entries
-    (subsonic-albums-parse
-      (subsonic-get-json (subsonic-build-url "/getArtist.view" `(("id" . ,id))))))
-  (subsonic-get-images tabulated-list-entries 2 (current-buffer)))
+(aio-defun subsonic-albums-refresh (id buff)
+  "Refresh the albums list for a given artist ID into BUFF."
+  (let ((data (aio-await (subsonic-get-json (subsonic-build-url "/getArtist.view" `(("id" . ,id)))))))
+    (when (buffer-live-p buff)
+      (with-current-buffer buff
+        (setq tabulated-list-entries (subsonic-albums-parse data))
+        (tabulated-list-print t)
+        (subsonic-get-images tabulated-list-entries 2 buff)))))
 
 
-(defun subsonic-albums-refresh-type (type)
-  "Refresh the albums list for a given albumlist TYPE."
-  (setq tabulated-list-entries
-    (subsonic-albums-type-parse
-      (subsonic-get-json
-        (subsonic-build-url
-          "/getAlbumList2.view"
-          `(("type" . ,type) ("size" . ,(number-to-string subsonic-album-list-count)))))))
-  (subsonic-get-images tabulated-list-entries 2 (current-buffer)))
+(aio-defun subsonic-albums-refresh-type (type buff)
+  "Refresh the albums list for a given albumlist TYPE into BUFF."
+  (let ((data
+          (aio-await
+            (subsonic-get-json
+              (subsonic-build-url
+                "/getAlbumList2.view"
+                `(("type" . ,type) ("size" . ,(number-to-string subsonic-album-list-count))))))))
+    (when (buffer-live-p buff)
+      (with-current-buffer buff
+        (setq tabulated-list-entries (subsonic-albums-type-parse data))
+        (tabulated-list-print t)
+        (subsonic-get-images tabulated-list-entries 2 buff)))))
 
 (defun subsonic-open-tracks ()
   "Open a list of tracks at point."
   (interactive)
   (subsonic-tracks (tabulated-list-get-id)))
 
-(defun subsonic-enqueue-album ()
+(aio-defun subsonic-enqueue-album ()
   "Add all the tracks of the album at point to the play queue."
   (interactive)
-  (let ((ids (subsonic-get-album-track-ids (tabulated-list-get-id))))
+  (let* ((track-id (tabulated-list-get-id))
+         (ids (aio-await (subsonic-get-album-track-ids track-id))))
     (subsonic-mpv-enqueue ids)
     (message "Added %d track(s) to the queue" (length ids))))
 
@@ -822,13 +839,12 @@ tabulated-list entries."
 	(let ((new-buff (get-buffer-create "*subsonic-artist-albums*")))
 	  (set-buffer new-buff)
 	  (subsonic-album-mode)
-	  (subsonic-albums-refresh id)))
+	  (subsonic-albums-refresh id new-buff)))
    (type
     (let ((new-buff (get-buffer-create "*subsonic-albums*")))
 	  (set-buffer new-buff)
 	  (subsonic-album-type-mode)
-	  (subsonic-albums-refresh-type type))))
-  (tabulated-list-revert)
+	  (subsonic-albums-refresh-type type new-buff))))
   (pop-to-buffer-same-window (current-buffer)))
 
 (define-derived-mode
@@ -872,14 +888,23 @@ tabulated-list entries."
           artists '())))
     result))
 
-(defun subsonic-artists-refresh ()
-  "Refresh the list of artists."
-  (setq tabulated-list-entries
-    (subsonic-artists-parse (subsonic-get-json (subsonic-build-url "/getArtists.view" '())))))
+(aio-defun subsonic-artists-refresh (buff)
+  "Refresh the list of artists into BUFF."
+  (let ((data (aio-await (subsonic-get-json (subsonic-build-url "/getArtists.view" '())))))
+    (when (buffer-live-p buff)
+      (with-current-buffer buff
+        (setq tabulated-list-entries (subsonic-artists-parse data))
+        (tabulated-list-print t)))))
+
+(defun subsonic-artists-revert ()
+  "Refresh the artists buffer from the Subsonic server."
+  (interactive)
+  (subsonic-artists-refresh (current-buffer)))
 
 (defvar subsonic-artist-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET") #'subsonic-open-album)
+    (define-key map (kbd "g") #'subsonic-artists-revert)
     map))
 
 ;;;###autoload
@@ -890,7 +915,7 @@ tabulated-list entries."
     (set-buffer new-buff)
     (setq buffer-read-only t)
     (subsonic-artist-mode)
-    (tabulated-list-revert)
+    (subsonic-artists-refresh new-buff)
     (pop-to-buffer (current-buffer))))
 
 (define-derived-mode
@@ -899,7 +924,6 @@ tabulated-list entries."
   "Subsonic Artists"
   (setq tabulated-list-format [("Artist" 30 t)])
   (setq tabulated-list-padding 2)
-  (add-hook 'tabulated-list-revert-hook #'subsonic-artists-refresh nil t)
   (tabulated-list-init-header))
 
 ;;;
@@ -917,13 +941,17 @@ tabulated-list entries."
           podcasts)))
     result))
 
-(defun subsonic-podcasts-refresh ()
-  "Refresh the list of podcasts."
-  (setq tabulated-list-entries
-    (subsonic-podcasts-parse
-      (subsonic-get-json
-        (subsonic-build-url "/getPodcasts.view" '(("includeEpisodes" . "false"))))))
-  (subsonic-get-images tabulated-list-entries 1 (current-buffer)))
+(aio-defun subsonic-podcasts-refresh (buff)
+  "Refresh the list of podcasts into BUFF."
+  (let ((data
+          (aio-await
+            (subsonic-get-json
+              (subsonic-build-url "/getPodcasts.view" '(("includeEpisodes" . "false")))))))
+    (when (buffer-live-p buff)
+      (with-current-buffer buff
+        (setq tabulated-list-entries (subsonic-podcasts-parse data))
+        (tabulated-list-print t)
+        (subsonic-get-images tabulated-list-entries 1 buff)))))
 
 
 (defun subsonic-open-podcast-episodes ()
@@ -931,13 +959,14 @@ tabulated-list entries."
   (interactive)
   (subsonic-podcast-episodes (tabulated-list-get-id)))
 
-(defun subsonic-add-podcast ()
+(aio-defun subsonic-add-podcast ()
   "Add a new podcast."
   (interactive)
-  (subsonic-get-json
-    (subsonic-build-url
-      "/createPodcastChannel.view"
-      `(("url" . ,(url-hexify-string (read-string "feed url: ")))))))
+  (aio-await
+    (subsonic-get-json
+      (subsonic-build-url
+        "/createPodcastChannel.view"
+        `(("url" . ,(url-hexify-string (read-string "feed url: "))))))))
 
 (transient-define-prefix
   subsonic-podcast-help () "Help transient for podcasts."
@@ -960,8 +989,7 @@ tabulated-list entries."
     (set-buffer new-buff)
     (setq buffer-read-only t)
     (subsonic-podcast-mode)
-    (subsonic-podcasts-refresh)
-    (tabulated-list-revert)
+    (subsonic-podcasts-refresh new-buff)
     (pop-to-buffer (current-buffer))))
 
 (define-derived-mode
@@ -1001,18 +1029,24 @@ tabulated-list entries."
   (interactive)
   (subsonic-mpv-start (list (tabulated-list-get-id))))
 
-(defun subsonic-podcasts-episode-refresh (id)
-  "Refresh the list of podcast episodes for a podcast ID."
-  (setq tabulated-list-entries
-    (subsonic-podcast-episodes-parse
-      (subsonic-get-json
-        (subsonic-build-url "/getPodcasts.view" `(("id" . ,id) ("includeEpisodes" . "true")))))))
+(aio-defun subsonic-podcasts-episode-refresh (id buff)
+  "Refresh the list of podcast episodes for a podcast ID into BUFF."
+  (let ((data
+          (aio-await
+            (subsonic-get-json
+              (subsonic-build-url "/getPodcasts.view" `(("id" . ,id) ("includeEpisodes" . "true")))))))
+    (when (buffer-live-p buff)
+      (with-current-buffer buff
+        (setq tabulated-list-entries (subsonic-podcast-episodes-parse data))
+        (tabulated-list-print t)))))
 
-(defun subsonic-download-podcast-episode ()
+(aio-defun subsonic-download-podcast-episode ()
   "Tell the subsonic server to download an episode at point."
   (interactive)
-  (subsonic-get-json
-    (subsonic-build-url "/downloadPodcastEpisode.view" `(("id" . ,(tabulated-list-get-id))))))
+  (let ((id (tabulated-list-get-id)))
+    (aio-await
+      (subsonic-get-json
+        (subsonic-build-url "/downloadPodcastEpisode.view" `(("id" . ,id)))))))
 
 (transient-define-prefix
   subsonic-podcast-episode-help
@@ -1035,8 +1069,7 @@ tabulated-list entries."
   (let ((new-buff (get-buffer-create "*subsonic-podcast-episodes*")))
     (set-buffer new-buff)
     (subsonic-podcast-episodes-mode)
-    (subsonic-podcasts-episode-refresh id)
-    (tabulated-list-revert)
+    (subsonic-podcasts-episode-refresh id new-buff)
     (pop-to-buffer-same-window (current-buffer))))
 
 (define-derived-mode
