@@ -110,6 +110,19 @@ Used to find the correct authinfo entry."
 (defvar subsonic-mpv--process nil)
 (defvar subsonic-mpv--queue nil)
 
+(defvar subsonic-mpv--entry-counter 0
+  "Client-side mirror of the mpv playlist entry id mpv will assign next.
+mpv assigns each `loadfile' a playlist entry id that is unique for the
+lifetime of the mpv core instance and increments strictly in the order
+commands are sent; since we are the only writer on the IPC socket, we
+can predict it instead of reading it back from mpv.")
+
+(defvar subsonic--playlist (make-hash-table)
+  "Map of mpv playlist entry id (integer) to subsonic track id (string).
+Populated as tracks are loaded into mpv via `subsonic--mpv-load-track',
+and consulted by scrobbling and MPRIS to resolve `playlist_entry_id'
+values reported by mpv back to subsonic track ids.")
+
 (defun subsonic-mpv-kill ()
   "Kill the mpv process."
   (interactive)
@@ -121,59 +134,74 @@ Used to find the correct authinfo entry."
     (while (subsonic-mpv-live-p)
       (sleep-for 0.05)))
   (setq subsonic-mpv--process nil)
-  (setq subsonic-mpv--queue nil))
+  (setq subsonic-mpv--queue nil)
+  (setq subsonic-mpv--entry-counter 0)
+  (clrhash subsonic--playlist))
 
 (defun subsonic-mpv-live-p ()
   "Return non-nil if inferior mpv is running."
   (and subsonic-mpv--process (eq (process-status subsonic-mpv--process) 'run)))
 
-(defvar subsonic--playlist '())
+(defun subsonic-mpv-ensure-running ()
+  "Make sure mpv is running as an idle player, starting it if necessary.
+Does nothing if mpv is already running, so it is safe to call before
+every play/enqueue action."
+  (unless (subsonic-mpv-live-p)
+    (subsonic-mpv-kill)
+    (let ((socket (make-temp-name (expand-file-name "subsonic-mpv-" temporary-file-directory))))
+      (setq subsonic-mpv--process
+        (start-process
+          "mpv-player" nil subsonic-mpv
+          ;; "--no-terminal" leave this out, breaks on debian?
+          "--really-quiet"
+          "--no-video"
+          "--no-config"
+          "--idle=once"
+          (format "--volume=%d" subsonic-mpv--volume)
+          (concat "--input-ipc-server=" socket)))
+      (set-process-query-on-exit-flag subsonic-mpv--process nil)
+      (set-process-sentinel
+        subsonic-mpv--process
+        (lambda (process _event)
+          (when (memq (process-status process) '(exit signal))
+            (subsonic-mpv-kill)
+            (when (file-exists-p socket)
+              (with-demoted-errors "%S" (delete-file socket))))))
+      (with-timeout (subsonic-mpv-timeout (subsonic-mpv-kill) (error "Failed to connect to mpv"))
+        (while (not (file-exists-p socket))
+          (sleep-for 0.05)))
+      (setq subsonic-mpv--queue
+        (tq-create
+         (make-network-process :name "subsonic-mpv-socket"
+							   :family 'local
+							   :service socket)))
+      (set-process-filter (tq-process subsonic-mpv--queue) #'subsonic--mpv-socket-filter)))
+  t)
+
+(defun subsonic--mpv-load-track (id flag)
+  "Load subsonic track ID into the running mpv instance using loadfile FLAG.
+Registers the mpv playlist entry id this load will be assigned in
+`subsonic--playlist', so it can later be resolved back to ID for
+scrobbling and MPRIS metadata."
+  (setq subsonic-mpv--entry-counter (1+ subsonic-mpv--entry-counter))
+  (puthash subsonic-mpv--entry-counter id subsonic--playlist)
+  (subsonic-mpv-command "loadfile" (subsonic-build-url "/stream.view" `(("id" . ,id))) flag))
 
 (defun subsonic-mpv-start (ids)
-  "Start mpv and play a given list of IDS."
-  (setq subsonic--playlist ids)
-  (subsonic-scrobble (car ids) t)  ;; send a now-playing for the first track
-  (subsonic--mpv-start
-   (mapcar (lambda (id) (subsonic-build-url "/stream.view" `(("id" . ,id))))
-		   ids)))
+  "Replace the current mpv queue with IDS and start playing immediately."
+  (subsonic-mpv-ensure-running)
+  (subsonic--mpv-load-track (car ids) "replace")
+  (dolist (id (cdr ids))
+    (subsonic--mpv-load-track id "append")))
 
-(defun subsonic--mpv-start (playlist)
-  "Used to start mpv.
-PLAYLIST are any extra arguments to provide to mpv, in
-this case usually track lists"
-  (subsonic-mpv-kill)
-  (let ((socket (make-temp-name (expand-file-name "subsonic-mpv-" temporary-file-directory))))
-    (setq subsonic-mpv--process
-      (apply #'start-process
-        (append
-          (list
-            "mpv-player"
-            nil
-            subsonic-mpv
-            ;; "--no-terminal" leave this out, breaks on debian?
-            "--really-quiet"
-            "--no-video"
-            (format "--volume=%d" subsonic-mpv--volume)
-            (concat "--input-ipc-server=" socket))
-          playlist)))
-    (set-process-query-on-exit-flag subsonic-mpv--process nil)
-    (set-process-sentinel
-      subsonic-mpv--process
-      (lambda (process _event)
-        (when (memq (process-status process) '(exit signal))
-          (subsonic-mpv-kill)
-          (when (file-exists-p socket)
-            (with-demoted-errors "%S" (delete-file socket))))))
-    (with-timeout (subsonic-mpv-timeout (subsonic-mpv-kill) (error "Failed to connect to mpv"))
-      (while (not (file-exists-p socket))
-        (sleep-for 0.05)))
-    (setq subsonic-mpv--queue
-      (tq-create
-       (make-network-process :name "subsonic-mpv-socket"
-							 :family 'local
-							 :service socket)))
-    (set-process-filter (tq-process subsonic-mpv--queue) #'subsonic--mpv-socket-filter)
-	t))
+;;;###autoload
+(defun subsonic-mpv-enqueue (ids)
+  "Append IDS to the end of the current mpv queue.
+Starts playback if mpv is currently idle; otherwise leaves whatever is
+already playing undisturbed and simply queues IDS after it."
+  (subsonic-mpv-ensure-running)
+  (dolist (id ids)
+    (subsonic--mpv-load-track id "append-play")))
 
 (defun subsonic--mpv-socket-filter (_ output)
   "Filter the mpv socket connection.
@@ -184,11 +212,11 @@ OUTPUT is the stdout read from mpv"
 	  (let ((event (alist-get 'event parsed-response)))
 		(cond
 		 ((string-equal event "end-file")
-          (subsonic-scrobble (nth (- (alist-get 'playlist_entry_id parsed-response) 1)
-								  subsonic--playlist)))
+          (subsonic-scrobble (gethash (alist-get 'playlist_entry_id parsed-response)
+									  subsonic--playlist)))
 		 ((string-equal event "start-file")
-          (subsonic-scrobble (nth (- (alist-get 'playlist_entry_id parsed-response) 1)
-								  subsonic--playlist)
+          (subsonic-scrobble (gethash (alist-get 'playlist_entry_id parsed-response)
+									  subsonic--playlist)
 							 t)))))))
 
 (defun subsonic-scrobble (id &optional now-playing)
@@ -505,22 +533,36 @@ subsonic, and ensure subsonic-host is set correctly")))
           tracks)))
     result))
 
+(defun subsonic-tracks-json (id)
+  "Fetch the raw getAlbum/getMusicDirectory json response for ID."
+  (subsonic-get-json (if subsonic-browse-by-tags
+						 (subsonic-build-url "/getAlbum.view" `(("id" . ,id)))
+					   (subsonic-build-url "/getMusicDirectory.view" `(("id" . ,id))))))
+
+(defun subsonic-get-album-track-ids (id)
+  "Return the list of track ids for album/directory ID."
+  (mapcar #'car (subsonic-tracks-parse (subsonic-tracks-json id))))
+
 (defun subsonic-tracks-refresh (id)
   "Refresh the list of subsonic tracks from ID."
-  (setq tabulated-list-entries
-    (subsonic-tracks-parse
-     (subsonic-get-json (if subsonic-browse-by-tags
-							(subsonic-build-url "/getAlbum.view" `(("id" . ,id)))
-						  (subsonic-build-url "/getMusicDirectory.view" `(("id" . ,id))))))))
+  (setq tabulated-list-entries (subsonic-tracks-parse (subsonic-tracks-json id))))
 
 (defun subsonic-play-tracks ()
   "Play all the tracks after the point in the list."
   (interactive)
   (subsonic-mpv-start (subsonic-get-tracklist-id (tabulated-list-get-id))))
 
+(defun subsonic-enqueue-tracks ()
+  "Add all the tracks after the point in the list to the play queue."
+  (interactive)
+  (let ((ids (subsonic-get-tracklist-id (tabulated-list-get-id))))
+    (subsonic-mpv-enqueue ids)
+    (message "Added %d track(s) to the queue" (length ids))))
+
 (defvar subsonic-tracks-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET") #'subsonic-play-tracks)
+    (define-key map (kbd "a") #'subsonic-enqueue-tracks)
     map))
 
 (defun subsonic-tracks (id)
@@ -598,14 +640,23 @@ subsonic, and ensure subsonic-host is set correctly")))
   (interactive)
   (subsonic-tracks (tabulated-list-get-id)))
 
+(defun subsonic-enqueue-album ()
+  "Add all the tracks of the album at point to the play queue."
+  (interactive)
+  (let ((ids (subsonic-get-album-track-ids (tabulated-list-get-id))))
+    (subsonic-mpv-enqueue ids)
+    (message "Added %d track(s) to the queue" (length ids))))
+
 (defvar subsonic-album-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET") #'subsonic-open-tracks)
+    (define-key map (kbd "a") #'subsonic-enqueue-album)
     map))
 
 (defvar subsonic-album-type-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET") #'subsonic-open-tracks)
+    (define-key map (kbd "a") #'subsonic-enqueue-album)
     map))
 
 (defun subsonic-recent-albums ()
