@@ -919,12 +919,13 @@ the response at the wrong key."
    (id
 	(let ((new-buff (get-buffer-create "*supersonic-artist-albums*")))
 	  (supersonic--init-list-buffer new-buff #'supersonic-album-mode "Loading albums...")
-	  (ignore (supersonic-albums-refresh id new-buff))))
+	  (ignore (supersonic-albums-refresh id new-buff))
+	  (pop-to-buffer-same-window new-buff)))
    (type
     (let ((new-buff (get-buffer-create "*supersonic-albums*")))
 	  (supersonic--init-list-buffer new-buff #'supersonic-album-type-mode "Loading albums...")
-	  (ignore (supersonic-albums-refresh-type type new-buff)))))
-  (pop-to-buffer-same-window (current-buffer)))
+	  (ignore (supersonic-albums-refresh-type type new-buff))
+	  (pop-to-buffer-same-window new-buff)))))
 
 (define-derived-mode
   supersonic-album-type-mode

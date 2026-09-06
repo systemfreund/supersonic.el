@@ -231,6 +231,42 @@ the same way) rather than parsing at a path cached from whatever
     (let ((supersonic-browse-by-tags nil))
       (should (equal "Folder Song" (aref (nth 1 (car (supersonic-tracks-parse folder-response))) 0))))))
 
+(ert-deftest supersonic-tests-albums-buffer-becomes-current ()
+  "`supersonic-albums' leaves the freshly created album-list buffer as
+the current/displayed buffer, instead of popping back to whichever
+buffer the command happened to be invoked from.
+
+Regression test for a bug where `set-buffer' (which switches the
+current buffer for the rest of the function) was replaced by
+`supersonic--init-list-buffer', which only switches buffers via
+`with-current-buffer' and unwinds *before* `supersonic-albums'
+returns.  `(current-buffer)' at the end of `supersonic-albums' then
+picked up the original buffer again, so e.g. `supersonic-random-albums'
+silently reopened whatever buffer it was called from instead of the
+new albums list."
+  (cl-letf (((symbol-function 'supersonic-build-url) (lambda (_endpoint _extra-query) "dummy://url"))
+            ((symbol-function 'supersonic-get-json) (aio-lambda (_url) nil)))
+    (let ((origin (get-buffer-create "*supersonic-tests-origin*")))
+      (unwind-protect
+          (with-current-buffer origin
+            (supersonic-albums nil "random")
+            (should (eq (current-buffer) (get-buffer "*supersonic-albums*"))))
+        (kill-buffer origin)
+        (when (get-buffer "*supersonic-albums*") (kill-buffer "*supersonic-albums*"))))))
+
+(ert-deftest supersonic-tests-artist-albums-buffer-becomes-current ()
+  "Same regression as `supersonic-tests-albums-buffer-becomes-current',
+for the artist-ID branch of `supersonic-albums' (i.e. `supersonic-open-album')."
+  (cl-letf (((symbol-function 'supersonic-build-url) (lambda (_endpoint _extra-query) "dummy://url"))
+            ((symbol-function 'supersonic-get-json) (aio-lambda (_url) nil)))
+    (let ((origin (get-buffer-create "*supersonic-tests-origin*")))
+      (unwind-protect
+          (with-current-buffer origin
+            (supersonic-albums "42" nil)
+            (should (eq (current-buffer) (get-buffer "*supersonic-artist-albums*"))))
+        (kill-buffer origin)
+        (when (get-buffer "*supersonic-artist-albums*") (kill-buffer "*supersonic-artist-albums*"))))))
+
 (provide 'supersonic-tests)
 
 ;;; supersonic-tests.el ends here
