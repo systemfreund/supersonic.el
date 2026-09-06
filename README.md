@@ -13,6 +13,11 @@ Add a `~/.authinfo.gpg` or `~/.authinfo` file with the following contents
 The `subsonic-host` must be set to the same value as SUBSONIC_URL in
 your init file, example below.
 
+Authentication against the server uses Subsonic's token scheme
+(salted MD5 of the password), so the plaintext password from your
+authinfo file is never sent over the wire or placed in a URL -- it is
+only used locally to compute a fresh token per request.
+
 ## Usage
 
 The package is available on melpa as `subsonic`

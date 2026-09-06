@@ -367,6 +367,22 @@ reverted."
     (subsonic-recursive-assoc (assoc-default (car keys) data) (cdr keys))
     data))
 
+(defun subsonic--random-salt ()
+  "Generate a random alphanumeric salt for Subsonic token authentication.
+12 hex characters, well above the API's 6-character minimum."
+  (mapconcat (lambda (_) (format "%x" (random 16))) (make-list 12 nil) ""))
+
+(defun subsonic--auth-query ()
+  "Build the \"u\"/\"t\"/\"s\" token-auth query parameters for one request.
+Uses Subsonic's token authentication (t = md5(password + salt), s = a
+fresh salt per request) instead of sending the plaintext password, so
+it never ends up in a URL -- which, depending on how that URL is used
+elsewhere (e.g. handed to curl as an argument), could otherwise be
+visible to any local user via `ps' or in a subprocess's argv."
+  (let* ((password (funcall (plist-get subsonic-auth :secret)))
+          (salt (subsonic--random-salt)))
+    `(("u" . ,(plist-get subsonic-auth :user)) ("t" . ,(md5 (concat password salt))) ("s" . ,salt))))
+
 (defun subsonic-build-url (endpoint extra-query)
   "Build a valid subsonic url for a given ENDPOINT.
 EXTRA-QUERY is used for any extra query parameters"
@@ -378,12 +394,8 @@ EXTRA-QUERY is used for any extra query parameters"
       (plist-get subsonic-auth :host) "/rest" endpoint
       (subsonic-alist->query
         (append
-          `
-          (("u" . ,(plist-get subsonic-auth :user))
-            ("p" . ,(funcall (plist-get subsonic-auth :secret)))
-            ("c" . "ElSonic")
-            ("v" . "1.16.0")
-            ("f" . "json"))
+          (subsonic--auth-query)
+          `(("c" . "ElSonic") ("v" . "1.16.0") ("f" . "json"))
           extra-query)))
     (error
       "Failed to load .authinfo, please provide auth configuration for
