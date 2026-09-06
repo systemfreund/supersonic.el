@@ -3,7 +3,7 @@
 [![CI](https://github.com/systemfreund/supersonic.el/actions/workflows/ci.yml/badge.svg)](https://github.com/systemfreund/supersonic.el/actions/workflows/ci.yml)
 <!-- [![MELPA](https://melpa.org/packages/supersonic-badge.svg)](https://melpa.org/#/supersonic) -->
 
-This is a subsonic client for emacs using mpv for music playing. It
+This is a subsonic client for emacs using [mpv](https://mpv.io/) for music playing. It
 works with any server implementing the Subsonic API, such as
 [Navidrome](https://www.navidrome.org/), [Airsonic](https://airsonic.github.io/),
 [Gonic](https://github.com/sentriz/gonic) or [Ampache](https://ampache.org/).
