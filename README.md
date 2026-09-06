@@ -13,11 +13,6 @@ Add a `~/.authinfo.gpg` or `~/.authinfo` file with the following contents
 The `subsonic-host` must be set to the same value as SUBSONIC_URL in
 your init file, example below.
 
-Authentication against the server uses Subsonic's token scheme
-(salted MD5 of the password), so the plaintext password from your
-authinfo file is never sent over the wire or placed in a URL -- it is
-only used locally to compute a fresh token per request.
-
 ## Usage
 
 The package is available on melpa as `subsonic`
@@ -55,10 +50,6 @@ to back:
 - Albums buffer: `RET` opens the album's track list; `a` adds the
   whole album to the play queue directly, without opening it.
 
-mpv is started on demand (lazily, the first time you play or queue
-something) and stays running idle between tracks, so queueing more
-albums does not interrupt what is currently playing.
-
 ## MPRIS
 
 `subsonic-mpris.el` exposes subsonic.el's mpv playback as an MPRIS
@@ -68,10 +59,10 @@ automatically, and subsonic.el has no dependency on it. Enable it
 explicitly:
 
 ```
-(use-package subsonic-mpris
-  :after subsonic
+(use-package subsonic
   :config
-  (subsonic-mpris-mode 1))
+  (require 'subsonic-mpris)
+  (subsonic-mpris-mode t))
 ```
 
 Currently in scope: Play/Pause/PlayPause/Stop/Next/Previous and
