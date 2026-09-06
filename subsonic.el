@@ -1051,18 +1051,18 @@ tabulated-list entries."
 (transient-define-prefix
   subsonic () "Help transient for subsonic."
   ["Subsonic"
-    ("p" "Podcasts" subsonic-podcasts)
-    ("a" "Artists" subsonic-artists)
-    ("r" "Random Albums" subsonic-random-albums)
-    ("n" "Newest Albums" subsonic-newest-albums)
-    ("s" "Search subsonic" subsonic-search)]
+   ("a" "Artists" subsonic-artists)
+   ("r" "Random Albums" subsonic-random-albums)
+   ("n" "Newest Albums" subsonic-newest-albums)
+   ("s" "Search subsonic" subsonic-search)
+   ("p" "Podcasts" subsonic-podcasts)]
   ["Controls"
-    ("t" "Toggle playing" subsonic-toggle-playing)
-    ("f" "Skip track" subsonic-skip-track)
-    ("b" "Previous track" subsonic-prev-track)
-    ("F" "Seek forward" subsonic-seek-forward)
-    ("B" "Seek back" subsonic-seek-back)
-    ("Q" "Show queue" subsonic-show-queue)])
+   ("Q" "Show queue" subsonic-show-queue)
+   ("t" "Toggle playing" subsonic-toggle-playing)
+   ("f" "Skip track" subsonic-skip-track)
+   ("b" "Previous track" subsonic-prev-track)
+   ("F" "Seek forward" subsonic-seek-forward)
+   ("B" "Seek back" subsonic-seek-back)])
 
 (provide 'subsonic)
 
