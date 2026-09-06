@@ -81,6 +81,16 @@ re-download of anything already cached at the old size."
   :type 'integer
   :group 'supersonic)
 
+(defcustom supersonic-art-fetch-concurrency 6
+  "How many cover art downloads may be in flight at the same time.
+A list buffer asks for every row's art at once; without a cap that
+opens one connection per row, so a 50 album list hits the server with
+50 simultaneous requests and leaves 50 idle keep-alive connections in
+`url-http-open-connections' afterwards.  Six is what browsers and
+`url-queue-parallel-processes' settle on per host."
+  :type 'integer
+  :group 'supersonic)
+
 (defcustom supersonic-now-playing-interval 1
   "Seconds between playback position updates in the now-playing buffer.
 Each update is a single query to the local mpv socket, and only runs
@@ -284,7 +294,14 @@ OUTPUT is the stdout read from mpv"
 									  `(("id" . ,id)
 										;; send a submission by default
 										("submission" . ,(if now-playing "false" "true"))))
-				  (lambda (_)))))
+				  ;; Nothing here reads the reply, but `url-retrieve' still hands
+				  ;; the callback a response buffer and then forgets about it --
+				  ;; without this every scrobble leaves one ` *http host:port*'
+				  ;; buffer behind for the rest of the session.  Killing it from
+				  ;; inside the callback is safe: url-http has already handed the
+				  ;; connection back to its keep-alive pool before calling us (see
+				  ;; `url-http-activate-callback').
+				  (lambda (_status) (kill-buffer (current-buffer))))))
 
 (defun supersonic-auth ()
   "Return the auth-source entry for the current `supersonic-host'.
@@ -397,22 +414,34 @@ since a failed fetch resolves without signalling here."
                 'no-message))))
         (kill-buffer buffer)))))
 
+(aio-defun supersonic--fetch-art-throttled (sem id size)
+  "Fetch cover art ID at SIZE once SEM hands out a slot.
+Callers create every fetch up front, so the semaphore -- not the number
+of entries -- is what decides how many requests are on the wire at once
+(see `supersonic-art-fetch-concurrency').  Failures are swallowed here
+rather than left to reject, so that a slot is always given back and one
+unreachable cover doesn't hold up the rest."
+  (aio-await (aio-sem-wait sem))
+  (aio-await (aio-catch (supersonic--fetch-art id size)))
+  (aio-sem-post sem))
+
 (aio-defun supersonic-get-images (entries n buff)
   "Fetch/cache cover art for ENTRIES and paint it into column N of BUFF.
-Fetches concurrently (fired up front, before anything is awaited) and
-tolerates individual failures via `aio-catch', leaving those entries
-without art rather than aborting the rest.  BUFF is (re)printed once
-every fetch has settled, so callers don't need to print again
-themselves."
+Fetches are fired up front, before anything is awaited, but only
+`supersonic-art-fetch-concurrency' of them run at a time; individual
+failures are tolerated, leaving those entries without art rather than
+aborting the rest.  BUFF is (re)printed once every fetch has settled,
+so callers don't need to print again themselves."
   (if (or (not supersonic-enable-art) (not (display-graphic-p)))
     (dolist (entry entries)
       (aset (nth 1 entry) n ""))
-    (let
+    (let*
       (
+        (sem (aio-sem supersonic-art-fetch-concurrency))
         (pending
           (mapcar
             (lambda (entry)
-              (cons entry (aio-catch (supersonic--fetch-art (car entry) supersonic-list-art-size))))
+              (cons entry (supersonic--fetch-art-throttled sem (car entry) supersonic-list-art-size)))
             entries)))
       (dolist (item pending)
         (aio-await (cdr item))

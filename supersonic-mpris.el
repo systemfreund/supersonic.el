@@ -240,10 +240,20 @@ longer the current track."
        (supersonic-build-url "/getCoverArt.view"
                             `(("id" . ,art-id) ("size" . ,(int-to-string supersonic-art-size))))
        (lambda (status)
-         (when (and (not (plist-get status :error)) (equal id (supersonic-mpris--current-track-id)))
-           (write-region (+ url-http-end-of-headers 1) (point-max) file nil 'no-message)
-           (setq supersonic-mpris--art-file file)
-           (supersonic-mpris--announce-metadata)))))))
+         ;; `url-retrieve' hands us the response buffer and then forgets about
+         ;; it, so kill it on the way out -- otherwise every track change
+         ;; leaves another ` *http host:port*' buffer behind.
+         (unwind-protect
+             (when (and (not (plist-get status :error)) (equal id (supersonic-mpris--current-track-id)))
+               ;; Cover art is arbitrary binary image data, not text -- write
+               ;; the bytes as-is instead of letting Emacs guess (and possibly
+               ;; prompt for) a coding system, exactly as `supersonic--fetch-art'
+               ;; does for the art the list buffers cache.
+               (let ((coding-system-for-write 'no-conversion))
+                 (write-region (+ url-http-end-of-headers 1) (point-max) file nil 'no-message))
+               (setq supersonic-mpris--art-file file)
+               (supersonic-mpris--announce-metadata))
+           (kill-buffer (current-buffer))))))))
 
 (defun supersonic-mpris--set-track (index)
   "Record INDEX (mpv's 1-based playlist_entry_id) as the current track."

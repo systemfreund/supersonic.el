@@ -237,6 +237,62 @@ install too, instead of only those that populate a whole list."
       (when (file-exists-p supersonic-art-cache-path)
         (delete-directory supersonic-art-cache-path t)))))
 
+(ert-deftest supersonic-tests-art-fetches-run-capped-in-parallel ()
+  "Cover art fetches run concurrently, but never more of them at a time
+than the semaphore `supersonic-get-images' hands them allows -- a list
+buffer asks for every row's art at once, and without the cap that is one
+open connection per row."
+  (let ((supersonic-art-cache-path
+          (expand-file-name (make-temp-name "supersonic-tests-cache-") temporary-file-directory))
+        (in-flight 0)
+        (peak 0)
+        (sem (aio-sem 2)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'supersonic-build-url)
+                   (lambda (_endpoint _extra-query) "dummy://url"))
+                  ((symbol-function 'aio-url-retrieve)
+                   (aio-lambda (_url)
+                     (cl-incf in-flight)
+                     (setq peak (max peak in-flight))
+                     ;; Stay "on the wire" long enough for the other fetches
+                     ;; to pile up behind the semaphore.
+                     (aio-await (aio-sleep 0.05))
+                     (cl-decf in-flight)
+                     (let ((buff (generate-new-buffer " *supersonic-tests-response*")))
+                       (with-current-buffer buff
+                         (insert "HTTP/1.1 200 OK\n\n")
+                         (setq-local url-http-end-of-headers (1- (point)))
+                         (insert "cover-art-bytes"))
+                       (cons nil buff)))))
+          (let ((pending
+                  (mapcar
+                    (lambda (id) (supersonic--fetch-art-throttled sem id 100))
+                    '("art-1" "art-2" "art-3" "art-4" "art-5" "art-6"))))
+            (dolist (promise pending)
+              (aio-wait-for promise)))
+          (should (= peak 2))
+          ;; Capped, but every entry still got fetched.
+          (should (file-exists-p (supersonic-art-cache-file "art-6" 100))))
+      (when (file-exists-p supersonic-art-cache-path)
+        (delete-directory supersonic-art-cache-path t)))))
+
+(ert-deftest supersonic-tests-scrobble-does-not-leak-its-response-buffer ()
+  "`supersonic-scrobble' kills the buffer `url-retrieve' hands its
+callback.  Nothing reads that reply, and nothing else cleans it up, so
+without this every scrobbled track would leave a ` *http host:port*'
+buffer behind for the rest of the session."
+  (let ((supersonic-scrobble-plays t)
+        (response nil))
+    (cl-letf (((symbol-function 'supersonic-build-url)
+               (lambda (_endpoint _extra-query) "dummy://url"))
+              ((symbol-function 'url-retrieve)
+               (lambda (_url callback &rest _)
+                 (setq response (generate-new-buffer " *supersonic-tests-response*"))
+                 (with-current-buffer response (funcall callback nil)))))
+      (supersonic-scrobble "track-1")
+      (should response)
+      (should-not (buffer-live-p response)))))
+
 (defun supersonic-tests--buffer-matches (buff regexp)
   "Return non-nil if BUFF's contents match REGEXP."
   (with-current-buffer buff (string-match-p regexp (buffer-string))))
