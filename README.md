@@ -1,6 +1,6 @@
-# subsonic.el
+# supersonic.el
 
-[![MELPA](https://melpa.org/packages/subsonic-badge.svg)](https://melpa.org/#/subsonic)
+[![MELPA](https://melpa.org/packages/supersonic-badge.svg)](https://melpa.org/#/supersonic)
 
 This is a subsonic client for emacs using mpv for music playing.
 
@@ -10,33 +10,34 @@ Add a `~/.authinfo.gpg` or `~/.authinfo` file with the following contents
 
     machine SUBSONIC_URL login USERNAME password PASSWORD
 
-The `subsonic-host` must be set to the same value as SUBSONIC_URL in
+The `supersonic-host` must be set to the same value as SUBSONIC_URL in
 your init file, example below.
 
 ## Usage
 
-The package is available on melpa as `subsonic`
+The package is available on melpa as `supersonic`
 
 Example use-package config:
 
 ```
-(use-package subsonic
-  :commands subsonic
-  :bind (("C-c m" . subsonic))
+(use-package supersonic
+  :commands supersonic
+  :bind (("C-c m" . supersonic))
   :custom
-  (subsonic-host "coolsubsonic.example.com")
-  (subsonic-enable-art t))
+  (supersonic-host "coolsupersonic.example.com")
+  (supersonic-enable-art t)
+  (supersonic-scrobble-plays t))
 ```
 
-In case you are running subsonic server without HTTPS ( HTTP only), add following line to the use-package :custom block 
+In case you are running subsonic server without HTTPS (HTTP only), add following line to the use-package :custom block 
 ```
-(subsonic-ssl nil)
+(supersonic-ssl nil)
 ```
 
-Use the `subsonic` command to open a transient with commonly used
+Use the `supersonic` command to open a transient with commonly used
 commands available.
 
-For a list of available configuration options check `customize-group subsonic`
+For a list of available configuration options check `customize-group supersonic`
 
 ## Play queue
 
@@ -52,43 +53,23 @@ to back:
 
 ## MPRIS
 
-`subsonic-mpris.el` exposes subsonic.el's mpv playback as an MPRIS
+`supersonic-mpris.el` exposes supersonic.el's mpv playback as an MPRIS
 player on the D-Bus session bus, so desktop environments and tools such
 as `playerctl` can see and control it. It is not loaded or activated
-automatically, and subsonic.el has no dependency on it. Enable it
+automatically, and supersonic.el has no dependency on it. Enable it
 explicitly:
 
 ```
-(use-package subsonic
+(use-package supersonic
   :config
-  (require 'subsonic-mpris)
-  (subsonic-mpris-mode t))
+  (require 'supersonic-mpris)
+  (supersonic-mpris-mode t))
 ```
 
 Currently in scope: Play/Pause/PlayPause/Stop/Next/Previous and
 Metadata (title/artist/album/art/length). Seeking, volume, shuffle and
 loop control are not implemented.
 
-## Info
-
-This uses some code from docker.el for examples of transient and
-tabulated-list-mode as well as the mpv logic from mpv.el
-
-This has only been tested with gonic however it should function with
-other servers
-
-## Contributing/Issues
-
-For quick questions, I'm `amk` on libera.chat, you can find me in #emacs
-
-Please send any patches or share any issues you may have on the mailing list here:
-https://lists.sr.ht/~amk/public-inbox
-
-or alternatively if you prefer a pull-request style flow :
-https://codeberg.org/amk/subsonic.el
-
-
 ## Screenshots
 
-![album list view](https://git.sr.ht/~amk/subsonic.el/blob/master/images/artist.png)
-![podcasts view](https://git.sr.ht/~amk/subsonic.el/blob/master/images/podcasts.png)
+TODO
