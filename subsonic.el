@@ -658,7 +658,7 @@ tabulated-list entries."
                 (vector
                   (assoc-default "title" track)
                   (format-seconds "%m:%.2s" duration)
-                  (format "%d" (assoc-default "track" track))))))
+                  (format "%d" (or (assoc-default "track" track) 0))))))
           tracks)))
     result))
 
