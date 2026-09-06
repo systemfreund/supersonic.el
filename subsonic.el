@@ -62,12 +62,12 @@ Used to find the correct authinfo entry."
   :group 'subsonic)
 
 (defcustom subsonic-art-size 100
-  "Set size for the subsonic album art download query."
+  "Set size for the album art download query."
   :type 'integer
   :group 'subsonic)
 
 (defcustom subsonic-art-cache-path (expand-file-name "subsonic-cache" user-emacs-directory)
-  "Path to store cached subsonic art."
+  "Path to store cached art."
   :type 'string
   :group 'subsonic)
 
@@ -801,17 +801,17 @@ tabulated-list entries."
     map))
 
 (defun subsonic-recent-albums ()
-  "Show a list of recently played subsonic albums."
+  "Show a list of recently played albums."
   (interactive)
   (subsonic-albums nil "recent"))
 
 (defun subsonic-random-albums ()
-  "Show a list of random subsonic albums."
+  "Show a list of random albums."
   (interactive)
   (subsonic-albums nil "random"))
 
 (defun subsonic-newest-albums ()
-  "Show a list of recently added subsonic albums."
+  "Show a list of recently added albums."
   (interactive)
   (subsonic-albums nil "newest"))
 
@@ -873,7 +873,7 @@ tabulated-list entries."
     result))
 
 (defun subsonic-artists-refresh ()
-  "Refresh the list of subsonic artists."
+  "Refresh the list of artists."
   (setq tabulated-list-entries
     (subsonic-artists-parse (subsonic-get-json (subsonic-build-url "/getArtists.view" '())))))
 
@@ -884,7 +884,7 @@ tabulated-list entries."
 
 ;;;###autoload
 (defun subsonic-artists ()
-  "List subsonic artists."
+  "List artists."
   (interactive)
   (let ((new-buff (get-buffer-create "*subsonic-artists*")))
     (set-buffer new-buff)
@@ -932,7 +932,7 @@ tabulated-list entries."
   (subsonic-podcast-episodes (tabulated-list-get-id)))
 
 (defun subsonic-add-podcast ()
-  "Add a new subsonic podcast."
+  "Add a new podcast."
   (interactive)
   (subsonic-get-json
     (subsonic-build-url
@@ -940,7 +940,7 @@ tabulated-list entries."
       `(("url" . ,(url-hexify-string (read-string "feed url: ")))))))
 
 (transient-define-prefix
-  subsonic-podcast-help () "Help transient for subsonic podcasts."
+  subsonic-podcast-help () "Help transient for podcasts."
   ["Subsonic podcast help"
     ("a" "Add a podcast" subsonic-add-podcast)
     ("RET" "Open a podcast" subsonic-open-podcast-episodes)])
@@ -954,7 +954,7 @@ tabulated-list entries."
 
 ;;;###autoload
 (defun subsonic-podcasts ()
-  "List subsonic podcasts."
+  "List podcasts."
   (interactive)
   (let ((new-buff (get-buffer-create "*subsonic-podcasts*")))
     (set-buffer new-buff)
@@ -1017,7 +1017,7 @@ tabulated-list entries."
 (transient-define-prefix
   subsonic-podcast-episode-help
   ()
-  "Help transient for subsonic podcast episodes."
+  "Help transient for podcast episodes."
   ["Subsonic podcast episode help"
     ("d" "Download" subsonic-download-podcast-episode)
     ("RET" "Start playing" subsonic-play-podcast)])
@@ -1053,7 +1053,7 @@ tabulated-list entries."
   ["Subsonic"
    ("a" "Artists" subsonic-artists)
    ("r" "Random Albums" subsonic-random-albums)
-   ("n" "Newest Albums" subsonic-newest-albums)
+   ("n" "Newest Albums" subsonic-newest-albums)   
    ("s" "Search subsonic" subsonic-search)
    ("p" "Podcasts" subsonic-podcasts)]
   ["Controls"
