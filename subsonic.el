@@ -160,8 +160,8 @@ every play/enqueue action."
     (let ((socket (make-temp-name (expand-file-name "subsonic-mpv-" temporary-file-directory))))
       (setq subsonic-mpv--process
         (start-process
-          "mpv-player" nil subsonic-mpv
-          ;; "--no-terminal" leave this out, breaks on debian?
+          "supersonic-player" nil subsonic-mpv
+          "--no-terminal"
           "--really-quiet"
           "--no-video"
           "--no-config"
