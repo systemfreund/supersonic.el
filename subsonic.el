@@ -464,7 +464,8 @@ tabulated-list entries."
           (vector
             (if (alist-get 'current entry) "▶" "")
             (if song (assoc-default "title" song) "?")
-            (if song (or (assoc-default "artist" song) "") "")))))
+            (if song (or (assoc-default "artist" song) "") "")
+            (if song (or (assoc-default "album" song) "") "")))))
     playlist))
 
 (defun subsonic-queue-fetch-and-render (buff)
@@ -497,7 +498,7 @@ tabulated-list entries."
   subsonic-queue-mode
   tabulated-list-mode
   "Subsonic Queue"
-  (setq tabulated-list-format [("" 2 nil) ("Title" 40 t) ("Artist" 25 t)])
+  (setq tabulated-list-format [("" 2 nil) ("Title" 40 t) ("Artist" 25 t) ("Album" 25 t)])
   (setq tabulated-list-padding 2)
   (tabulated-list-init-header))
 

@@ -98,6 +98,25 @@ Returns the final value of PREDICATE."
          (should (equal "▶" (aref (nth 1 (car entries)) 0)))
          (should (equal "" (aref (nth 1 (cadr entries)) 0))))))))
 
+(ert-deftest subsonic-tests-queue-parse-includes-song-metadata ()
+  "`subsonic-queue-parse' fills in title, artist and album from the song lookup."
+  (subsonic-tests--with-mpv
+   (cl-letf (((symbol-function 'subsonic-get-json)
+              (lambda (url)
+                `(("subsonic-response"
+                   ("song" ("title" . ,url) ("artist" . "Test Artist") ("album" . "Test Album")))))))
+     (subsonic-mpv-start (list subsonic-tests--track-1))
+     (should (subsonic-tests--wait-for (lambda () (= 1 (hash-table-count subsonic--playlist)))))
+     (let ((result 'pending))
+       (subsonic-mpv-command-with-callback
+        (lambda (response) (setq result response))
+        "get_property" "playlist")
+       (should (subsonic-tests--wait-for (lambda () (not (eq result 'pending)))))
+       (let ((entry (car (subsonic-queue-parse (alist-get 'data result)))))
+         (should (equal subsonic-tests--track-1 (aref (nth 1 entry) 1)))
+         (should (equal "Test Artist" (aref (nth 1 entry) 2)))
+         (should (equal "Test Album" (aref (nth 1 entry) 3))))))))
+
 (provide 'subsonic-tests)
 
 ;;; subsonic-tests.el ends here
