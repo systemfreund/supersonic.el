@@ -5,6 +5,8 @@
 
 This is a subsonic client for emacs using mpv for music playing.
 
+Based on [subsonic.el](https://git.sr.ht/~amk/subsonic.el)
+
 ## Setup
 
 Add a `~/.authinfo.gpg` or `~/.authinfo` file with the following contents
