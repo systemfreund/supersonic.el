@@ -38,6 +38,25 @@ commands available.
 
 For a list of available configuration options check `customize-group subsonic`
 
+## MPRIS
+
+`subsonic-mpris.el` exposes subsonic.el's mpv playback as an MPRIS
+player on the D-Bus session bus, so desktop environments and tools such
+as `playerctl` can see and control it. It is not loaded or activated
+automatically, and subsonic.el has no dependency on it. Enable it
+explicitly:
+
+```
+(use-package subsonic-mpris
+  :after subsonic
+  :config
+  (subsonic-mpris-mode 1))
+```
+
+Currently in scope: Play/Pause/PlayPause/Stop/Next/Previous and
+Metadata (title/artist/album/art/length). Seeking, volume, shuffle and
+loop control are not implemented.
+
 ## Info
 
 This uses some code from docker.el for examples of transient and
