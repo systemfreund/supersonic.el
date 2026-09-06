@@ -33,7 +33,10 @@
 
 (require 'transient)
 
-(defgroup supersonic nil "Customization group for mpv." :prefix "supersonic-" :group 'external)
+(defgroup supersonic nil
+  "Customization group for mpv."
+  :prefix "supersonic-"
+  :group 'external)
 
 (defcustom supersonic-host ""
   "URL of the supersonic service, e.g. \"http://host:4533\".
@@ -183,15 +186,14 @@ every play/enqueue action."
     (supersonic-mpv-kill)
     (let ((socket (make-temp-name (expand-file-name "supersonic-mpv-" temporary-file-directory))))
       (setq supersonic-mpv--process
-            (start-process
-             "supersonic-player" nil supersonic-mpv
-             "--no-terminal"
-             "--really-quiet"
-             "--no-video"
-             "--no-config"
-             "--idle=once"
-             (format "--volume=%d" supersonic-default-volume)
-             (concat "--input-ipc-server=" socket)))
+            (start-process "supersonic-player" nil supersonic-mpv
+                           "--no-terminal"
+                           "--really-quiet"
+                           "--no-video"
+                           "--no-config"
+                           "--idle=once"
+                           (format "--volume=%d" supersonic-default-volume)
+                           (concat "--input-ipc-server=" socket)))
       (set-process-query-on-exit-flag supersonic-mpv--process nil)
       (set-process-sentinel
        supersonic-mpv--process
@@ -199,15 +201,13 @@ every play/enqueue action."
          (when (memq (process-status process) '(exit signal))
            (supersonic-mpv-kill)
            (when (file-exists-p socket)
-             (with-demoted-errors "%S" (delete-file socket))))))
+             (with-demoted-errors "%S"
+               (delete-file socket))))))
       (with-timeout (supersonic-mpv-timeout (supersonic-mpv-kill) (error "Failed to connect to mpv"))
         (while (not (file-exists-p socket))
           (sleep-for 0.05)))
       (setq supersonic-mpv--queue
-            (tq-create
-             (make-network-process :name "supersonic-mpv-socket"
-				   :family 'local
-				   :service socket)))
+            (tq-create (make-network-process :name "supersonic-mpv-socket" :family 'local :service socket)))
       (set-process-filter (tq-process supersonic-mpv--queue) #'supersonic--mpv-socket-filter)
       ;; Have mpv tell us about pause/resume, whoever triggered it, so the now-playing buffer can follow along.  mpv
       ;; answers an `observe_property' with the property's current value right away, which also seeds
@@ -256,51 +256,52 @@ already playing undisturbed and simply queues IDS after it."
 (defun supersonic--mpv-socket-filter (_ output)
   "Filter the mpv socket connection.
 OUTPUT is the stdout read from mpv"
-  (dolist (parsed-response (mapcar #'json-read-from-string
-				   (split-string output "\n" t)))
+  (dolist (parsed-response (mapcar #'json-read-from-string (split-string output "\n" t)))
     (let* ((request-id (alist-get 'request_id parsed-response))
-	   (callback (and request-id (gethash request-id supersonic-mpv--pending-requests))))
+           (callback (and request-id (gethash request-id supersonic-mpv--pending-requests))))
       (cond
        (callback
-	(remhash request-id supersonic-mpv--pending-requests)
-	(funcall callback parsed-response))
+        (remhash request-id supersonic-mpv--pending-requests)
+        (funcall callback parsed-response))
        (t
-	(let ((event (alist-get 'event parsed-response)))
-	  (when (member event '("start-file" "end-file"))
-	    (supersonic-queue-maybe-refresh)
-	    (supersonic-now-playing-maybe-refresh))
-	  ;; mpv reports booleans as JSON true/false, which `json-read'
-	  ;; turns into t and `:json-false' -- the latter being non-nil in
-	  ;; Lisp, so this has to compare against t explicitly.
-	  (when (and (string-equal event "property-change")
-		     (string-equal (alist-get 'name parsed-response) "pause"))
-	    (setq supersonic--paused (eq (alist-get 'data parsed-response) t))
-	    (supersonic-now-playing-maybe-refresh))
-	  (when supersonic-scrobble-plays
-	    (cond
-	     ((string-equal event "end-file")
-	      (supersonic-scrobble (gethash (alist-get 'playlist_entry_id parsed-response)
-					    supersonic--playlist)))
-	     ((string-equal event "start-file")
-	      (supersonic-scrobble (gethash (alist-get 'playlist_entry_id parsed-response)
-					    supersonic--playlist)
-				   t))))))))))
+        (let ((event (alist-get 'event parsed-response)))
+          (when (member event '("start-file" "end-file"))
+            (supersonic-queue-maybe-refresh)
+            (supersonic-now-playing-maybe-refresh))
+          ;; mpv reports booleans as JSON true/false, which `json-read'
+          ;; turns into t and `:json-false' -- the latter being non-nil in
+          ;; Lisp, so this has to compare against t explicitly.
+          (when (and (string-equal event "property-change") (string-equal (alist-get 'name parsed-response) "pause"))
+            (setq supersonic--paused (eq (alist-get 'data parsed-response) t))
+            (supersonic-now-playing-maybe-refresh))
+          (when supersonic-scrobble-plays
+            (cond
+             ((string-equal event "end-file")
+              (supersonic-scrobble (gethash (alist-get 'playlist_entry_id parsed-response) supersonic--playlist)))
+             ((string-equal event "start-file")
+              (supersonic-scrobble (gethash (alist-get 'playlist_entry_id parsed-response) supersonic--playlist)
+                                   t))))))))))
 
 (defun supersonic-scrobble (id &optional now-playing)
   "Scrobble ID and optionally use a NOW-PLAYING request."
   (when supersonic-scrobble-plays
-    (url-retrieve (supersonic-build-url "/scrobble.view"
-					`(("id" . ,id)
-					  ;; send a submission by default
-					  ("submission" . ,(if now-playing "false" "true"))))
-		  ;; Nothing here reads the reply, but `url-retrieve' still hands
-		  ;; the callback a response buffer and then forgets about it --
-		  ;; without this every scrobble leaves one ` *http host:port*'
-		  ;; buffer behind for the rest of the session.  Killing it from
-		  ;; inside the callback is safe: url-http has already handed the
-		  ;; connection back to its keep-alive pool before calling us (see
-		  ;; `url-http-activate-callback').
-		  (lambda (_status) (kill-buffer (current-buffer))))))
+    (url-retrieve
+     (supersonic-build-url
+      "/scrobble.view"
+      `(("id" . ,id)
+        ;; send a submission by default
+        ("submission" .
+         ,(if now-playing
+              "false"
+            "true"))))
+     ;; Nothing here reads the reply, but `url-retrieve' still hands
+     ;; the callback a response buffer and then forgets about it --
+     ;; without this every scrobble leaves one ` *http host:port*'
+     ;; buffer behind for the rest of the session.  Killing it from
+     ;; inside the callback is safe: url-http has already handed the
+     ;; connection back to its keep-alive pool before calling us (see
+     ;; `url-http-activate-callback').
+     (lambda (_status) (kill-buffer (current-buffer))))))
 
 (defun supersonic-auth ()
   "Return the auth-source entry for the current `supersonic-host'.
@@ -326,31 +327,29 @@ session."
 ;; fix byte-compiler complaints
 (defvar url-http-end-of-headers)
 
-(aio-defun supersonic-get-json (url)
-  "Return a promise resolving to the parsed json response from URL."
-  (pcase-let ((`(,status . ,buffer) (aio-await (aio-url-retrieve url))))
-    (unwind-protect
-        (progn
-          (when (plist-get status :error)
-            (error "Failed to fetch %s: %S" url (plist-get status :error)))
-          (with-current-buffer buffer
-            (let*
-                (
-                 (json-array-type 'list)
-                 (json-key-type 'string)
-                 (data
-                  (condition-case nil
-                      (json-read-from-string
-                       ;; The Subsonic API always returns UTF-8 JSON (per RFC 8259); `aio-url-retrieve' doesn't reliably
-                       ;; decode the body for us across Emacs versions, so decode explicitly.  Safe even if it's already
-                       ;; decoded: `decode-coding-string' is a no-op on text that isn't raw undecoded bytes.
-                       (decode-coding-string
-                        (buffer-substring (1+ url-http-end-of-headers) (point-max))
-                        'utf-8))
-                    (json-readtable-error (error "Failed to read json")))))
-              (supersonic--signal-if-failed data)
-              data)))
-      (kill-buffer buffer))))
+(aio-defun
+ supersonic-get-json (url) "Return a promise resolving to the parsed json response from URL."
+ (pcase-let ((`(,status . ,buffer) (aio-await (aio-url-retrieve url))))
+   (unwind-protect
+       (progn
+         (when (plist-get status :error)
+           (error "Failed to fetch %s: %S" url (plist-get status :error)))
+         (with-current-buffer buffer
+           (let*
+               ((json-array-type 'list)
+                (json-key-type 'string)
+                (data
+                 (condition-case nil
+                     (json-read-from-string
+                      ;; The Subsonic API always returns UTF-8 JSON (per RFC 8259); `aio-url-retrieve' doesn't reliably
+                      ;; decode the body for us across Emacs versions, so decode explicitly.  Safe even if it's already
+                      ;; decoded: `decode-coding-string' is a no-op on text that isn't raw undecoded bytes.
+                      (decode-coding-string (buffer-substring (1+ url-http-end-of-headers) (point-max)) 'utf-8))
+                   (json-readtable-error
+                    (error "Failed to read json")))))
+             (supersonic--signal-if-failed data)
+             data)))
+     (kill-buffer buffer))))
 
 (defun supersonic--signal-if-failed (data)
   "Signal an `error' if the parsed Subsonic response DATA reports failure.
@@ -377,80 +376,68 @@ setting is changed."
 
 (defun supersonic-image-propertize (id size)
   "Generate a property displaying cover art ID at SIZE pixels high."
-  (propertize
-   " "
-   'display
-   (create-image (supersonic-art-cache-file id size) nil nil :height size)))
+  (propertize " " 'display (create-image (supersonic-art-cache-file id size) nil nil :height size)))
 
-(aio-defun supersonic--fetch-art (id size)
-  "Ensure cover art ID is cached on disk at SIZE, fetching it if necessary.
+(aio-defun
+ supersonic--fetch-art (id size)
+ "Ensure cover art ID is cached on disk at SIZE, fetching it if necessary.
 Returns a promise that resolves once the fetch has settled; callers
 should re-check `file-exists-p' afterwards rather than assume success,
 since a failed fetch resolves without signalling here."
-  (unless (file-exists-p (supersonic-art-cache-file id size))
-    (unless (file-exists-p supersonic-art-cache-path)
-      (mkdir supersonic-art-cache-path))
-    (pcase-let ((`(,status . ,buffer)
-                 (aio-await
-                  (aio-url-retrieve
-                   (supersonic-build-url
-                    "/getCoverArt.view"
-                    `(("id" . ,id) ("size" . ,(int-to-string size))))))))
-      (unwind-protect
-          (unless (plist-get status :error)
-            (with-current-buffer buffer
-              ;; Cover art is arbitrary binary image data, not text -- write the bytes as-is instead of letting Emacs
-              ;; guess (and possibly prompt for) a coding system.
-              (let ((coding-system-for-write 'no-conversion))
-                (write-region
-                 (1+ url-http-end-of-headers)
-                 (point-max)
-                 (supersonic-art-cache-file id size)
-                 nil
-                 'no-message))))
-        (kill-buffer buffer)))))
+ (unless (file-exists-p (supersonic-art-cache-file id size))
+   (unless (file-exists-p supersonic-art-cache-path)
+     (mkdir supersonic-art-cache-path))
+   (pcase-let ((`(,status . ,buffer)
+                (aio-await
+                 (aio-url-retrieve
+                  (supersonic-build-url "/getCoverArt.view" `(("id" . ,id) ("size" . ,(int-to-string size))))))))
+     (unwind-protect
+         (unless (plist-get status :error)
+           (with-current-buffer buffer
+             ;; Cover art is arbitrary binary image data, not text -- write the bytes as-is instead of letting Emacs
+             ;; guess (and possibly prompt for) a coding system.
+             (let ((coding-system-for-write 'no-conversion))
+               (write-region (1+ url-http-end-of-headers) (point-max) (supersonic-art-cache-file id size)
+                             nil
+                             'no-message))))
+       (kill-buffer buffer)))))
 
-(aio-defun supersonic--fetch-art-throttled (sem id size)
-  "Fetch cover art ID at SIZE once SEM hands out a slot.
+(aio-defun
+ supersonic--fetch-art-throttled (sem id size)
+ "Fetch cover art ID at SIZE once SEM hands out a slot.
 Callers create every fetch up front, so the semaphore -- not the number
 of entries -- is what decides how many requests are on the wire at once
 (see `supersonic-art-fetch-concurrency').  Failures are swallowed here
 rather than left to reject, so that a slot is always given back and one
 unreachable cover doesn't hold up the rest."
-  (aio-await (aio-sem-wait sem))
-  (aio-await (aio-catch (supersonic--fetch-art id size)))
-  (aio-sem-post sem))
+ (aio-await (aio-sem-wait sem)) (aio-await (aio-catch (supersonic--fetch-art id size))) (aio-sem-post sem))
 
-(aio-defun supersonic-get-images (entries n buff)
-  "Fetch/cache cover art for ENTRIES and paint it into column N of BUFF.
+(aio-defun
+ supersonic-get-images (entries n buff)
+ "Fetch/cache cover art for ENTRIES and paint it into column N of BUFF.
 Fetches are fired up front, before anything is awaited, but only
 `supersonic-art-fetch-concurrency' of them run at a time; individual
 failures are tolerated, leaving those entries without art rather than
 aborting the rest.  BUFF is (re)printed once every fetch has settled,
 so callers don't need to print again themselves."
-  (if (or (not supersonic-enable-art) (not (display-graphic-p)))
-      (dolist (entry entries)
-        (aset (nth 1 entry) n ""))
-    (let*
-        (
-         (sem (aio-sem supersonic-art-fetch-concurrency))
-         (pending
-          (mapcar
-           (lambda (entry)
-             (cons entry (supersonic--fetch-art-throttled sem (car entry) supersonic-list-art-size)))
-           entries)))
-      (dolist (item pending)
-        (aio-await (cdr item))
-        (let ((entry (car item)))
-          (when (file-exists-p (supersonic-art-cache-file (car entry) supersonic-list-art-size))
-            (aset
-             (nth 1 entry)
-             n
-             (supersonic-image-propertize (car entry) supersonic-list-art-size)))))))
-  (when (buffer-live-p buff)
-    (with-current-buffer buff
-      (when (derived-mode-p 'tabulated-list-mode)
-        (tabulated-list-print t)))))
+ (if (or (not supersonic-enable-art) (not (display-graphic-p)))
+     (dolist (entry entries)
+       (aset (nth 1 entry) n ""))
+   (let* ((sem (aio-sem supersonic-art-fetch-concurrency))
+          (pending
+           (mapcar
+            (lambda (entry)
+              (cons entry (supersonic--fetch-art-throttled sem (car entry) supersonic-list-art-size)))
+            entries)))
+     (dolist (item pending)
+       (aio-await (cdr item))
+       (let ((entry (car item)))
+         (when (file-exists-p (supersonic-art-cache-file (car entry) supersonic-list-art-size))
+           (aset (nth 1 entry) n (supersonic-image-propertize (car entry) supersonic-list-art-size)))))))
+ (when (buffer-live-p buff)
+   (with-current-buffer buff
+     (when (derived-mode-p 'tabulated-list-mode)
+       (tabulated-list-print t)))))
 
 
 (defun supersonic-recursive-assoc (data keys)
@@ -483,13 +470,11 @@ EXTRA-QUERY is used for any extra query parameters"
     (if auth
         (let ((host (plist-get auth :host)))
           (concat
-           (unless (string-match-p "\\`https?://" host) "https://")
+           (unless (string-match-p "\\`https?://" host)
+             "https://")
            host "/rest" endpoint
            (supersonic-alist->query
-            (append
-             (supersonic--auth-query)
-             `(("c" . "ElSonic") ("v" . "1.16.0") ("f" . "json"))
-             extra-query))))
+            (append (supersonic--auth-query) `(("c" . "ElSonic") ("v" . "1.16.0") ("f" . "json")) extra-query))))
       (error
        "Failed to load .authinfo, please provide auth configuration for
 supersonic, and ensure supersonic-host is set correctly"))))
@@ -529,7 +514,8 @@ this macro -- before transforming it, and the `condition-case' this
 expands to is itself transform-aware."
   (declare (indent 2))
   `(condition-case err
-       (progn ,@body)
+       (progn
+         ,@body)
      (error
       (if ,buff
           (supersonic--handle-async-error ,buff ,description err)
@@ -556,13 +542,13 @@ connection, so callers that must stay in sync with mpv's actual state
 of assuming the command went through."
   (if supersonic-mpv--queue
       (progn
-	(tq-enqueue
+        (tq-enqueue
          supersonic-mpv--queue
          (concat (json-serialize (list 'command (apply #'vector args))) "\n")
          ""
          nil
          (lambda (_x _y)))
-	t)
+        t)
     (progn
       (message "MPV not running")
       nil)))
@@ -574,31 +560,29 @@ command is tagged with a fresh request_id, and CALLBACK is invoked
 with the full parsed JSON reply once `supersonic--mpv-socket-filter'
 sees a response carrying that same request_id."
   (if supersonic-mpv--queue
-      (let ((request-id (setq supersonic-mpv--request-counter
-			      (1+ supersonic-mpv--request-counter))))
-	(puthash request-id callback supersonic-mpv--pending-requests)
-	(tq-enqueue
-	 supersonic-mpv--queue
-	 (concat
-	  (json-serialize (list 'command (apply #'vector args) 'request_id request-id))
-	  "\n")
-	 ""
-	 nil
-	 (lambda (_x _y))))
+      (let ((request-id (setq supersonic-mpv--request-counter (1+ supersonic-mpv--request-counter))))
+        (puthash request-id callback supersonic-mpv--pending-requests)
+        (tq-enqueue
+         supersonic-mpv--queue
+         (concat (json-serialize (list 'command (apply #'vector args) 'request_id request-id)) "\n")
+         ""
+         nil
+         (lambda (_x _y))))
     (message "MPV not running")))
 
-(aio-defun supersonic-mpv-get-property (name)
-  "Return a promise resolving to mpv's current value of property NAME.
+(aio-defun
+ supersonic-mpv-get-property (name)
+ "Return a promise resolving to mpv's current value of property NAME.
 The `aio' counterpart of `supersonic-mpv-command-with-callback', for
 callers that want to keep reading mpv state in a straight line instead
 of nesting callbacks.  Only call this with mpv running: without a live
 IPC connection no reply can ever arrive, and the promise stays
 unresolved forever."
-  (let ((promise (aio-promise)))
-    (supersonic-mpv-command-with-callback
-     (lambda (response) (aio-resolve promise (lambda () (alist-get 'data response))))
-     "get_property" name)
-    (aio-await promise)))
+ (let ((promise (aio-promise)))
+   (supersonic-mpv-command-with-callback (lambda (response)
+                                           (aio-resolve promise (lambda () (alist-get 'data response))))
+                                         "get_property" name)
+   (aio-await promise)))
 
 ;;;###autoload
 (defun supersonic-toggle-playing ()
@@ -650,58 +634,66 @@ starting or ending."
     (when buff
       (supersonic-queue-fetch-and-render buff))))
 
-(aio-defun supersonic-queue-parse (playlist)
-  "Turn mpv's PLAYLIST (from a \"get_property playlist\" reply) into
+(aio-defun
+ supersonic-queue-parse (playlist)
+ "Turn mpv's PLAYLIST (from a \"get_property playlist\" reply) into
 tabulated-list entries.
 Fetches each entry's song metadata concurrently (fired up front, below,
 before anything is awaited) and tolerates individual lookup failures
 via `aio-catch', falling back to the \"?\" placeholder row instead of
 aborting the whole render."
-  (let*
-      (
-       (pending
-        (mapcar
-         (lambda (entry)
-           (let* ((mpv-id (alist-get 'id entry))
-                  (track-id (gethash mpv-id supersonic--playlist)))
-             (list entry mpv-id track-id
-                   (and track-id
-                        (aio-catch
-                         (supersonic-get-json (supersonic-build-url "/getSong.view" `(("id" . ,track-id)))))))))
-         playlist)))
-    ;; A plain `mapcar' lambda would call `aio-await' through an ordinary `funcall', outside of this function's own
-    ;; generator machinery, which `generator.el' cannot transform -- so this collects results via a `dolist', which
-    ;; (like `while') stays inline and awaits correctly.
-    (let (rows)
-      (dolist (item pending)
-        (pcase-let ((`(,entry ,mpv-id ,track-id ,promise) item))
-          (let* ((outcome (and promise (aio-await promise)))
-                 (song
-                  (and outcome (eq (car outcome) :success)
-                       (supersonic-recursive-assoc (cdr outcome) '("subsonic-response" "song")))))
-            (push
-             (list
-              (or track-id (format "%s" mpv-id))
-              (vector
-               (if (alist-get 'current entry) "▶" "")
-               (if song (assoc-default "title" song) "?")
-               (if song (or (assoc-default "artist" song) "") "")
-               (if song (or (assoc-default "album" song) "") "")))
-             rows))))
-      (nreverse rows))))
+ (let* ((pending
+         (mapcar
+          (lambda (entry)
+            (let* ((mpv-id (alist-get 'id entry))
+                   (track-id (gethash mpv-id supersonic--playlist)))
+              (list
+               entry mpv-id track-id
+               (and track-id
+                    (aio-catch (supersonic-get-json (supersonic-build-url "/getSong.view" `(("id" . ,track-id)))))))))
+          playlist)))
+   ;; A plain `mapcar' lambda would call `aio-await' through an ordinary `funcall', outside of this function's own
+   ;; generator machinery, which `generator.el' cannot transform -- so this collects results via a `dolist', which
+   ;; (like `while') stays inline and awaits correctly.
+   (let (rows)
+     (dolist (item pending)
+       (pcase-let ((`(,entry ,mpv-id ,track-id ,promise) item))
+         (let* ((outcome (and promise (aio-await promise)))
+                (song
+                 (and outcome
+                      (eq (car outcome) :success)
+                      (supersonic-recursive-assoc (cdr outcome) '("subsonic-response" "song")))))
+           (push (list
+                  (or track-id (format "%s" mpv-id))
+                  (vector
+                   (if (alist-get 'current entry)
+                       "▶"
+                     "")
+                   (if song
+                       (assoc-default "title" song)
+                     "?")
+                   (if song
+                       (or (assoc-default "artist" song) "")
+                     "")
+                   (if song
+                       (or (assoc-default "album" song) "")
+                     "")))
+                 rows))))
+     (nreverse rows))))
 
 (defun supersonic-queue-fetch-and-render (buff)
   "Query mpv for its current playlist and render it into BUFF."
   (if (supersonic-mpv-live-p)
-      (supersonic-mpv-command-with-callback
-       (aio-lambda (response)
-         (when (buffer-live-p buff)
-           (let ((entries (aio-await (supersonic-queue-parse (alist-get 'data response)))))
-             (when (buffer-live-p buff)
-               (with-current-buffer buff
-                 (setq tabulated-list-entries entries)
-                 (tabulated-list-print t))))))
-       "get_property" "playlist")
+      (supersonic-mpv-command-with-callback (aio-lambda
+                                             (response)
+                                             (when (buffer-live-p buff)
+                                               (let ((entries
+                                                      (aio-await (supersonic-queue-parse (alist-get 'data response)))))
+                                                 (when (buffer-live-p buff)
+                                                   (with-current-buffer buff
+                                                     (setq tabulated-list-entries entries)
+                                                     (tabulated-list-print t))))))
+                                            "get_property" "playlist")
     (when (buffer-live-p buff)
       (with-current-buffer buff
         (setq tabulated-list-entries nil)
@@ -718,12 +710,12 @@ aborting the whole render."
     map))
 
 (define-derived-mode
-  supersonic-queue-mode
-  tabulated-list-mode
-  "Supersonic Queue"
-  (setq tabulated-list-format [("" 2 nil) ("Title" 40 t) ("Artist" 25 t) ("Album" 25 t)])
-  (setq tabulated-list-padding 2)
-  (tabulated-list-init-header))
+ supersonic-queue-mode
+ tabulated-list-mode
+ "Supersonic Queue"
+ (setq tabulated-list-format [("" 2 nil) ("Title" 40 t) ("Artist" 25 t) ("Album" 25 t)])
+ (setq tabulated-list-padding 2)
+ (tabulated-list-init-header))
 
 ;;;###autoload
 (defun supersonic-show-queue ()
@@ -761,9 +753,7 @@ another round of metadata lookups just to learn what to count towards.")
   (unless supersonic-now-playing--timer
     (setq supersonic-now-playing--timer
           (run-at-time
-           supersonic-now-playing-interval
-           supersonic-now-playing-interval
-           #'supersonic-now-playing--tick))))
+           supersonic-now-playing-interval supersonic-now-playing-interval #'supersonic-now-playing--tick))))
 
 (defun supersonic-now-playing--stop-timer ()
   "Stop ticking the playback position."
@@ -783,15 +773,13 @@ display."
       (supersonic-now-playing--stop-timer))
      ((not (get-buffer-window buff t)))
      (t
-      (supersonic-mpv-command-with-callback
-       (lambda (response)
-         (supersonic-now-playing--update-field
-          buff
-          'duration
-          (supersonic-now-playing--position
-           (alist-get 'data response)
-           (buffer-local-value 'supersonic-now-playing--duration buff))))
-       "get_property" "time-pos")))))
+      (supersonic-mpv-command-with-callback (lambda (response)
+                                              (supersonic-now-playing--update-field
+                                               buff 'duration
+                                               (supersonic-now-playing--position
+                                                (alist-get 'data response)
+                                                (buffer-local-value 'supersonic-now-playing--duration buff))))
+                                            "get_property" "time-pos")))))
 
 (defun supersonic-now-playing-maybe-refresh ()
   "Refresh the now-playing buffer from mpv's state, if it is open.
@@ -808,7 +796,9 @@ can replace it later without re-rendering the whole buffer."
   (when value
     (insert
      (propertize (format "%-10s" (concat label ":")) 'face 'shadow)
-     (if field (propertize value 'supersonic-now-playing-field field) value)
+     (if field
+         (propertize value 'supersonic-now-playing-field field)
+       value)
      "\n")))
 
 (defun supersonic-now-playing--update-field (buff field value)
@@ -849,17 +839,22 @@ minute track but \"1:05:01\" once an hour is on the clock."
     (format "%s / %s"
             (supersonic-now-playing--format-time position duration)
             (supersonic-now-playing--format-time duration duration)))
-   (duration (supersonic-now-playing--format-time duration duration))
-   (position (supersonic-now-playing--format-time position position))))
+   (duration
+    (supersonic-now-playing--format-time duration duration))
+   (position
+    (supersonic-now-playing--format-time position position))))
 
 (defun supersonic-now-playing--format (song)
   "Return SONG's file format as \"MP3 (audio/mpeg)\", or nil if unknown."
   (let ((suffix (assoc-default "suffix" song))
         (type (assoc-default "contentType" song)))
     (cond
-     ((and suffix type) (format "%s (%s)" (upcase suffix) type))
-     (suffix (upcase suffix))
-     (type type))))
+     ((and suffix type)
+      (format "%s (%s)" (upcase suffix) type))
+     (suffix
+      (upcase suffix))
+     (type
+      type))))
 
 (defun supersonic-now-playing--art (song)
   "Return a display string for SONG's cover art, or nil if there is none.
@@ -895,13 +890,19 @@ placeholder saying that nothing is playing."
             (when art
               (insert art "\n\n"))
             (insert
-             (propertize (or (assoc-default "title" song) "?") 'face 'bold)
-             "  "
-             (propertize (if paused "(paused)" "(playing)") 'face 'shadow)
+             (propertize (or (assoc-default "title" song) "?") 'face 'bold) "  "
+             (propertize (if paused
+                             "(paused)"
+                           "(playing)")
+                         'face 'shadow)
              "\n\n")
             (supersonic-now-playing--insert-button "|◀◀" #'supersonic-prev-track)
             (insert "  ")
-            (supersonic-now-playing--insert-button (if paused " ▶ " " ⏸ ") #'supersonic-toggle-playing)
+            (supersonic-now-playing--insert-button
+             (if paused
+                 " ▶ "
+               " ⏸ ")
+             #'supersonic-toggle-playing)
             (insert "  ")
             (supersonic-now-playing--insert-button "▶▶|" #'supersonic-skip-track)
             (insert "  ")
@@ -912,50 +913,39 @@ placeholder saying that nothing is playing."
             (supersonic-now-playing--insert-field "Title" (assoc-default "title" song))
             (supersonic-now-playing--insert-field "Artist" (assoc-default "artist" song))
             (supersonic-now-playing--insert-field "Album" (assoc-default "album" song))
-            (supersonic-now-playing--insert-field
-             "Duration"
-             (supersonic-now-playing--position position duration)
-             'duration)
+            (supersonic-now-playing--insert-field "Duration" (supersonic-now-playing--position position duration)
+                                                  'duration)
             (supersonic-now-playing--insert-field "Format" (supersonic-now-playing--format song))
-            (supersonic-now-playing--insert-field
-             "Size"
-             (and size (format "%.2f MB" (/ size 1048576.0))))))
+            (supersonic-now-playing--insert-field "Size" (and size (format "%.2f MB" (/ size 1048576.0))))))
         (goto-char (point-min))))))
 
-(aio-defun supersonic-now-playing-fetch-and-render (buff)
-  "Query mpv for the track it is currently on and render it into BUFF.
+(aio-defun
+ supersonic-now-playing-fetch-and-render (buff)
+ "Query mpv for the track it is currently on and render it into BUFF.
 Tolerates a failing metadata lookup the way `supersonic-queue-parse'
 does: rather than blanking a view that refreshes on every track change,
 it falls back to showing the bare track id."
-  (if (not (supersonic-mpv-live-p))
-      (supersonic-now-playing--render buff nil nil nil)
-    (let* ((playlist (aio-await (supersonic-mpv-get-property "playlist")))
-           (entry (seq-find (lambda (item) (alist-get 'current item)) playlist))
-           (track-id (and entry (gethash (alist-get 'id entry) supersonic--playlist))))
-      (if (not track-id)
-          (supersonic-now-playing--render buff nil nil nil)
-        (let* ((outcome
-                (aio-await
-                 (aio-catch
-                  (supersonic-get-json
-                   (supersonic-build-url "/getSong.view" `(("id" . ,track-id)))))))
-               (song
-                (if (eq (car outcome) :success)
-                    (supersonic-recursive-assoc (cdr outcome) '("subsonic-response" "song"))
-                  `(("title" . ,track-id)))))
-          (when (and supersonic-enable-art (assoc-default "coverArt" song))
-            (aio-await
-             (aio-catch
-              (supersonic--fetch-art
-               (assoc-default "coverArt" song)
-               supersonic-now-playing-art-size))))
-          ;; Asked for last, so the position is as fresh as possible: the
-          ;; art fetch above can take a while on a cold cache.
-          (supersonic-now-playing--render
-           buff
-           song
-           supersonic--paused
-           (aio-await (supersonic-mpv-get-property "time-pos"))))))))
+ (if (not (supersonic-mpv-live-p))
+     (supersonic-now-playing--render buff nil nil nil)
+   (let* ((playlist (aio-await (supersonic-mpv-get-property "playlist")))
+          (entry (seq-find (lambda (item) (alist-get 'current item)) playlist))
+          (track-id (and entry (gethash (alist-get 'id entry) supersonic--playlist))))
+     (if (not track-id)
+         (supersonic-now-playing--render buff nil nil nil)
+       (let* ((outcome
+               (aio-await
+                (aio-catch (supersonic-get-json (supersonic-build-url "/getSong.view" `(("id" . ,track-id)))))))
+              (song
+               (if (eq (car outcome) :success)
+                   (supersonic-recursive-assoc (cdr outcome) '("subsonic-response" "song"))
+                 `(("title" . ,track-id)))))
+         (when (and supersonic-enable-art (assoc-default "coverArt" song))
+           (aio-await
+            (aio-catch (supersonic--fetch-art (assoc-default "coverArt" song) supersonic-now-playing-art-size))))
+         ;; Asked for last, so the position is as fresh as possible: the
+         ;; art fetch above can take a while on a cold cache.
+         (supersonic-now-playing--render
+          buff song supersonic--paused (aio-await (supersonic-mpv-get-property "time-pos"))))))))
 
 (defun supersonic-now-playing-refresh ()
   "Refresh the now-playing buffer from mpv's current state."
@@ -973,10 +963,10 @@ it falls back to showing the bare track id."
     map))
 
 (define-derived-mode
-  supersonic-now-playing-mode
-  special-mode
-  "Supersonic Now Playing"
-  "Major mode for the buffer opened by `supersonic-show-now-playing'.")
+ supersonic-now-playing-mode
+ special-mode
+ "Supersonic Now Playing"
+ "Major mode for the buffer opened by `supersonic-show-now-playing'.")
 
 ;;;###autoload
 (defun supersonic-show-now-playing ()
@@ -995,7 +985,7 @@ play queue buffer keeps itself current."
 (defun supersonic-get-id-as-string (data)
   (let ((id (assoc-default "id" data)))
     (if (numberp id)
-	(number-to-string id)
+        (number-to-string id)
       id)))
 
 ;;;
@@ -1003,39 +993,32 @@ play queue buffer keeps itself current."
 ;;;
 (defun supersonic-search-parse (data)
   "Retrieve a list of search results from some parsed json DATA."
-  (let*
-      (
-       (search-results (supersonic-recursive-assoc data '("subsonic-response" "searchResult3")))
-       (result
-        (append
-         (mapcar
-          (lambda (artist)
-            (list
-             `(,(supersonic-get-id-as-string artist) . "artist")
-             (vector "Artist" (assoc-default "name" artist))))
-          (assoc-default "artist" search-results))
-         (mapcar
-          (lambda (album)
-            (list
-             `(,(supersonic-get-id-as-string album) . "album")
-             (vector "Album" (assoc-default "name" album))))
-          (assoc-default "album" search-results))
-         (mapcar
-          (lambda (song)
-            (list
-             `(,(supersonic-get-id-as-string song) . "song")
-             (vector "Song" (assoc-default "title" song))))
-          (assoc-default "song" search-results)))))
+  (let* ((search-results (supersonic-recursive-assoc data '("subsonic-response" "searchResult3")))
+         (result
+          (append
+           (mapcar
+            (lambda (artist)
+              (list
+               `(,(supersonic-get-id-as-string artist) . "artist") (vector "Artist" (assoc-default "name" artist))))
+            (assoc-default "artist" search-results))
+           (mapcar
+            (lambda (album)
+              (list `(,(supersonic-get-id-as-string album) . "album") (vector "Album" (assoc-default "name" album))))
+            (assoc-default "album" search-results))
+           (mapcar
+            (lambda (song)
+              (list `(,(supersonic-get-id-as-string song) . "song") (vector "Song" (assoc-default "title" song))))
+            (assoc-default "song" search-results)))))
     result))
 
-(aio-defun supersonic-search-refresh (query buff)
-  "Refresh the list of search results from QUERY into BUFF."
-  (supersonic--with-async-error-handling buff "search"
-    (let ((data (aio-await (supersonic-get-json (supersonic-build-url "/search3.view" `(("query" . ,query)))))))
-      (when (buffer-live-p buff)
-        (with-current-buffer buff
-          (setq tabulated-list-entries (supersonic-search-parse data))
-          (tabulated-list-print t))))))
+(aio-defun
+ supersonic-search-refresh (query buff) "Refresh the list of search results from QUERY into BUFF."
+ (supersonic--with-async-error-handling buff "search"
+   (let ((data (aio-await (supersonic-get-json (supersonic-build-url "/search3.view" `(("query" . ,query)))))))
+     (when (buffer-live-p buff)
+       (with-current-buffer buff
+         (setq tabulated-list-entries (supersonic-search-parse data))
+         (tabulated-list-print t))))))
 
 (defun supersonic-open-search-appropriate-result (result)
   "Opens the RESULT from a search in the appropriate buffer."
@@ -1068,13 +1051,13 @@ play queue buffer keeps itself current."
     (pop-to-buffer-same-window new-buff)))
 
 (define-derived-mode
-  supersonic-search-mode
-  tabulated-list-mode
-  "Supersonic search mode"
-  ;;  type: artist|album|track
-  (setq tabulated-list-format [("Type" 10 t) ("Name" 30 t)])
-  (setq tabulated-list-padding 2)
-  (tabulated-list-init-header))
+ supersonic-search-mode
+ tabulated-list-mode
+ "Supersonic search mode"
+ ;;  type: artist|album|track
+ (setq tabulated-list-format [("Type" 10 t) ("Name" 30 t)])
+ (setq tabulated-list-padding 2)
+ (tabulated-list-init-header))
 
 
 ;;;
@@ -1106,41 +1089,42 @@ the response at the wrong key."
 
 (defun supersonic-tracks-parse (data)
   "Parse tracks from json DATA."
-  (let*
-      (
-       (tracks (supersonic-recursive-assoc data (supersonic--tracks-extract-path)))
-       (result
-        (mapcar
-         (lambda (track)
-           (let* ((duration (assoc-default "duration" track)))
-             (list
-              (supersonic-get-id-as-string track)
-              (vector
-               (assoc-default "title" track)
-               (format-seconds "%m:%.2s" duration)
-               (format "%d" (or (assoc-default "track" track) 0))))))
-         tracks)))
+  (let* ((tracks (supersonic-recursive-assoc data (supersonic--tracks-extract-path)))
+         (result
+          (mapcar
+           (lambda (track)
+             (let* ((duration (assoc-default "duration" track)))
+               (list
+                (supersonic-get-id-as-string track)
+                (vector
+                 (assoc-default "title" track)
+                 (format-seconds "%m:%.2s" duration)
+                 (format "%d" (or (assoc-default "track" track) 0))))))
+           tracks)))
     result))
 
-(aio-defun supersonic-tracks-json (id)
-  "Fetch the raw getAlbum/getMusicDirectory json response for ID."
-  (aio-await
-   (supersonic-get-json (if supersonic-browse-by-tags
-			    (supersonic-build-url "/getAlbum.view" `(("id" . ,id)))
-			  (supersonic-build-url "/getMusicDirectory.view" `(("id" . ,id)))))))
+(aio-defun
+ supersonic-tracks-json (id) "Fetch the raw getAlbum/getMusicDirectory json response for ID."
+ (aio-await
+  (supersonic-get-json
+   (if supersonic-browse-by-tags
+       (supersonic-build-url "/getAlbum.view" `(("id" . ,id)))
+     (supersonic-build-url "/getMusicDirectory.view" `(("id" . ,id)))))))
 
-(aio-defun supersonic-get-album-track-ids (id)
-  "Return the list of track ids for album/directory ID."
-  (mapcar #'car (supersonic-tracks-parse (aio-await (supersonic-tracks-json id)))))
+(aio-defun
+ supersonic-get-album-track-ids
+ (id)
+ "Return the list of track ids for album/directory ID."
+ (mapcar #'car (supersonic-tracks-parse (aio-await (supersonic-tracks-json id)))))
 
-(aio-defun supersonic-tracks-refresh (id buff)
-  "Refresh the list of tracks from ID into BUFF."
-  (supersonic--with-async-error-handling buff "fetch tracks"
-    (let ((data (aio-await (supersonic-tracks-json id))))
-      (when (buffer-live-p buff)
-        (with-current-buffer buff
-          (setq tabulated-list-entries (supersonic-tracks-parse data))
-          (tabulated-list-print t))))))
+(aio-defun
+ supersonic-tracks-refresh (id buff) "Refresh the list of tracks from ID into BUFF."
+ (supersonic--with-async-error-handling buff "fetch tracks"
+   (let ((data (aio-await (supersonic-tracks-json id))))
+     (when (buffer-live-p buff)
+       (with-current-buffer buff
+         (setq tabulated-list-entries (supersonic-tracks-parse data))
+         (tabulated-list-print t))))))
 
 (defun supersonic-play-tracks ()
   "Play all the tracks after the point in the list."
@@ -1168,12 +1152,12 @@ the response at the wrong key."
     (pop-to-buffer-same-window new-buff)))
 
 (define-derived-mode
-  supersonic-tracks-mode
-  tabulated-list-mode
-  "Supersonic Tracks"
-  (setq tabulated-list-format [("Title" 30 t) ("Duration" 10 t) ("Track" 10 t)])
-  (setq tabulated-list-padding 2)
-  (tabulated-list-init-header))
+ supersonic-tracks-mode
+ tabulated-list-mode
+ "Supersonic Tracks"
+ (setq tabulated-list-format [("Title" 30 t) ("Duration" 10 t) ("Track" 10 t)])
+ (setq tabulated-list-padding 2)
+ (tabulated-list-init-header))
 
 ;;;
 ;;; Albums
@@ -1181,74 +1165,65 @@ the response at the wrong key."
 
 (defun supersonic-albums-parse (data)
   "Retrieve a list of albums from some parsed json DATA."
-  (let*
-      (
-       (albums (supersonic-recursive-assoc data '("subsonic-response" "artist" "album")))
-       (result
-        (mapcar
-         (lambda (album)
-           (list
-            (supersonic-get-id-as-string album)
-            (vector
-             (format "%d" (or (assoc-default "year" album) 0))
-             (assoc-default "name" album)
-             "")))
-         albums)))
+  (let* ((albums (supersonic-recursive-assoc data '("subsonic-response" "artist" "album")))
+         (result
+          (mapcar
+           (lambda (album)
+             (list
+              (supersonic-get-id-as-string album)
+              (vector (format "%d" (or (assoc-default "year" album) 0)) (assoc-default "name" album) "")))
+           albums)))
     result))
 
 (defun supersonic-albums-type-parse (data)
   "Retrieve a list of albums from some parsed json DATA."
-  (let*
-      (
-       (albums (supersonic-recursive-assoc data '("subsonic-response" "albumList2" "album")))
-       (result
-        (mapcar
-         (lambda (album)
-           (list
-            (supersonic-get-id-as-string album)
-            (vector (assoc-default "name" album) (assoc-default "artist" album) "")))
-         albums)))
+  (let* ((albums (supersonic-recursive-assoc data '("subsonic-response" "albumList2" "album")))
+         (result
+          (mapcar
+           (lambda (album)
+             (list
+              (supersonic-get-id-as-string album)
+              (vector (assoc-default "name" album) (assoc-default "artist" album) "")))
+           albums)))
     result))
 
-(aio-defun supersonic-albums-refresh (id buff)
-  "Refresh the albums list for a given artist ID into BUFF."
-  (supersonic--with-async-error-handling buff "fetch albums"
-    (let ((data (aio-await (supersonic-get-json (supersonic-build-url "/getArtist.view" `(("id" . ,id)))))))
-      (when (buffer-live-p buff)
-        (with-current-buffer buff
-          (setq tabulated-list-entries (supersonic-albums-parse data))
-          (tabulated-list-print t)
-          (supersonic-get-images tabulated-list-entries 2 buff))))))
+(aio-defun
+ supersonic-albums-refresh (id buff) "Refresh the albums list for a given artist ID into BUFF."
+ (supersonic--with-async-error-handling buff "fetch albums"
+   (let ((data (aio-await (supersonic-get-json (supersonic-build-url "/getArtist.view" `(("id" . ,id)))))))
+     (when (buffer-live-p buff)
+       (with-current-buffer buff
+         (setq tabulated-list-entries (supersonic-albums-parse data))
+         (tabulated-list-print t)
+         (supersonic-get-images tabulated-list-entries 2 buff))))))
 
 
-(aio-defun supersonic-albums-refresh-type (type buff)
-  "Refresh the albums list for a given albumlist TYPE into BUFF."
-  (supersonic--with-async-error-handling buff "fetch albums"
-    (let ((data
-           (aio-await
-            (supersonic-get-json
-             (supersonic-build-url
-              "/getAlbumList2.view"
-              `(("type" . ,type) ("size" . ,(number-to-string supersonic-album-list-count))))))))
-      (when (buffer-live-p buff)
-        (with-current-buffer buff
-          (setq tabulated-list-entries (supersonic-albums-type-parse data))
-          (tabulated-list-print t)
-          (supersonic-get-images tabulated-list-entries 2 buff))))))
+(aio-defun
+ supersonic-albums-refresh-type (type buff) "Refresh the albums list for a given albumlist TYPE into BUFF."
+ (supersonic--with-async-error-handling buff "fetch albums"
+   (let ((data
+          (aio-await
+           (supersonic-get-json
+            (supersonic-build-url
+             "/getAlbumList2.view" `(("type" . ,type) ("size" . ,(number-to-string supersonic-album-list-count))))))))
+     (when (buffer-live-p buff)
+       (with-current-buffer buff
+         (setq tabulated-list-entries (supersonic-albums-type-parse data))
+         (tabulated-list-print t)
+         (supersonic-get-images tabulated-list-entries 2 buff))))))
 
 (defun supersonic-open-tracks ()
   "Open a list of tracks at point."
   (interactive)
   (supersonic-tracks (tabulated-list-get-id)))
 
-(aio-defun supersonic-enqueue-album ()
-  "Add all the tracks of the album at point to the play queue."
-  (interactive)
-  (supersonic--with-async-error-handling nil "enqueue album"
-    (let* ((track-id (tabulated-list-get-id))
-           (ids (aio-await (supersonic-get-album-track-ids track-id))))
-      (supersonic-mpv-enqueue ids)
-      (message "Added %d track(s) to the queue" (length ids)))))
+(aio-defun
+ supersonic-enqueue-album () "Add all the tracks of the album at point to the play queue." (interactive)
+ (supersonic--with-async-error-handling nil "enqueue album"
+   (let* ((track-id (tabulated-list-get-id))
+          (ids (aio-await (supersonic-get-album-track-ids track-id))))
+     (supersonic-mpv-enqueue ids)
+     (message "Added %d track(s) to the queue" (length ids)))))
 
 (defvar supersonic-album-mode-map
   (let ((map (make-sparse-keymap)))
@@ -1292,20 +1267,20 @@ the response at the wrong key."
       (pop-to-buffer-same-window new-buff)))))
 
 (define-derived-mode
-  supersonic-album-type-mode
-  tabulated-list-mode
-  "Supersonic Album List"
-  (setq tabulated-list-format [("Albums" 30 t) ("Artists" 30 t) ("Art" 30 nil)])
-  (setq tabulated-list-padding 2)
-  (tabulated-list-init-header))
+ supersonic-album-type-mode
+ tabulated-list-mode
+ "Supersonic Album List"
+ (setq tabulated-list-format [("Albums" 30 t) ("Artists" 30 t) ("Art" 30 nil)])
+ (setq tabulated-list-padding 2)
+ (tabulated-list-init-header))
 
 (define-derived-mode
-  supersonic-album-mode
-  tabulated-list-mode
-  "Supersonic Albums"
-  (setq tabulated-list-format [("Year" 5 t) ("Albums" 40 t) ("Art" 30 nil)])
-  (setq tabulated-list-padding 2)
-  (tabulated-list-init-header))
+ supersonic-album-mode
+ tabulated-list-mode
+ "Supersonic Albums"
+ (setq tabulated-list-format [("Year" 5 t) ("Albums" 40 t) ("Art" 30 nil)])
+ (setq tabulated-list-padding 2)
+ (tabulated-list-init-header))
 
 ;;;
 ;;; Artists
@@ -1317,29 +1292,27 @@ the response at the wrong key."
 
 (defun supersonic-artists-parse (data)
   "Retrieve a list of artists from some parsed json DATA."
-  (let*
-      (
-       (artists (supersonic-recursive-assoc data '("subsonic-response" "artists" "index")))
-       (result
-        (seq-reduce
-         (lambda (accu artist-index)
-           (append
-            accu
-            (mapcar
-             (lambda (artist)
-               (list (supersonic-get-id-as-string artist) (vector (assoc-default "name" artist))))
-             (assoc-default "artist" artist-index))))
-         artists '())))
+  (let* ((artists (supersonic-recursive-assoc data '("subsonic-response" "artists" "index")))
+         (result
+          (seq-reduce
+           (lambda (accu artist-index)
+             (append
+              accu
+              (mapcar
+               (lambda (artist)
+                 (list (supersonic-get-id-as-string artist) (vector (assoc-default "name" artist))))
+               (assoc-default "artist" artist-index))))
+           artists '())))
     result))
 
-(aio-defun supersonic-artists-refresh (buff)
-  "Refresh the list of artists into BUFF."
-  (supersonic--with-async-error-handling buff "fetch artists"
-    (let ((data (aio-await (supersonic-get-json (supersonic-build-url "/getArtists.view" '())))))
-      (when (buffer-live-p buff)
-        (with-current-buffer buff
-          (setq tabulated-list-entries (supersonic-artists-parse data))
-          (tabulated-list-print t))))))
+(aio-defun
+ supersonic-artists-refresh (buff) "Refresh the list of artists into BUFF."
+ (supersonic--with-async-error-handling buff "fetch artists"
+   (let ((data (aio-await (supersonic-get-json (supersonic-build-url "/getArtists.view" '())))))
+     (when (buffer-live-p buff)
+       (with-current-buffer buff
+         (setq tabulated-list-entries (supersonic-artists-parse data))
+         (tabulated-list-print t))))))
 
 (defun supersonic-artists-revert ()
   "Refresh the artists buffer from the Subsonic server."
@@ -1362,40 +1335,37 @@ the response at the wrong key."
     (pop-to-buffer-same-window new-buff)))
 
 (define-derived-mode
-  supersonic-artist-mode
-  tabulated-list-mode
-  "Supersonic Artists"
-  (setq tabulated-list-format [("Artist" 30 t)])
-  (setq tabulated-list-padding 2)
-  (tabulated-list-init-header))
+ supersonic-artist-mode
+ tabulated-list-mode
+ "Supersonic Artists"
+ (setq tabulated-list-format [("Artist" 30 t)])
+ (setq tabulated-list-padding 2)
+ (tabulated-list-init-header))
 
 ;;;
 ;;; Podcasts
 ;;;
 (defun supersonic-podcasts-parse (data)
   "Retrieve a list of podcasts from some parsed json DATA."
-  (let*
-      (
-       (podcasts (supersonic-recursive-assoc data '("subsonic-response" "podcasts" "channel")))
-       (result
-        (mapcar
-         (lambda (channel)
-           (list (supersonic-get-id-as-string channel) (vector (assoc-default "title" channel) "")))
-         podcasts)))
+  (let* ((podcasts (supersonic-recursive-assoc data '("subsonic-response" "podcasts" "channel")))
+         (result
+          (mapcar
+           (lambda (channel)
+             (list (supersonic-get-id-as-string channel) (vector (assoc-default "title" channel) "")))
+           podcasts)))
     result))
 
-(aio-defun supersonic-podcasts-refresh (buff)
-  "Refresh the list of podcasts into BUFF."
-  (supersonic--with-async-error-handling buff "fetch podcasts"
-    (let ((data
-           (aio-await
-            (supersonic-get-json
-             (supersonic-build-url "/getPodcasts.view" '(("includeEpisodes" . "false")))))))
-      (when (buffer-live-p buff)
-        (with-current-buffer buff
-          (setq tabulated-list-entries (supersonic-podcasts-parse data))
-          (tabulated-list-print t)
-          (supersonic-get-images tabulated-list-entries 1 buff))))))
+(aio-defun
+ supersonic-podcasts-refresh (buff) "Refresh the list of podcasts into BUFF."
+ (supersonic--with-async-error-handling buff "fetch podcasts"
+   (let ((data
+          (aio-await
+           (supersonic-get-json (supersonic-build-url "/getPodcasts.view" '(("includeEpisodes" . "false")))))))
+     (when (buffer-live-p buff)
+       (with-current-buffer buff
+         (setq tabulated-list-entries (supersonic-podcasts-parse data))
+         (tabulated-list-print t)
+         (supersonic-get-images tabulated-list-entries 1 buff))))))
 
 
 (defun supersonic-open-podcast-episodes ()
@@ -1403,22 +1373,19 @@ the response at the wrong key."
   (interactive)
   (supersonic-podcast-episodes (tabulated-list-get-id)))
 
-(aio-defun supersonic-add-podcast ()
-  "Add a new podcast."
-  (interactive)
-  (supersonic--with-async-error-handling nil "add podcast"
-    (aio-await
-     (supersonic-get-json
-      (supersonic-build-url
-       "/createPodcastChannel.view"
-       `(("url" . ,(url-hexify-string (read-string "feed url: ")))))))
-    (message "Podcast added")))
+(aio-defun
+ supersonic-add-podcast () "Add a new podcast." (interactive)
+ (supersonic--with-async-error-handling nil "add podcast"
+   (aio-await
+    (supersonic-get-json
+     (supersonic-build-url "/createPodcastChannel.view" `(("url" . ,(url-hexify-string (read-string "feed url: ")))))))
+   (message "Podcast added")))
 
 (transient-define-prefix
-  supersonic-podcast-help () "Help transient for podcasts."
-  ["Supersonic podcast help"
-   ("a" "Add a podcast" supersonic-add-podcast)
-   ("RET" "Open a podcast" supersonic-open-podcast-episodes)])
+ supersonic-podcast-help () "Help transient for podcasts."
+ ["Supersonic podcast help"
+  ("a" "Add a podcast" supersonic-add-podcast)
+  ("RET" "Open a podcast" supersonic-open-podcast-episodes)])
 
 (defvar supersonic-podcast-mode-map
   (let ((map (make-sparse-keymap)))
@@ -1437,12 +1404,12 @@ the response at the wrong key."
     (pop-to-buffer-same-window new-buff)))
 
 (define-derived-mode
-  supersonic-podcast-mode
-  tabulated-list-mode
-  "Supersonic Podcasts"
-  (setq tabulated-list-format [("Podcasts" 30 t) ("Art" 20 nil)])
-  (setq tabulated-list-padding 2)
-  (tabulated-list-init-header))
+ supersonic-podcast-mode
+ tabulated-list-mode
+ "Supersonic Podcasts"
+ (setq tabulated-list-format [("Podcasts" 30 t) ("Art" 20 nil)])
+ (setq tabulated-list-padding 2)
+ (tabulated-list-init-header))
 
 ;;;
 ;;; Podcast episodes
@@ -1450,22 +1417,18 @@ the response at the wrong key."
 
 (defun supersonic-podcast-episodes-parse (data)
   "Retrieve a list of podcast episodes from some parsed json DATA."
-  (let*
-      (
-       (episodes
-        (assoc-default
-         "episode"
-         (car (supersonic-recursive-assoc data '("subsonic-response" "podcasts" "channel")))))
-       (result
-        (mapcar
-         (lambda (episode)
-           (list
-            (supersonic-get-id-as-string episode)
-            (vector
-             (assoc-default "title" episode)
-             (format-seconds "%h:%.2m:%.2s" (assoc-default "duration" episode))
-             (assoc-default "status" episode))))
-         episodes)))
+  (let* ((episodes
+          (assoc-default "episode" (car (supersonic-recursive-assoc data '("subsonic-response" "podcasts" "channel")))))
+         (result
+          (mapcar
+           (lambda (episode)
+             (list
+              (supersonic-get-id-as-string episode)
+              (vector
+               (assoc-default "title" episode)
+               (format-seconds "%h:%.2m:%.2s" (assoc-default "duration" episode))
+               (assoc-default "status" episode))))
+           episodes)))
     result))
 
 (defun supersonic-play-podcast ()
@@ -1473,35 +1436,30 @@ the response at the wrong key."
   (interactive)
   (supersonic-mpv-start (list (tabulated-list-get-id))))
 
-(aio-defun supersonic-podcasts-episode-refresh (id buff)
-  "Refresh the list of podcast episodes for a podcast ID into BUFF."
-  (supersonic--with-async-error-handling buff "fetch episodes"
-    (let ((data
-           (aio-await
-            (supersonic-get-json
-             (supersonic-build-url "/getPodcasts.view" `(("id" . ,id) ("includeEpisodes" . "true")))))))
-      (when (buffer-live-p buff)
-        (with-current-buffer buff
-          (setq tabulated-list-entries (supersonic-podcast-episodes-parse data))
-          (tabulated-list-print t))))))
+(aio-defun
+ supersonic-podcasts-episode-refresh (id buff) "Refresh the list of podcast episodes for a podcast ID into BUFF."
+ (supersonic--with-async-error-handling buff "fetch episodes"
+   (let ((data
+          (aio-await
+           (supersonic-get-json
+            (supersonic-build-url "/getPodcasts.view" `(("id" . ,id) ("includeEpisodes" . "true")))))))
+     (when (buffer-live-p buff)
+       (with-current-buffer buff
+         (setq tabulated-list-entries (supersonic-podcast-episodes-parse data))
+         (tabulated-list-print t))))))
 
-(aio-defun supersonic-download-podcast-episode ()
-  "Tell the supersonic server to download an episode at point."
-  (interactive)
-  (supersonic--with-async-error-handling nil "download episode"
-    (let ((id (tabulated-list-get-id)))
-      (aio-await
-       (supersonic-get-json
-        (supersonic-build-url "/downloadPodcastEpisode.view" `(("id" . ,id)))))
-      (message "Episode download started"))))
+(aio-defun
+ supersonic-download-podcast-episode () "Tell the supersonic server to download an episode at point." (interactive)
+ (supersonic--with-async-error-handling nil "download episode"
+   (let ((id (tabulated-list-get-id)))
+     (aio-await (supersonic-get-json (supersonic-build-url "/downloadPodcastEpisode.view" `(("id" . ,id)))))
+     (message "Episode download started"))))
 
 (transient-define-prefix
-  supersonic-podcast-episode-help
-  ()
-  "Help transient for podcast episodes."
-  ["Supersonic podcast episode help"
-   ("d" "Download" supersonic-download-podcast-episode)
-   ("RET" "Start playing" supersonic-play-podcast)])
+ supersonic-podcast-episode-help () "Help transient for podcast episodes."
+ ["Supersonic podcast episode help"
+  ("d" "Download" supersonic-download-podcast-episode)
+  ("RET" "Start playing" supersonic-play-podcast)])
 
 
 (defvar supersonic-podcast-episodes-mode-map
@@ -1519,35 +1477,35 @@ the response at the wrong key."
     (pop-to-buffer-same-window new-buff)))
 
 (define-derived-mode
-  supersonic-podcast-episodes-mode
-  tabulated-list-mode
-  "Supersonic Podcast Episodes"
-  (setq tabulated-list-format [("Title" 50 t) ("Duration" 10 t) ("Status" 24 t)])
-  (setq tabulated-list-padding 2)
-  (tabulated-list-init-header))
+ supersonic-podcast-episodes-mode
+ tabulated-list-mode
+ "Supersonic Podcast Episodes"
+ (setq tabulated-list-format [("Title" 50 t) ("Duration" 10 t) ("Status" 24 t)])
+ (setq tabulated-list-padding 2)
+ (tabulated-list-init-header))
 
 ;;;###autoload (autoload 'supersonic "supersonic" nil t)
 (transient-define-prefix
-  supersonic () "Help transient for supersonic."
-  ["Supersonic"
-   ("a" "Artists" supersonic-artists)
-   ("r" "Random Albums" supersonic-random-albums)
-   ("n" "Newest Albums" supersonic-newest-albums)   
-   ("s" "Search supersonic" supersonic-search)
-   ("p" "Podcasts" supersonic-podcasts)]
-  ["Controls"
-   ("Q" "Show queue" supersonic-show-queue)
-   ("N" "Now playing" supersonic-show-now-playing)
-   ("t" "Toggle playing" supersonic-toggle-playing)
-   ("f" "Skip track" supersonic-skip-track)
-   ("b" "Previous track" supersonic-prev-track)
-   ;; Seeking is the one control worth repeating in a row, so these two
-   ;; keep the transient open instead of dismissing it.  That used to be
-   ;; done by having the commands themselves re-invoke this prefix, which
-   ;; also popped it up when they were called from outside it, e.g. from
-   ;; the now-playing buffer.
-   ("F" "Seek forward" supersonic-seek-forward :transient t)
-   ("B" "Seek back" supersonic-seek-back :transient t)])
+ supersonic () "Help transient for supersonic."
+ ["Supersonic"
+  ("a" "Artists" supersonic-artists)
+  ("r" "Random Albums" supersonic-random-albums)
+  ("n" "Newest Albums" supersonic-newest-albums)
+  ("s" "Search supersonic" supersonic-search)
+  ("p" "Podcasts" supersonic-podcasts)]
+ ["Controls"
+  ("Q" "Show queue" supersonic-show-queue)
+  ("N" "Now playing" supersonic-show-now-playing)
+  ("t" "Toggle playing" supersonic-toggle-playing)
+  ("f" "Skip track" supersonic-skip-track)
+  ("b" "Previous track" supersonic-prev-track)
+  ;; Seeking is the one control worth repeating in a row, so these two
+  ;; keep the transient open instead of dismissing it.  That used to be
+  ;; done by having the commands themselves re-invoke this prefix, which
+  ;; also popped it up when they were called from outside it, e.g. from
+  ;; the now-playing buffer.
+  ("F" "Seek forward" supersonic-seek-forward :transient t)
+  ("B" "Seek back" supersonic-seek-back :transient t)])
 
 (provide 'supersonic)
 
