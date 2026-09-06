@@ -38,6 +38,22 @@ commands available.
 
 For a list of available configuration options check `customize-group subsonic`
 
+## Play queue
+
+In the tracks and albums buffers, `RET` replaces the current play
+queue and starts playing immediately, while `a` adds to the play
+queue instead, so that e.g. two albums can be queued up to play back
+to back:
+
+- Tracks buffer: `RET`/`a` act on the current track and every track
+  after it in the buffer.
+- Albums buffer: `RET` opens the album's track list; `a` adds the
+  whole album to the play queue directly, without opening it.
+
+mpv is started on demand (lazily, the first time you play or queue
+something) and stays running idle between tracks, so queueing more
+albums does not interrupt what is currently playing.
+
 ## MPRIS
 
 `subsonic-mpris.el` exposes subsonic.el's mpv playback as an MPRIS
