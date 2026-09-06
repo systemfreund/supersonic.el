@@ -73,4 +73,5 @@ loop control are not implemented.
 
 ## Screenshots
 
-TODO
+<img width="1775" height="1094" alt="image" src="https://github.com/user-attachments/assets/7fa1726e-6399-46e3-966f-037e3c61d640" />
+
