@@ -144,7 +144,8 @@ values reported by mpv back to subsonic track ids.")
   (setq subsonic-mpv--entry-counter 0)
   (clrhash subsonic--playlist)
   (setq subsonic-mpv--request-counter 0)
-  (clrhash subsonic-mpv--pending-requests))
+  (clrhash subsonic-mpv--pending-requests)
+  (subsonic-queue-maybe-refresh))
 
 (defun subsonic-mpv-live-p ()
   "Return non-nil if inferior mpv is running."
@@ -200,7 +201,8 @@ scrobbling and MPRIS metadata."
   (subsonic-mpv-ensure-running)
   (subsonic--mpv-load-track (car ids) "replace")
   (dolist (id (cdr ids))
-    (subsonic--mpv-load-track id "append")))
+    (subsonic--mpv-load-track id "append"))
+  (subsonic-queue-maybe-refresh))
 
 ;;;###autoload
 (defun subsonic-mpv-enqueue (ids)
@@ -209,7 +211,8 @@ Starts playback if mpv is currently idle; otherwise leaves whatever is
 already playing undisturbed and simply queues IDS after it."
   (subsonic-mpv-ensure-running)
   (dolist (id ids)
-    (subsonic--mpv-load-track id "append-play")))
+    (subsonic--mpv-load-track id "append-play"))
+  (subsonic-queue-maybe-refresh))
 
 (defun subsonic--mpv-socket-filter (_ output)
   "Filter the mpv socket connection.
@@ -222,16 +225,19 @@ OUTPUT is the stdout read from mpv"
 	   (callback
 		(remhash request-id subsonic-mpv--pending-requests)
 		(funcall callback parsed-response))
-	   (subsonic-scrobble-plays
+	   (t
 		(let ((event (alist-get 'event parsed-response)))
-		  (cond
-		   ((string-equal event "end-file")
-			(subsonic-scrobble (gethash (alist-get 'playlist_entry_id parsed-response)
-										subsonic--playlist)))
-		   ((string-equal event "start-file")
-			(subsonic-scrobble (gethash (alist-get 'playlist_entry_id parsed-response)
-										subsonic--playlist)
-							   t)))))))))
+		  (when (member event '("start-file" "end-file"))
+			(subsonic-queue-maybe-refresh))
+		  (when subsonic-scrobble-plays
+			(cond
+			 ((string-equal event "end-file")
+			  (subsonic-scrobble (gethash (alist-get 'playlist_entry_id parsed-response)
+										  subsonic--playlist)))
+			 ((string-equal event "start-file")
+			  (subsonic-scrobble (gethash (alist-get 'playlist_entry_id parsed-response)
+										  subsonic--playlist)
+								 t))))))))))
 
 (defun subsonic-scrobble (id &optional now-playing)
   "Scrobble ID and optionally use a NOW-PLAYING request."
@@ -449,6 +455,23 @@ sees a response carrying that same request_id."
 ;;; Queue
 ;;;
 
+(defconst subsonic-queue-buffer-name "*subsonic-queue*"
+  "Name of the buffer used by `subsonic-show-queue'.")
+
+(defun subsonic-queue-buffer ()
+  "Return the play queue buffer if it is currently live, else nil."
+  (let ((buff (get-buffer subsonic-queue-buffer-name)))
+    (and buff (buffer-live-p buff) buff)))
+
+(defun subsonic-queue-maybe-refresh ()
+  "Refresh the play queue buffer from mpv's playlist, if it is open.
+Called whenever the queue is likely to have changed: after
+starting/enqueueing tracks and whenever mpv reports a track
+starting or ending."
+  (let ((buff (subsonic-queue-buffer)))
+    (when buff
+      (subsonic-queue-fetch-and-render buff))))
+
 (defun subsonic-queue-parse (playlist)
   "Turn mpv's PLAYLIST (from a \"get_property playlist\" reply) into
 tabulated-list entries."
@@ -508,7 +531,7 @@ tabulated-list entries."
 (defun subsonic-show-queue ()
   "Open a buffer showing mpv's current play queue."
   (interactive)
-  (let ((buff (get-buffer-create "*subsonic-queue*")))
+  (let ((buff (get-buffer-create subsonic-queue-buffer-name)))
     (with-current-buffer buff
       (unless (derived-mode-p 'subsonic-queue-mode)
         (subsonic-queue-mode)))

@@ -117,6 +117,59 @@ Returns the final value of PREDICATE."
          (should (equal "Test Artist" (aref (nth 1 entry) 2)))
          (should (equal "Test Album" (aref (nth 1 entry) 3))))))))
 
+(ert-deftest subsonic-tests-queue-buffer-follows-track-changes ()
+  "An open queue buffer refreshes itself as mpv advances, with no manual refresh."
+  (subsonic-tests--with-mpv
+   (cl-letf (((symbol-function 'subsonic-get-json)
+              (lambda (url)
+                `(("subsonic-response" ("song" ("title" . ,url) ("artist" . "Test")))))))
+     (let ((buff (get-buffer-create subsonic-queue-buffer-name)))
+       (unwind-protect
+           (progn
+             (with-current-buffer buff (subsonic-queue-mode))
+             (subsonic-mpv-start (list subsonic-tests--track-1 subsonic-tests--track-2))
+             ;; `subsonic-mpv-start' should have populated the buffer already,
+             ;; without anyone calling `subsonic-queue-refresh'.
+             (should
+              (subsonic-tests--wait-for
+               (lambda () (= 2 (length (buffer-local-value 'tabulated-list-entries buff))))))
+             (should
+              (equal "▶" (aref (nth 1 (car (buffer-local-value 'tabulated-list-entries buff))) 0)))
+             ;; Once mpv auto-advances to track 2 (track 1 is 2s long), the
+             ;; buffer should follow along on its own.
+             (should
+              (subsonic-tests--wait-for
+               (lambda ()
+                 (equal "▶"
+                        (aref (nth 1 (cadr (buffer-local-value 'tabulated-list-entries buff))) 0)))
+               6)))
+         (kill-buffer buff))))))
+
+(ert-deftest subsonic-tests-queue-buffer-follows-full-replacement ()
+  "An open queue buffer reflects a full `subsonic-mpv-start' replacement,
+dropping the previous queue's entries rather than appending to them."
+  (subsonic-tests--with-mpv
+   (cl-letf (((symbol-function 'subsonic-get-json)
+              (lambda (url)
+                `(("subsonic-response" ("song" ("title" . ,url) ("artist" . "Test")))))))
+     (let ((buff (get-buffer-create subsonic-queue-buffer-name)))
+       (unwind-protect
+           (progn
+             (with-current-buffer buff (subsonic-queue-mode))
+             (subsonic-mpv-start (list subsonic-tests--track-1 subsonic-tests--track-2))
+             (should
+              (subsonic-tests--wait-for
+               (lambda () (= 2 (length (buffer-local-value 'tabulated-list-entries buff))))))
+             ;; Replace the running queue outright with a single, different track.
+             (subsonic-mpv-start (list subsonic-tests--track-3))
+             (should
+              (subsonic-tests--wait-for
+               (lambda () (= 1 (length (buffer-local-value 'tabulated-list-entries buff))))))
+             (let ((entry (car (buffer-local-value 'tabulated-list-entries buff))))
+               (should (equal subsonic-tests--track-3 (aref (nth 1 entry) 1)))
+               (should (equal "▶" (aref (nth 1 entry) 0)))))
+         (kill-buffer buff))))))
+
 (provide 'subsonic-tests)
 
 ;;; subsonic-tests.el ends here
