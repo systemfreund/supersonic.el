@@ -294,7 +294,9 @@ reverted upon image load and N specifies the index"
         (write-region
           (+ url-http-end-of-headers 1)
           (point-max)
-          (expand-file-name id subsonic-art-cache-path))
+          (expand-file-name id subsonic-art-cache-path)
+          nil
+          'no-message)
         (aset vec n (subsonic-image-propertize id))
         (set-buffer buff)
         (when (derived-mode-p 'tabulated-list-mode)
