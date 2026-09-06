@@ -11,9 +11,9 @@ jobs:
     strategy:
       matrix:
         emacs-version:
-          - 27.1
           - 28.2
           - 29.4
+          - 31.1
     steps:
       - uses: actions/checkout@v4
       - uses: purcell/setup-emacs@master
