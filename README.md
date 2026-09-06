@@ -1,6 +1,8 @@
 # supersonic.el
 
 [![CI](https://github.com/systemfreund/supersonic.el/actions/workflows/ci.yml/badge.svg)](https://github.com/systemfreund/supersonic.el/actions/workflows/ci.yml)
+
+*NO MELPA PACKAGE, YET*
 <!-- [![MELPA](https://melpa.org/packages/supersonic-badge.svg)](https://melpa.org/#/supersonic) -->
 
 This is a subsonic client for emacs using mpv for music playing.
@@ -18,12 +20,13 @@ your init file, example below.
 
 ## Usage
 
-The package is available on melpa as `supersonic`
+~The package is available on melpa as `supersonic`~ (TODO)
 
 Example use-package config:
 
 ```
 (use-package supersonic
+  :load-path "~/src/supersonic.el" ;; clone the repository here
   :commands supersonic
   :bind (("C-c m" . supersonic))
   :custom
