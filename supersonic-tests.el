@@ -13,7 +13,7 @@
 ;;
 ;; or directly:
 ;;
-;;   emacs -Q --batch -L . -L vendor -l ert -l supersonic.el -l supersonic-tests.el \
+;;   cask emacs -Q --batch -L . -l ert -l supersonic.el -l supersonic-tests.el \
 ;;     -f ert-run-tests-batch-and-exit
 ;;
 ;; Skipped automatically if mpv is not installed.
