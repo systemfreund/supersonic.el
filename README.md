@@ -1,22 +1,20 @@
 # supersonic.el
 
 [![CI](https://github.com/systemfreund/supersonic.el/actions/workflows/ci.yml/badge.svg)](https://github.com/systemfreund/supersonic.el/actions/workflows/ci.yml)
-
-*NO MELPA PACKAGE, YET*
 <!-- [![MELPA](https://melpa.org/packages/supersonic-badge.svg)](https://melpa.org/#/supersonic) -->
-
-<img width="1775" height="1094" alt="image" src="https://github.com/user-attachments/assets/7fa1726e-6399-46e3-966f-037e3c61d640" />
 
 This is a subsonic client for emacs using mpv for music playing. It
 works with any server implementing the Subsonic API, such as
 [Navidrome](https://www.navidrome.org/), [Airsonic](https://airsonic.github.io/),
 [Gonic](https://github.com/sentriz/gonic) or [Ampache](https://ampache.org/).
 
+<img width="1775" height="1094" alt="image" src="https://github.com/user-attachments/assets/7fa1726e-6399-46e3-966f-037e3c61d640" />
+
 Based on [subsonic.el](https://git.sr.ht/~amk/subsonic.el)
 
 ## Usage
 
-~The package is available on melpa as `supersonic`~ (TODO)
+~The package is available on melpa as `supersonic`~ (not available, yet. Please clone the repository instead.)
 
 Example use-package config:
 
