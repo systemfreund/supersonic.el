@@ -87,7 +87,7 @@ Returns the final value of PREDICATE."
   (supersonic-tests--with-mpv
    (cl-letf (((symbol-function 'supersonic-get-json)
               (aio-lambda (url)
-                `(("supersonic-response" ("song" ("title" . ,url) ("artist" . "Test")))))))
+                `(("subsonic-response" ("song" ("title" . ,url) ("artist" . "Test")))))))
      (supersonic-mpv-start (list supersonic-tests--track-1 supersonic-tests--track-2))
      (should (supersonic-tests--wait-for (lambda () (= 2 (hash-table-count supersonic--playlist)))))
      (let ((result 'pending))
@@ -104,7 +104,7 @@ Returns the final value of PREDICATE."
   (supersonic-tests--with-mpv
    (cl-letf (((symbol-function 'supersonic-get-json)
               (aio-lambda (url)
-                `(("supersonic-response"
+                `(("subsonic-response"
                    ("song" ("title" . ,url) ("artist" . "Test Artist") ("album" . "Test Album")))))))
      (supersonic-mpv-start (list supersonic-tests--track-1))
      (should (supersonic-tests--wait-for (lambda () (= 1 (hash-table-count supersonic--playlist)))))
@@ -123,7 +123,7 @@ Returns the final value of PREDICATE."
   (supersonic-tests--with-mpv
    (cl-letf (((symbol-function 'supersonic-get-json)
               (aio-lambda (url)
-                `(("supersonic-response" ("song" ("title" . ,url) ("artist" . "Test")))))))
+                `(("subsonic-response" ("song" ("title" . ,url) ("artist" . "Test")))))))
      (let ((buff (get-buffer-create supersonic-queue-buffer-name)))
        (unwind-protect
            (progn
@@ -152,7 +152,7 @@ dropping the previous queue's entries rather than appending to them."
   (supersonic-tests--with-mpv
    (cl-letf (((symbol-function 'supersonic-get-json)
               (aio-lambda (url)
-                `(("supersonic-response" ("song" ("title" . ,url) ("artist" . "Test")))))))
+                `(("subsonic-response" ("song" ("title" . ,url) ("artist" . "Test")))))))
      (let ((buff (get-buffer-create supersonic-queue-buffer-name)))
        (unwind-protect
            (progn
