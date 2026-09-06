@@ -36,8 +36,11 @@
 (defgroup supersonic nil "Customization group for mpv." :prefix "supersonic-" :group 'external)
 
 (defcustom supersonic-host ""
-  "Hostname for the supersonic service.
-Used to find the correct authinfo entry."
+  "URL of the supersonic service, e.g. \"http://host:4533\".
+Must match the \"machine\" field of the corresponding authinfo
+entry verbatim; that entry's host is what is actually used to
+build request URLs.  May be given without a scheme (\"http://\" or
+\"https://\"), in which case \"https://\" is assumed."
   :type 'string
   :group 'supersonic)
 
@@ -64,11 +67,6 @@ Used to find the correct authinfo entry."
 (defcustom supersonic-art-cache-path (expand-file-name "supersonic-cache" user-emacs-directory)
   "Path to store cached art."
   :type 'string
-  :group 'supersonic)
-
-(defcustom supersonic-ssl t
-  "Choose either a https or http connection to supersonic."
-  :type 'boolean
   :group 'supersonic)
 
 (defcustom supersonic-album-list-count 50
@@ -365,16 +363,15 @@ visible to any local user via `ps' or in a subprocess's argv."
   "Build a valid supersonic url for a given ENDPOINT.
 EXTRA-QUERY is used for any extra query parameters"
   (if supersonic-auth
-    (concat
-      (if supersonic-ssl
-        "https://"
-        "http://")
-      (plist-get supersonic-auth :host) "/rest" endpoint
-      (supersonic-alist->query
-        (append
-          (supersonic--auth-query)
-          `(("c" . "ElSonic") ("v" . "1.16.0") ("f" . "json"))
-          extra-query)))
+    (let ((host (plist-get supersonic-auth :host)))
+      (concat
+        (unless (string-match-p "\\`https?://" host) "https://")
+        host "/rest" endpoint
+        (supersonic-alist->query
+          (append
+            (supersonic--auth-query)
+            `(("c" . "ElSonic") ("v" . "1.16.0") ("f" . "json"))
+            extra-query))))
     (error
       "Failed to load .authinfo, please provide auth configuration for
 supersonic, and ensure supersonic-host is set correctly")))

@@ -18,8 +18,33 @@ Add a `~/.authinfo.gpg` or `~/.authinfo` file with the following contents
 
     machine SUBSONIC_URL login USERNAME password PASSWORD
 
-The `supersonic-host` must be set to the same value as SUBSONIC_URL in
-your init file, example below.
+`SUBSONIC_URL` is the URL of your server, e.g.
+`https://coolsupersonic.example.com` or
+`http://coolsupersonic.example.com:4533`.
+
+The `supersonic-host` in your init file must be set to the same
+value as `SUBSONIC_URL`, example below.
+
+### KeePassXC via Secret Service
+
+If you'd rather keep the credentials in KeePassXC than in an
+authinfo file, enable *Secret Service Integration* under
+`Tools -> Settings -> Secret Service Integration` and unlock the
+database. Then tell Emacs to also search that collection:
+
+```
+(setq auth-sources '(default))
+```
+
+`auth-source`'s Secret Service backend only matches on an entry's
+custom *Attributes*, not on its regular URL/username fields, so add
+these on the `Advanced` tab of the entry:
+
+- `host` set to the same value as `supersonic-host` (with scheme, e.g.
+  `https://coolsupersonic.example.com`)
+- `user` set to your subsonic username
+
+The entry's regular password field is used as the secret.
 
 ## Usage
 
@@ -33,15 +58,16 @@ Example use-package config:
   :commands supersonic
   :bind (("C-c m" . supersonic))
   :custom
-  (supersonic-host "coolsupersonic.example.com")
+  (supersonic-host "https://coolsupersonic.example.com")
   (supersonic-enable-art t)
   (supersonic-scrobble-plays t))
 ```
 
-In case you are running subsonic server without HTTPS (HTTP only), add following line to the use-package :custom block 
-```
-(supersonic-ssl nil)
-```
+`supersonic-host` may be given without a scheme, in which case
+`https://` is assumed. In case you are running a subsonic server
+without HTTPS (HTTP only), prefix it with `http://` instead -- and
+make sure the `machine` field in your authinfo entry matches
+`supersonic-host` exactly, scheme included.
 
 Use the `supersonic` command to open a transient with commonly used
 commands available.
