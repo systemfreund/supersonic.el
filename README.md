@@ -83,6 +83,27 @@ to back:
 - Albums buffer: `RET` opens the album's track list; `a` adds the
   whole album to the play queue directly, without opening it.
 
+## Now playing
+
+`N` in the `supersonic` transient (`supersonic-show-now-playing`) opens
+a buffer for the track mpv is currently on: cover art, title, artist,
+album, format, duration and size, plus clickable playback controls.
+
+It keeps itself current the same way the play queue buffer does -- track
+changes, pausing and resuming are picked up from mpv directly, no matter
+whether they were triggered from Emacs, over MPRIS or from elsewhere.
+`Duration` counts along as `00:14 / 05:01`, once a second while the
+buffer is on display (`supersonic-now-playing-interval`).
+Keys in that buffer: `SPC` play/pause, `n`/`p` next/previous track,
+`f`/`b` seek, `g` refresh manually.
+
+Cover art needs `supersonic-enable-art` to be enabled and a graphical
+frame. Its size is set per view: `supersonic-list-art-size` (default
+100) for the album and podcast lists, `supersonic-now-playing-art-size`
+(default 300) here. Each is both the display height in pixels and the
+size requested from the server, and the cache keeps one file per size,
+so raising either one costs a single re-download.
+
 ## MPRIS
 
 `supersonic-mpris.el` exposes supersonic.el's mpv playback as an MPRIS

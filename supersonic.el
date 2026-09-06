@@ -60,8 +60,32 @@ build request URLs.  May be given without a scheme (\"http://\" or
   :group 'supersonic)
 
 (defcustom supersonic-art-size 100
-  "Set size for the album art download query."
+  "Set size for the album art download query.
+Applies where art is not shown in one of supersonic's own buffers;
+those download the art at exactly the size they display it at, see
+`supersonic-list-art-size' and `supersonic-now-playing-art-size'."
   :type 'integer
+  :group 'supersonic)
+
+(defcustom supersonic-list-art-size 100
+  "Height in pixels of the cover art in the album and podcast lists.
+The art is also downloaded at this size, so raising it costs a
+re-download of anything already cached at the old size."
+  :type 'integer
+  :group 'supersonic)
+
+(defcustom supersonic-now-playing-art-size 300
+  "Height in pixels of the cover art in the now-playing buffer.
+The art is also downloaded at this size, so raising it costs a
+re-download of anything already cached at the old size."
+  :type 'integer
+  :group 'supersonic)
+
+(defcustom supersonic-now-playing-interval 1
+  "Seconds between playback position updates in the now-playing buffer.
+Each update is a single query to the local mpv socket, and only runs
+while that buffer is both open and on display."
+  :type 'number
   :group 'supersonic)
 
 (defcustom supersonic-art-cache-path (expand-file-name "supersonic-cache" user-emacs-directory)
@@ -111,6 +135,12 @@ values reported by mpv back to supersonic track ids.")
 (defvar supersonic-mpv--pending-requests (make-hash-table)
   "Map of in-flight request_id (integer) to the callback awaiting its reply.")
 
+(defvar supersonic--paused nil
+  "Non-nil if mpv currently reports its \"pause\" property as true.
+Kept in sync via an `observe_property' registered once per mpv process
+in `supersonic-mpv-ensure-running'; consulted by the now-playing buffer
+so it never has to query mpv for this on every render.")
+
 (defun supersonic-mpv-kill ()
   "Kill the mpv process."
   (interactive)
@@ -127,7 +157,9 @@ values reported by mpv back to supersonic track ids.")
   (clrhash supersonic--playlist)
   (setq supersonic-mpv--request-counter 0)
   (clrhash supersonic-mpv--pending-requests)
-  (supersonic-queue-maybe-refresh))
+  (setq supersonic--paused nil)
+  (supersonic-queue-maybe-refresh)
+  (supersonic-now-playing-maybe-refresh))
 
 (defun supersonic-mpv-live-p ()
   "Return non-nil if inferior mpv is running."
@@ -166,7 +198,13 @@ every play/enqueue action."
          (make-network-process :name "supersonic-mpv-socket"
 							   :family 'local
 							   :service socket)))
-      (set-process-filter (tq-process supersonic-mpv--queue) #'supersonic--mpv-socket-filter)))
+      (set-process-filter (tq-process supersonic-mpv--queue) #'supersonic--mpv-socket-filter)
+      ;; Have mpv tell us about pause/resume, whoever triggered it, so the
+      ;; now-playing buffer can follow along.  mpv answers an
+      ;; `observe_property' with the property's current value right away,
+      ;; which also seeds `supersonic--paused'.  Observer id 2 rather than 1
+      ;; so it cannot collide with the one supersonic-mpris.el registers.
+      (supersonic-mpv-command "observe_property" 2 "pause")))
   t)
 
 (defun supersonic--mpv-load-track (id flag)
@@ -192,7 +230,8 @@ ahead of the playlist entries mpv has actually seen."
   (supersonic--mpv-load-track (car ids) "replace")
   (dolist (id (cdr ids))
     (supersonic--mpv-load-track id "append"))
-  (supersonic-queue-maybe-refresh))
+  (supersonic-queue-maybe-refresh)
+  (supersonic-now-playing-maybe-refresh))
 
 ;;;###autoload
 (defun supersonic-mpv-enqueue (ids)
@@ -202,7 +241,8 @@ already playing undisturbed and simply queues IDS after it."
   (supersonic-mpv-ensure-running)
   (dolist (id ids)
     (supersonic--mpv-load-track id "append-play"))
-  (supersonic-queue-maybe-refresh))
+  (supersonic-queue-maybe-refresh)
+  (supersonic-now-playing-maybe-refresh))
 
 (defun supersonic--mpv-socket-filter (_ output)
   "Filter the mpv socket connection.
@@ -218,7 +258,15 @@ OUTPUT is the stdout read from mpv"
 	   (t
 		(let ((event (alist-get 'event parsed-response)))
 		  (when (member event '("start-file" "end-file"))
-			(supersonic-queue-maybe-refresh))
+			(supersonic-queue-maybe-refresh)
+			(supersonic-now-playing-maybe-refresh))
+		  ;; mpv reports booleans as JSON true/false, which `json-read'
+		  ;; turns into t and `:json-false' -- the latter being non-nil in
+		  ;; Lisp, so this has to compare against t explicitly.
+		  (when (and (string-equal event "property-change")
+					 (string-equal (alist-get 'name parsed-response) "pause"))
+			(setq supersonic--paused (eq (alist-get 'data parsed-response) t))
+			(supersonic-now-playing-maybe-refresh))
 		  (when supersonic-scrobble-plays
 			(cond
 			 ((string-equal event "end-file")
@@ -303,25 +351,37 @@ empty result instead of raising anything the user can see."
       (let ((err (assoc-default "error" response)))
         (error "%s" (or (assoc-default "message" err) "Subsonic request failed"))))))
 
-(defun supersonic-image-propertize (id)
-  "Generate a property for a supersonic ID."
+(defun supersonic-art-cache-file (id size)
+  "Return the path cover art ID is cached under when fetched at SIZE.
+The size is part of the file name because the same art is shown at
+different sizes in different buffers (see `supersonic-list-art-size'
+and `supersonic-now-playing-art-size'): sharing one file per art id
+would hand whichever buffer asked second the other one's resolution,
+and would silently keep serving the old resolution after either
+setting is changed."
+  (expand-file-name (format "%s-%d" id size) supersonic-art-cache-path))
+
+(defun supersonic-image-propertize (id size)
+  "Generate a property displaying cover art ID at SIZE pixels high."
   (propertize
     " "
     'display
-    (create-image (expand-file-name id supersonic-art-cache-path) nil nil :height 100)))
+    (create-image (supersonic-art-cache-file id size) nil nil :height size)))
 
-(aio-defun supersonic--fetch-art (id)
-  "Ensure cover art ID is cached on disk, fetching it if necessary.
+(aio-defun supersonic--fetch-art (id size)
+  "Ensure cover art ID is cached on disk at SIZE, fetching it if necessary.
 Returns a promise that resolves once the fetch has settled; callers
 should re-check `file-exists-p' afterwards rather than assume success,
 since a failed fetch resolves without signalling here."
-  (unless (file-exists-p (expand-file-name id supersonic-art-cache-path))
+  (unless (file-exists-p (supersonic-art-cache-file id size))
+    (unless (file-exists-p supersonic-art-cache-path)
+      (mkdir supersonic-art-cache-path))
     (pcase-let ((`(,status . ,buffer)
                   (aio-await
                     (aio-url-retrieve
                       (supersonic-build-url
                         "/getCoverArt.view"
-                        `(("id" . ,id) ("size" . ,(int-to-string supersonic-art-size))))))))
+                        `(("id" . ,id) ("size" . ,(int-to-string size))))))))
       (unwind-protect
         (unless (plist-get status :error)
           (with-current-buffer buffer
@@ -332,7 +392,7 @@ since a failed fetch resolves without signalling here."
               (write-region
                 (1+ url-http-end-of-headers)
                 (point-max)
-                (expand-file-name id supersonic-art-cache-path)
+                (supersonic-art-cache-file id size)
                 nil
                 'no-message))))
         (kill-buffer buffer)))))
@@ -347,20 +407,21 @@ themselves."
   (if (or (not supersonic-enable-art) (not (display-graphic-p)))
     (dolist (entry entries)
       (aset (nth 1 entry) n ""))
-    (progn
-      (unless (file-exists-p supersonic-art-cache-path)
-        (mkdir supersonic-art-cache-path))
-      (let
-        (
-          (pending
-            (mapcar
-              (lambda (entry) (cons entry (aio-catch (supersonic--fetch-art (car entry)))))
-              entries)))
-        (dolist (item pending)
-          (aio-await (cdr item))
-          (let ((entry (car item)))
-            (when (file-exists-p (expand-file-name (car entry) supersonic-art-cache-path))
-              (aset (nth 1 entry) n (supersonic-image-propertize (car entry)))))))))
+    (let
+      (
+        (pending
+          (mapcar
+            (lambda (entry)
+              (cons entry (aio-catch (supersonic--fetch-art (car entry) supersonic-list-art-size))))
+            entries)))
+      (dolist (item pending)
+        (aio-await (cdr item))
+        (let ((entry (car item)))
+          (when (file-exists-p (supersonic-art-cache-file (car entry) supersonic-list-art-size))
+            (aset
+              (nth 1 entry)
+              n
+              (supersonic-image-propertize (car entry) supersonic-list-art-size)))))))
   (when (buffer-live-p buff)
     (with-current-buffer buff
       (when (derived-mode-p 'tabulated-list-mode)
@@ -501,6 +562,19 @@ sees a response carrying that same request_id."
 		 (lambda (_x _y))))
 	(message "MPV not running")))
 
+(aio-defun supersonic-mpv-get-property (name)
+  "Return a promise resolving to mpv's current value of property NAME.
+The `aio' counterpart of `supersonic-mpv-command-with-callback', for
+callers that want to keep reading mpv state in a straight line instead
+of nesting callbacks.  Only call this with mpv running: without a live
+IPC connection no reply can ever arrive, and the promise stays
+unresolved forever."
+  (let ((promise (aio-promise)))
+    (supersonic-mpv-command-with-callback
+      (lambda (response) (aio-resolve promise (lambda () (alist-get 'data response))))
+      "get_property" name)
+    (aio-await promise)))
+
 ;;;###autoload
 (defun supersonic-toggle-playing ()
   "Toggle playing/paused state in mpv."
@@ -521,16 +595,14 @@ sees a response carrying that same request_id."
 
 ;;;###autoload
 (defun supersonic-seek-forward ()
-  "Toggle playing/paused state in mpv."
+  "Seek 30 seconds forward in mpv."
   (interactive)
-  (supersonic-mpv-command "seek" "30" "relative")
-  (supersonic))
+  (supersonic-mpv-command "seek" "30" "relative"))
 
 (defun supersonic-seek-back ()
-  "Toggle playing/paused state in mpv."
+  "Seek 30 seconds back in mpv."
   (interactive)
-  (supersonic-mpv-command "seek" "-30" "relative")
-  (supersonic))
+  (supersonic-mpv-command "seek" "-30" "relative"))
 
 ;;;
 ;;; Queue
@@ -638,6 +710,262 @@ aborting the whole render."
       (unless (derived-mode-p 'supersonic-queue-mode)
         (supersonic-queue-mode)))
     (supersonic-queue-fetch-and-render buff)
+    (pop-to-buffer-same-window buff)))
+
+;;;
+;;; Now playing
+;;;
+
+(defconst supersonic-now-playing-buffer-name "*supersonic-now-playing*"
+  "Name of the buffer used by `supersonic-show-now-playing'.")
+
+(defvar supersonic-now-playing--timer nil
+  "Timer ticking the playback position shown in the now-playing buffer.")
+
+(defvar-local supersonic-now-playing--duration nil
+  "Duration in seconds of the track the now-playing buffer is showing.
+Kept around so the position can be re-rendered on its own tick, without
+another round of metadata lookups just to learn what to count towards.")
+
+(defun supersonic-now-playing-buffer ()
+  "Return the now-playing buffer if it is currently live, else nil."
+  (let ((buff (get-buffer supersonic-now-playing-buffer-name)))
+    (and buff (buffer-live-p buff) buff)))
+
+(defun supersonic-now-playing--start-timer ()
+  "Start ticking the playback position, unless that is already happening."
+  (unless supersonic-now-playing--timer
+    (setq supersonic-now-playing--timer
+      (run-at-time
+        supersonic-now-playing-interval
+        supersonic-now-playing-interval
+        #'supersonic-now-playing--tick))))
+
+(defun supersonic-now-playing--stop-timer ()
+  "Stop ticking the playback position."
+  (when supersonic-now-playing--timer
+    (cancel-timer supersonic-now-playing--timer)
+    (setq supersonic-now-playing--timer nil)))
+
+(defun supersonic-now-playing--tick ()
+  "Update the playback position in the now-playing buffer.
+Asks mpv where it is rather than counting seconds locally, so seeking
+and pausing need no special handling here.  Stops itself once there is
+nothing left to update, and keeps quiet while the buffer is not on
+display."
+  (let ((buff (supersonic-now-playing-buffer)))
+    (cond
+      ((or (not buff) (not (supersonic-mpv-live-p)))
+        (supersonic-now-playing--stop-timer))
+      ((not (get-buffer-window buff t)))
+      (t
+        (supersonic-mpv-command-with-callback
+          (lambda (response)
+            (supersonic-now-playing--update-field
+              buff
+              'duration
+              (supersonic-now-playing--position
+                (alist-get 'data response)
+                (buffer-local-value 'supersonic-now-playing--duration buff))))
+          "get_property" "time-pos")))))
+
+(defun supersonic-now-playing-maybe-refresh ()
+  "Refresh the now-playing buffer from mpv's state, if it is open.
+Called at the same points as `supersonic-queue-maybe-refresh', plus
+whenever mpv reports that playback was paused or resumed."
+  (let ((buff (supersonic-now-playing-buffer)))
+    (when buff
+      (supersonic-now-playing-fetch-and-render buff))))
+
+(defun supersonic-now-playing--insert-field (label value &optional field)
+  "Insert one \"LABEL: VALUE\" metadata row, skipping it if VALUE is nil.
+FIELD, if given, tags VALUE so `supersonic-now-playing--update-field'
+can replace it later without re-rendering the whole buffer."
+  (when value
+    (insert
+      (propertize (format "%-10s" (concat label ":")) 'face 'shadow)
+      (if field (propertize value 'supersonic-now-playing-field field) value)
+      "\n")))
+
+(defun supersonic-now-playing--update-field (buff field value)
+  "Replace the text tagged FIELD in BUFF with VALUE, leaving the rest alone.
+The playback position ticks once a second; re-rendering everything that
+often would rebuild the cover art image and yank point back to the top
+of the buffer each time."
+  (when (buffer-live-p buff)
+    (with-current-buffer buff
+      (save-excursion
+        (goto-char (point-min))
+        (let ((match (text-property-search-forward 'supersonic-now-playing-field field t)))
+          (when match
+            (let ((inhibit-read-only t))
+              (delete-region (prop-match-beginning match) (prop-match-end match))
+              (goto-char (prop-match-beginning match))
+              (insert (propertize value 'supersonic-now-playing-field field)))))))))
+
+(defun supersonic-now-playing--insert-button (label command)
+  "Insert a button reading LABEL that runs COMMAND when activated."
+  (insert-text-button label 'action (lambda (_button) (call-interactively command)) 'follow-link t))
+
+(defun supersonic-now-playing--format-time (seconds longest)
+  "Format SECONDS as a clock string no longer than it has to be.
+LONGEST is the longest value the same line will show, so that a
+position and the duration it counts towards stay the same shape: hours
+only appear once LONGEST reaches an hour, e.g. \"05:01\" for a five
+minute track but \"1:05:01\" once an hour is on the clock."
+  (let ((seconds (max 0 (truncate (or seconds 0)))))
+    (if (>= (or longest 0) 3600)
+      (format-seconds "%h:%.2m:%.2s" seconds)
+      (format-seconds "%.2m:%.2s" seconds))))
+
+(defun supersonic-now-playing--position (position duration)
+  "Format POSITION and DURATION (seconds, either may be nil) for display."
+  (cond
+    ((and position duration)
+      (format "%s / %s"
+        (supersonic-now-playing--format-time position duration)
+        (supersonic-now-playing--format-time duration duration)))
+    (duration (supersonic-now-playing--format-time duration duration))
+    (position (supersonic-now-playing--format-time position position))))
+
+(defun supersonic-now-playing--format (song)
+  "Return SONG's file format as \"MP3 (audio/mpeg)\", or nil if unknown."
+  (let ((suffix (assoc-default "suffix" song))
+        (type (assoc-default "contentType" song)))
+    (cond
+      ((and suffix type) (format "%s (%s)" (upcase suffix) type))
+      (suffix (upcase suffix))
+      (type type))))
+
+(defun supersonic-now-playing--art (song)
+  "Return a display string for SONG's cover art, or nil if there is none.
+Expects the art to be cached already, which
+`supersonic-now-playing-fetch-and-render' takes care of before it
+renders."
+  (let ((art-id (assoc-default "coverArt" song)))
+    (when (and supersonic-enable-art
+               (display-graphic-p)
+               art-id
+               (file-exists-p (supersonic-art-cache-file art-id supersonic-now-playing-art-size)))
+      (supersonic-image-propertize art-id supersonic-now-playing-art-size))))
+
+(defun supersonic-now-playing--render (buff song paused position)
+  "Render SONG into BUFF, marked as paused or playing according to PAUSED.
+POSITION is how many seconds into SONG playback currently is.  SONG is a
+\"song\" alist as returned by getSong.view; if it is nil, BUFF shows a
+placeholder saying that nothing is playing."
+  (when (buffer-live-p buff)
+    (with-current-buffer buff
+      (let ((inhibit-read-only t)
+            (art (and song (supersonic-now-playing--art song)))
+            (duration (and song (assoc-default "duration" song)))
+            (size (and song (assoc-default "size" song))))
+        (setq supersonic-now-playing--duration duration)
+        (if song
+          (supersonic-now-playing--start-timer)
+          (supersonic-now-playing--stop-timer))
+        (erase-buffer)
+        (if (not song)
+          (insert "Nothing is playing.\n")
+          (progn
+            (when art
+              (insert art "\n\n"))
+            (insert
+              (propertize (or (assoc-default "title" song) "?") 'face 'bold)
+              "  "
+              (propertize (if paused "(paused)" "(playing)") 'face 'shadow)
+              "\n\n")
+            (supersonic-now-playing--insert-button "|◀◀" #'supersonic-prev-track)
+            (insert "  ")
+            (supersonic-now-playing--insert-button (if paused " ▶ " " ⏸ ") #'supersonic-toggle-playing)
+            (insert "  ")
+            (supersonic-now-playing--insert-button "▶▶|" #'supersonic-skip-track)
+            (insert "  ")
+            (supersonic-now-playing--insert-button "◀◀" #'supersonic-seek-back)
+            (insert "  ")
+            (supersonic-now-playing--insert-button "▶▶" #'supersonic-seek-forward)
+            (insert "\n\n")
+            (supersonic-now-playing--insert-field "Title" (assoc-default "title" song))
+            (supersonic-now-playing--insert-field "Artist" (assoc-default "artist" song))
+            (supersonic-now-playing--insert-field "Album" (assoc-default "album" song))
+            (supersonic-now-playing--insert-field "Format" (supersonic-now-playing--format song))
+            (supersonic-now-playing--insert-field
+              "Duration"
+              (supersonic-now-playing--position position duration)
+              'duration)
+            (supersonic-now-playing--insert-field
+              "Size"
+              (and size (format "%.2f MB" (/ size 1048576.0))))))
+        (goto-char (point-min))))))
+
+(aio-defun supersonic-now-playing-fetch-and-render (buff)
+  "Query mpv for the track it is currently on and render it into BUFF.
+Tolerates a failing metadata lookup the way `supersonic-queue-parse'
+does: rather than blanking a view that refreshes on every track change,
+it falls back to showing the bare track id."
+  (if (not (supersonic-mpv-live-p))
+    (supersonic-now-playing--render buff nil nil nil)
+    (let* ((playlist (aio-await (supersonic-mpv-get-property "playlist")))
+           (entry (seq-find (lambda (item) (alist-get 'current item)) playlist))
+           (track-id (and entry (gethash (alist-get 'id entry) supersonic--playlist))))
+      (if (not track-id)
+        (supersonic-now-playing--render buff nil nil nil)
+        (let* ((outcome
+                 (aio-await
+                   (aio-catch
+                     (supersonic-get-json
+                       (supersonic-build-url "/getSong.view" `(("id" . ,track-id)))))))
+               (song
+                 (if (eq (car outcome) :success)
+                   (supersonic-recursive-assoc (cdr outcome) '("subsonic-response" "song"))
+                   `(("title" . ,track-id)))))
+          (when (and supersonic-enable-art (assoc-default "coverArt" song))
+            (aio-await
+              (aio-catch
+                (supersonic--fetch-art
+                  (assoc-default "coverArt" song)
+                  supersonic-now-playing-art-size))))
+          ;; Asked for last, so the position is as fresh as possible: the
+          ;; art fetch above can take a while on a cold cache.
+          (supersonic-now-playing--render
+            buff
+            song
+            supersonic--paused
+            (aio-await (supersonic-mpv-get-property "time-pos"))))))))
+
+(defun supersonic-now-playing-refresh ()
+  "Refresh the now-playing buffer from mpv's current state."
+  (interactive)
+  (supersonic-now-playing-fetch-and-render (current-buffer)))
+
+(defvar supersonic-now-playing-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "g") #'supersonic-now-playing-refresh)
+    (define-key map (kbd "SPC") #'supersonic-toggle-playing)
+    (define-key map (kbd "n") #'supersonic-skip-track)
+    (define-key map (kbd "p") #'supersonic-prev-track)
+    (define-key map (kbd "f") #'supersonic-seek-forward)
+    (define-key map (kbd "b") #'supersonic-seek-back)
+    map))
+
+(define-derived-mode
+  supersonic-now-playing-mode
+  special-mode
+  "Supersonic Now Playing"
+  "Major mode for the buffer opened by `supersonic-show-now-playing'.")
+
+;;;###autoload
+(defun supersonic-show-now-playing ()
+  "Open a buffer showing the track mpv is currently on.
+The buffer follows mpv on its own -- track changes, pausing and
+resuming are all reflected without a manual refresh, the same way the
+play queue buffer keeps itself current."
+  (interactive)
+  (let ((buff (get-buffer-create supersonic-now-playing-buffer-name)))
+    (with-current-buffer buff
+      (unless (derived-mode-p 'supersonic-now-playing-mode)
+        (supersonic-now-playing-mode)))
+    (ignore (supersonic-now-playing-fetch-and-render buff))
     (pop-to-buffer-same-window buff)))
 
 (defun supersonic-get-id-as-string (data)
@@ -1185,11 +1513,17 @@ the response at the wrong key."
    ("p" "Podcasts" supersonic-podcasts)]
   ["Controls"
    ("Q" "Show queue" supersonic-show-queue)
+   ("N" "Now playing" supersonic-show-now-playing)
    ("t" "Toggle playing" supersonic-toggle-playing)
    ("f" "Skip track" supersonic-skip-track)
    ("b" "Previous track" supersonic-prev-track)
-   ("F" "Seek forward" supersonic-seek-forward)
-   ("B" "Seek back" supersonic-seek-back)])
+   ;; Seeking is the one control worth repeating in a row, so these two
+   ;; keep the transient open instead of dismissing it.  That used to be
+   ;; done by having the commands themselves re-invoke this prefix, which
+   ;; also popped it up when they were called from outside it, e.g. from
+   ;; the now-playing buffer.
+   ("F" "Seek forward" supersonic-seek-forward :transient t)
+   ("B" "Seek back" supersonic-seek-back :transient t)])
 
 (provide 'supersonic)
 

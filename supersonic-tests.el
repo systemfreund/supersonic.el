@@ -185,6 +185,169 @@ dropping the previous queue's entries rather than appending to them."
                (should (equal "▶" (aref (nth 1 entry) 0)))))
          (kill-buffer buff))))))
 
+(ert-deftest supersonic-tests-seeking-does-not-open-the-transient ()
+  "Seeking only seeks.  It used to end by calling the `supersonic'
+transient, which meant the menu popped up whenever the seek commands
+were invoked from anywhere else -- e.g. from the now-playing buffer.
+The menu now stays open on its own via the suffixes' `:transient t'."
+  (let ((commands nil)
+        (opened-transient nil))
+    (cl-letf (((symbol-function 'supersonic-mpv-command)
+               (lambda (&rest args) (push args commands)))
+              ((symbol-function 'supersonic) (lambda (&rest _) (setq opened-transient t))))
+      (supersonic-seek-forward)
+      (supersonic-seek-back)
+      (should-not opened-transient)
+      (should (equal '(("seek" "-30" "relative") ("seek" "30" "relative")) commands)))))
+
+(ert-deftest supersonic-tests-transient-stays-open-while-seeking ()
+  "The seek suffixes are marked `:transient t', so the menu survives them
+and several seeks in a row can be done without reopening it."
+  (dolist (key '("F" "B"))
+    (should (plist-get (cdr (transient-get-suffix 'supersonic key)) :transient))))
+
+(ert-deftest supersonic-tests-art-cache-file-is-per-size ()
+  "Art cached for one display size does not stand in for another size,
+so that the list and now-playing buffers can show the same cover at
+their own resolutions -- and so that changing either size setting
+actually re-fetches instead of reusing the old resolution forever."
+  (let ((supersonic-art-cache-path "/tmp/supersonic-tests-cache"))
+    (should-not
+      (equal
+        (supersonic-art-cache-file "art-1" 100)
+        (supersonic-art-cache-file "art-1" 300)))
+    (should
+      (equal
+        (supersonic-art-cache-file "art-1" 100)
+        (supersonic-art-cache-file "art-1" 100)))))
+
+(ert-deftest supersonic-tests-fetch-art-creates-cache-directory ()
+  "`supersonic--fetch-art' creates the cache directory itself, so callers
+that fetch a single image (the now-playing buffer) get art on a fresh
+install too, instead of only those that populate a whole list."
+  (let ((supersonic-art-cache-path
+          (expand-file-name (make-temp-name "supersonic-tests-cache-") temporary-file-directory)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'supersonic-build-url)
+                   (lambda (_endpoint _extra-query) "dummy://url")))
+          (supersonic-tests--with-stubbed-response "cover-art-bytes"
+            (aio-wait-for (supersonic--fetch-art "art-1" 300))
+            (should (file-exists-p (supersonic-art-cache-file "art-1" 300)))
+            (should-not (file-exists-p (supersonic-art-cache-file "art-1" 100)))))
+      (when (file-exists-p supersonic-art-cache-path)
+        (delete-directory supersonic-art-cache-path t)))))
+
+(defun supersonic-tests--buffer-matches (buff regexp)
+  "Return non-nil if BUFF's contents match REGEXP."
+  (with-current-buffer buff (string-match-p regexp (buffer-string))))
+
+(ert-deftest supersonic-tests-now-playing-buffer-follows-track-changes ()
+  "An open now-playing buffer refreshes itself as mpv advances, with no
+manual refresh."
+  (supersonic-tests--with-mpv
+   (cl-letf (((symbol-function 'supersonic-get-json)
+              (aio-lambda (url) `(("subsonic-response" ("song" ("title" . ,url)))))))
+     (let ((buff (get-buffer-create supersonic-now-playing-buffer-name)))
+       (unwind-protect
+           (progn
+             (with-current-buffer buff (supersonic-now-playing-mode))
+             (supersonic-mpv-start (list supersonic-tests--track-1 supersonic-tests--track-2))
+             (should
+              (supersonic-tests--wait-for
+               (lambda ()
+                 (supersonic-tests--buffer-matches
+                  buff (regexp-quote supersonic-tests--track-1)))))
+             ;; Once mpv auto-advances to track 2 (track 1 is 2s long), the
+             ;; buffer should follow along on its own.
+             (should
+              (supersonic-tests--wait-for
+               (lambda ()
+                 (supersonic-tests--buffer-matches
+                  buff (regexp-quote supersonic-tests--track-2)))
+               6)))
+         (kill-buffer buff))))))
+
+(ert-deftest supersonic-tests-now-playing-position-is-as-short-as-possible ()
+  "The position line drops the hours until a track actually runs that long,
+and shows position and duration in the same shape."
+  (should (equal "00:14 / 05:01" (supersonic-now-playing--position 14 301)))
+  (should (equal "00:00 / 05:01" (supersonic-now-playing--position 0 301)))
+  ;; mpv reports the position as a float.
+  (should (equal "00:14 / 05:01" (supersonic-now-playing--position 14.7 301)))
+  (should (equal "0:00:14 / 1:01:01" (supersonic-now-playing--position 14 3661)))
+  ;; Either half on its own, for tracks mpv or the server is vague about.
+  (should (equal "05:01" (supersonic-now-playing--position nil 301)))
+  (should (equal "00:14" (supersonic-now-playing--position 14 nil)))
+  (should-not (supersonic-now-playing--position nil nil)))
+
+(ert-deftest supersonic-tests-now-playing-position-advances-on-its-own ()
+  "The position ticks along with playback, without a manual refresh and
+without re-rendering the buffer, and stops ticking once mpv is gone."
+  (supersonic-tests--with-mpv
+   (cl-letf (((symbol-function 'supersonic-get-json)
+              (aio-lambda (url)
+                `(("subsonic-response" ("song" ("title" . ,url) ("duration" . 10)))))))
+     (let ((buff (get-buffer-create supersonic-now-playing-buffer-name)))
+       (unwind-protect
+           (progn
+             (with-current-buffer buff (supersonic-now-playing-mode))
+             ;; The tick keeps quiet unless the buffer is on display.
+             (set-window-buffer (selected-window) buff)
+             (supersonic-mpv-start (list "av://lavfi:sine=frequency=440:duration=10"))
+             (should
+              (supersonic-tests--wait-for
+               (lambda () (supersonic-tests--buffer-matches buff "00:00 / 00:10"))))
+             (should
+              (supersonic-tests--wait-for
+               (lambda () (supersonic-tests--buffer-matches buff "00:0[1-9] / 00:10"))
+               6))
+             (supersonic-mpv-kill)
+             (should-not supersonic-now-playing--timer))
+         (supersonic-now-playing--stop-timer)
+         (kill-buffer buff))))))
+
+(ert-deftest supersonic-tests-now-playing-buffer-follows-pause-toggle ()
+  "An open now-playing buffer reflects pausing and resuming, which mpv
+reports as a property change rather than as a track event."
+  (supersonic-tests--with-mpv
+   (cl-letf (((symbol-function 'supersonic-get-json)
+              (aio-lambda (url) `(("subsonic-response" ("song" ("title" . ,url)))))))
+     (let ((buff (get-buffer-create supersonic-now-playing-buffer-name)))
+       (unwind-protect
+           (progn
+             (with-current-buffer buff (supersonic-now-playing-mode))
+             (supersonic-mpv-start (list supersonic-tests--track-1))
+             (should
+              (supersonic-tests--wait-for
+               (lambda () (supersonic-tests--buffer-matches buff (regexp-quote "(playing)")))))
+             (supersonic-toggle-playing)
+             (should
+              (supersonic-tests--wait-for
+               (lambda () (supersonic-tests--buffer-matches buff (regexp-quote "(paused)")))))
+             (supersonic-toggle-playing)
+             (should
+              (supersonic-tests--wait-for
+               (lambda () (supersonic-tests--buffer-matches buff (regexp-quote "(playing)"))))))
+         (kill-buffer buff))))))
+
+(ert-deftest supersonic-tests-now-playing-falls-back-to-track-id ()
+  "A failing getSong.view lookup leaves the now-playing buffer showing the
+track id instead of claiming that nothing is playing."
+  (supersonic-tests--with-mpv
+   (cl-letf (((symbol-function 'supersonic-get-json)
+              (aio-lambda (_url) (error "Failed to fetch: connection refused"))))
+     (let ((buff (get-buffer-create supersonic-now-playing-buffer-name)))
+       (unwind-protect
+           (progn
+             (with-current-buffer buff (supersonic-now-playing-mode))
+             (supersonic-mpv-start (list supersonic-tests--track-1))
+             (should
+              (supersonic-tests--wait-for
+               (lambda ()
+                 (supersonic-tests--buffer-matches
+                  buff (regexp-quote supersonic-tests--track-1))))))
+         (kill-buffer buff))))))
+
 (ert-deftest supersonic-tests-refresh-shows-error-on-network-failure ()
   "A refresh function surfaces network/HTTP failures to the user instead
 of silently doing nothing, e.g. when `supersonic-host' is misconfigured

@@ -229,7 +229,7 @@ sending PropertiesChanged itself."
   "Download cover art ART-ID for track ID into the shared art cache.
 Re-announces Metadata once the art is available, unless ID is no
 longer the current track."
-  (let ((file (expand-file-name art-id supersonic-art-cache-path)))
+  (let ((file (supersonic-art-cache-file art-id supersonic-art-size)))
     (if (file-exists-p file)
         (when (equal id (supersonic-mpris--current-track-id))
           (setq supersonic-mpris--art-file file)
