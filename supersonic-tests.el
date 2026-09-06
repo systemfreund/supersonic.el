@@ -276,14 +276,29 @@ error."
 the first time it was called (which used to be frozen in for the rest
 of the Emacs session, e.g. via a `defvar' initializer evaluated once
 at load time)."
-  (let ((supersonic-host "host-a")
-        (supersonic--auth-cache nil))
+  (let ((supersonic-host "host-a"))
     (cl-letf (((symbol-function 'auth-source-search)
                (lambda (&rest args)
                  (list (list :host (plist-get args :host) :user "u" :secret (lambda () "p"))))))
       (should (equal "host-a" (plist-get (supersonic-auth) :host)))
       (setq supersonic-host "host-b")
       (should (equal "host-b" (plist-get (supersonic-auth) :host))))))
+
+(ert-deftest supersonic-tests-auth-picks-up-corrected-credentials-at-runtime ()
+  "`supersonic-auth' re-resolves against `auth-source-search' on every call,
+so correcting a wrong username/password in the authinfo entry (and
+forgetting `auth-source''s own cache, e.g. via
+`auth-source-forget-all-cached') takes effect on the next request --
+even though `supersonic-host' itself never changed -- instead of
+keeping whatever supersonic itself first memoized for that host."
+  (let ((supersonic-host "host-a")
+        (user "wrong-user"))
+    (cl-letf (((symbol-function 'auth-source-search)
+               (lambda (&rest args)
+                 (list (list :host (plist-get args :host) :user user :secret (lambda () "p"))))))
+      (should (equal "wrong-user" (plist-get (supersonic-auth) :user)))
+      (setq user "right-user")
+      (should (equal "right-user" (plist-get (supersonic-auth) :user))))))
 
 (ert-deftest supersonic-tests-tracks-parse-follows-browse-by-tags-toggle ()
   "`supersonic-tracks-parse' reads the track list from whichever json path

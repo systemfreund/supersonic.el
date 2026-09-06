@@ -238,21 +238,17 @@ OUTPUT is the stdout read from mpv"
 										("submission" . ,(if now-playing "false" "true"))))
 				  (lambda (_)))))
 
-(defvar supersonic--auth-cache nil
-  "Cons of (HOST . AUTH-PLIST) memoizing the last `supersonic-auth' lookup.
-Invalidated automatically whenever `supersonic-host' no longer matches
-HOST, so that changing `supersonic-host' at runtime (e.g. via `setq' or
-`customize-set-variable') takes effect on the next request instead of
-silently keeping the auth-source entry looked up at load time.")
-
 (defun supersonic-auth ()
   "Return the auth-source entry for the current `supersonic-host'.
-Memoized per host value; call this instead of caching the result
-yourself, so a change to `supersonic-host' is always picked up."
-  (unless (equal (car supersonic--auth-cache) supersonic-host)
-    (setq supersonic--auth-cache
-      (cons supersonic-host (car (auth-source-search :host supersonic-host)))))
-  (cdr supersonic--auth-cache))
+Calls `auth-source-search' fresh every time rather than memoizing the
+result ourselves -- `auth-source-search' already caches internally
+(see `auth-source-do-cache'), but that cache is invalidated by
+`auth-source-forget-all-cached' and expires on its own, so deferring
+to it means both a `supersonic-host' change and a corrected
+authinfo entry (after forgetting the cache) take effect on the next
+request instead of being frozen in for the rest of the Emacs
+session."
+  (car (auth-source-search :host supersonic-host)))
 
 (defun supersonic-alist->query (al)
   "Convert an alist -- AL to a set of url query parameters."
