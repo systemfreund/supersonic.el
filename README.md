@@ -5,7 +5,10 @@
 *NO MELPA PACKAGE, YET*
 <!-- [![MELPA](https://melpa.org/packages/supersonic-badge.svg)](https://melpa.org/#/supersonic) -->
 
-This is a subsonic client for emacs using mpv for music playing.
+This is a subsonic client for emacs using mpv for music playing. It
+works with any server implementing the Subsonic API, such as
+[Navidrome](https://www.navidrome.org/), [Airsonic](https://airsonic.github.io/),
+[Gonic](https://github.com/sentriz/gonic) or [Ampache](https://ampache.org/).
 
 Based on [subsonic.el](https://git.sr.ht/~amk/subsonic.el)
 
