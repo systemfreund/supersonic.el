@@ -123,6 +123,12 @@ Populated as tracks are loaded into mpv via `subsonic--mpv-load-track',
 and consulted by scrobbling and MPRIS to resolve `playlist_entry_id'
 values reported by mpv back to subsonic track ids.")
 
+(defvar subsonic-mpv--request-counter 0
+  "Counter for `subsonic-mpv-command-with-callback' request_ids.")
+
+(defvar subsonic-mpv--pending-requests (make-hash-table)
+  "Map of in-flight request_id (integer) to the callback awaiting its reply.")
+
 (defun subsonic-mpv-kill ()
   "Kill the mpv process."
   (interactive)
@@ -136,7 +142,9 @@ values reported by mpv back to subsonic track ids.")
   (setq subsonic-mpv--process nil)
   (setq subsonic-mpv--queue nil)
   (setq subsonic-mpv--entry-counter 0)
-  (clrhash subsonic--playlist))
+  (clrhash subsonic--playlist)
+  (setq subsonic-mpv--request-counter 0)
+  (clrhash subsonic-mpv--pending-requests))
 
 (defun subsonic-mpv-live-p ()
   "Return non-nil if inferior mpv is running."
@@ -206,18 +214,24 @@ already playing undisturbed and simply queues IDS after it."
 (defun subsonic--mpv-socket-filter (_ output)
   "Filter the mpv socket connection.
 OUTPUT is the stdout read from mpv"
-  (when subsonic-scrobble-plays
-	(dolist (parsed-response (mapcar #'json-read-from-string
-									 (split-string output "\n" t)))
-	  (let ((event (alist-get 'event parsed-response)))
-		(cond
-		 ((string-equal event "end-file")
-          (subsonic-scrobble (gethash (alist-get 'playlist_entry_id parsed-response)
-									  subsonic--playlist)))
-		 ((string-equal event "start-file")
-          (subsonic-scrobble (gethash (alist-get 'playlist_entry_id parsed-response)
-									  subsonic--playlist)
-							 t)))))))
+  (dolist (parsed-response (mapcar #'json-read-from-string
+									(split-string output "\n" t)))
+	(let* ((request-id (alist-get 'request_id parsed-response))
+		   (callback (and request-id (gethash request-id subsonic-mpv--pending-requests))))
+	  (cond
+	   (callback
+		(remhash request-id subsonic-mpv--pending-requests)
+		(funcall callback parsed-response))
+	   (subsonic-scrobble-plays
+		(let ((event (alist-get 'event parsed-response)))
+		  (cond
+		   ((string-equal event "end-file")
+			(subsonic-scrobble (gethash (alist-get 'playlist_entry_id parsed-response)
+										subsonic--playlist)))
+		   ((string-equal event "start-file")
+			(subsonic-scrobble (gethash (alist-get 'playlist_entry_id parsed-response)
+										subsonic--playlist)
+							   t)))))))))
 
 (defun subsonic-scrobble (id &optional now-playing)
   "Scrobble ID and optionally use a NOW-PLAYING request."
@@ -378,6 +392,26 @@ subsonic, and ensure subsonic-host is set correctly")))
        (lambda (_x _y)))
 	(message "MPV not running")))
 
+(defun subsonic-mpv-command-with-callback (callback &rest args)
+  "Send an mpv IPC command built from ARGS, calling CALLBACK with its reply.
+Unlike `subsonic-mpv-command', this expects an actual answer: the
+command is tagged with a fresh request_id, and CALLBACK is invoked
+with the full parsed JSON reply once `subsonic--mpv-socket-filter'
+sees a response carrying that same request_id."
+  (if subsonic-mpv--queue
+	  (let ((request-id (setq subsonic-mpv--request-counter
+							  (1+ subsonic-mpv--request-counter))))
+		(puthash request-id callback subsonic-mpv--pending-requests)
+		(tq-enqueue
+		 subsonic-mpv--queue
+		 (concat
+		  (json-serialize (list 'command (apply #'vector args) 'request_id request-id))
+		  "\n")
+		 ""
+		 nil
+		 (lambda (_x _y))))
+	(message "MPV not running")))
+
 ;;;###autoload
 (defun subsonic-toggle-playing ()
   "Toggle playing/paused state in mpv."
@@ -408,6 +442,75 @@ subsonic, and ensure subsonic-host is set correctly")))
   (interactive)
   (subsonic-mpv-command "seek" "-30" "relative")
   (subsonic))
+
+;;;
+;;; Queue
+;;;
+
+(defun subsonic-queue-parse (playlist)
+  "Turn mpv's PLAYLIST (from a \"get_property playlist\" reply) into
+tabulated-list entries."
+  (mapcar
+    (lambda (entry)
+      (let* ((mpv-id (alist-get 'id entry))
+             (track-id (gethash mpv-id subsonic--playlist))
+             (song
+               (and track-id
+                 (subsonic-recursive-assoc
+                   (subsonic-get-json (subsonic-build-url "/getSong.view" `(("id" . ,track-id))))
+                   '("subsonic-response" "song")))))
+        (list
+          (or track-id (format "%s" mpv-id))
+          (vector
+            (if (alist-get 'current entry) "▶" "")
+            (if song (assoc-default "title" song) "?")
+            (if song (or (assoc-default "artist" song) "") "")))))
+    playlist))
+
+(defun subsonic-queue-fetch-and-render (buff)
+  "Query mpv for its current playlist and render it into BUFF."
+  (if (subsonic-mpv-live-p)
+    (subsonic-mpv-command-with-callback
+      (lambda (response)
+        (when (buffer-live-p buff)
+          (with-current-buffer buff
+            (setq tabulated-list-entries
+              (subsonic-queue-parse (alist-get 'data response)))
+            (tabulated-list-print t))))
+      "get_property" "playlist")
+    (when (buffer-live-p buff)
+      (with-current-buffer buff
+        (setq tabulated-list-entries nil)
+        (tabulated-list-print t)))))
+
+(defun subsonic-queue-refresh ()
+  "Refresh the play queue buffer from mpv's current playlist."
+  (interactive)
+  (subsonic-queue-fetch-and-render (current-buffer)))
+
+(defvar subsonic-queue-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "g") #'subsonic-queue-refresh)
+    map))
+
+(define-derived-mode
+  subsonic-queue-mode
+  tabulated-list-mode
+  "Subsonic Queue"
+  (setq tabulated-list-format [("" 2 nil) ("Title" 40 t) ("Artist" 25 t)])
+  (setq tabulated-list-padding 2)
+  (tabulated-list-init-header))
+
+;;;###autoload
+(defun subsonic-show-queue ()
+  "Open a buffer showing mpv's current play queue."
+  (interactive)
+  (let ((buff (get-buffer-create "*subsonic-queue*")))
+    (with-current-buffer buff
+      (unless (derived-mode-p 'subsonic-queue-mode)
+        (subsonic-queue-mode)))
+    (subsonic-queue-fetch-and-render buff)
+    (pop-to-buffer-same-window buff)))
 
 (defun subsonic-get-id-as-string (data)
   (let ((id (assoc-default "id" data)))
@@ -920,7 +1023,8 @@ subsonic, and ensure subsonic-host is set correctly")))
     ("f" "Skip track" subsonic-skip-track)
     ("b" "Previous track" subsonic-prev-track)
     ("F" "Seek forward" subsonic-seek-forward)
-    ("B" "Seek back" subsonic-seek-back)])
+    ("B" "Seek back" subsonic-seek-back)
+    ("Q" "Show queue" subsonic-show-queue)])
 
 (provide 'subsonic)
 
