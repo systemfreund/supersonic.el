@@ -201,6 +201,75 @@ with the wrong scheme (https vs. http) and the request fails."
               (should (string-match-p "connection refused" (buffer-string)))))
         (kill-buffer buff)))))
 
+(ert-deftest supersonic-tests-signal-if-failed-raises-on-failed-status ()
+  "`supersonic--signal-if-failed' raises an `error' carrying the server's
+message when a \"subsonic-response\" reports status \"failed\", e.g. the
+\"Wrong username or password\" the server sends back for a bad
+auth-source entry -- this used to pass through silently as if it were
+an ordinary, empty result."
+  (should-error
+    (supersonic--signal-if-failed
+      '(("subsonic-response"
+          ("status" . "failed")
+          ("error" ("code" . 40) ("message" . "Wrong username or password.")))))
+    :type 'error)
+  (condition-case err
+    (supersonic--signal-if-failed
+      '(("subsonic-response"
+          ("status" . "failed")
+          ("error" ("code" . 40) ("message" . "Wrong username or password.")))))
+    (error
+      (should (string-match-p "Wrong username or password" (error-message-string err)))))
+  ;; A successful response must not raise.
+  (supersonic--signal-if-failed
+    '(("subsonic-response" ("status" . "ok") ("song" ("id" . "1"))))))
+
+(defmacro supersonic-tests--with-stubbed-response (body-json &rest body)
+  "Run BODY with `aio-url-retrieve' stubbed to a 200 OK reply of BODY-JSON.
+Mimics the buffer shape (headers, then `url-http-end-of-headers', then
+the body) that `supersonic-get-json' expects to parse, so BODY can
+exercise it end to end without a real supersonic server."
+  (declare (indent 1))
+  `(cl-letf (((symbol-function 'aio-url-retrieve)
+              (aio-lambda (_url)
+                (let ((buff (generate-new-buffer " *supersonic-tests-response*")))
+                  (with-current-buffer buff
+                    (insert "HTTP/1.1 200 OK\n\n")
+                    (setq-local url-http-end-of-headers (1- (point)))
+                    (insert ,body-json))
+                  (cons nil buff)))))
+     ,@body))
+
+(ert-deftest supersonic-tests-get-json-raises-on-bad-credentials ()
+  "`supersonic-get-json' surfaces a Subsonic-level \"failed\" response --
+e.g. the \"Wrong username or password\" a server sends back for a bad
+auth-source entry -- as a visible `error' instead of returning it as an
+ordinary, empty-looking result."
+  (supersonic-tests--with-stubbed-response
+      "{\"subsonic-response\":{\"status\":\"failed\",\"error\":{\"code\":40,\"message\":\"Wrong username or password.\"}}}"
+    (should-error
+      (aio-wait-for (supersonic-get-json "dummy://url"))
+      :type 'error)))
+
+(ert-deftest supersonic-tests-refresh-shows-error-on-bad-credentials ()
+  "A refresh function surfaces a Subsonic-level \"failed\" response (e.g.
+wrong username/password from auth-source) to the user instead of
+silently rendering an empty list, mirroring
+`supersonic-tests-refresh-shows-error-on-network-failure' but for a
+failure that arrives inside a 200 OK body rather than as an HTTP/network
+error."
+  (cl-letf (((symbol-function 'supersonic-build-url) (lambda (_endpoint _extra-query) "dummy://url")))
+    (supersonic-tests--with-stubbed-response
+        "{\"subsonic-response\":{\"status\":\"failed\",\"error\":{\"code\":40,\"message\":\"Wrong username or password.\"}}}"
+      (let ((buff (get-buffer-create "*supersonic-tests-artists*")))
+        (unwind-protect
+            (progn
+              (aio-wait-for (supersonic-artists-refresh buff))
+              (with-current-buffer buff
+                (should (string-match-p "Error" (buffer-string)))
+                (should (string-match-p "Wrong username or password" (buffer-string)))))
+          (kill-buffer buff))))))
+
 (ert-deftest supersonic-tests-auth-picks-up-host-change-at-runtime ()
   "`supersonic-auth' re-resolves against `auth-source-search' as soon as
 `supersonic-host' changes, instead of keeping whatever was looked up

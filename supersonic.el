@@ -277,19 +277,35 @@ yourself, so a change to `supersonic-host' is always picked up."
           (let*
             (
               (json-array-type 'list)
-              (json-key-type 'string))
-            (condition-case nil
-              (json-read-from-string
-                ;; The Subsonic API always returns UTF-8 JSON (per RFC
-                ;; 8259); `aio-url-retrieve' doesn't reliably decode the
-                ;; body for us across Emacs versions, so decode explicitly.
-                ;; Safe even if it's already decoded: `decode-coding-string'
-                ;; is a no-op on text that isn't raw undecoded bytes.
-                (decode-coding-string
-                  (buffer-substring (1+ url-http-end-of-headers) (point-max))
-                  'utf-8))
-              (json-readtable-error (error "Failed to read json"))))))
+              (json-key-type 'string)
+              (data
+                (condition-case nil
+                  (json-read-from-string
+                    ;; The Subsonic API always returns UTF-8 JSON (per RFC
+                    ;; 8259); `aio-url-retrieve' doesn't reliably decode the
+                    ;; body for us across Emacs versions, so decode explicitly.
+                    ;; Safe even if it's already decoded: `decode-coding-string'
+                    ;; is a no-op on text that isn't raw undecoded bytes.
+                    (decode-coding-string
+                      (buffer-substring (1+ url-http-end-of-headers) (point-max))
+                      'utf-8))
+                  (json-readtable-error (error "Failed to read json")))))
+            (supersonic--signal-if-failed data)
+            data)))
       (kill-buffer buffer))))
+
+(defun supersonic--signal-if-failed (data)
+  "Signal an `error' if the parsed Subsonic response DATA reports failure.
+The Subsonic API reports application-level failures (e.g. a wrong
+username/password from auth-source) inside a 200 OK response body,
+as a \"subsonic-response\" with status \"failed\" and an \"error\"
+object, rather than via the HTTP status -- so without this check
+`supersonic-get-json' would return that body as if it were a normal,
+empty result instead of raising anything the user can see."
+  (let ((response (supersonic-recursive-assoc data '("subsonic-response"))))
+    (when (equal (assoc-default "status" response) "failed")
+      (let ((err (assoc-default "error" response)))
+        (error "%s" (or (assoc-default "message" err) "Subsonic request failed"))))))
 
 (defun supersonic-image-propertize (id)
   "Generate a property for a supersonic ID."
