@@ -49,6 +49,20 @@ Returns the final value of PREDICATE."
       (sleep-for 0.05))
     (funcall predicate)))
 
+(ert-deftest supersonic-tests-load-track-rolls-back-on-send-failure ()
+  "`supersonic--mpv-load-track' does not advance `supersonic-mpv--entry-counter'
+or register an entry in `supersonic--playlist' when the `loadfile'
+command could not actually be sent to mpv (e.g. no live IPC queue),
+so the client-side counter never runs ahead of what mpv has actually
+seen."
+  (cl-letf (((symbol-function 'supersonic-build-url) (lambda (_endpoint _extra-query) "dummy://url")))
+    (let ((supersonic-mpv--queue nil)
+          (supersonic-mpv--entry-counter 5)
+          (supersonic--playlist (make-hash-table)))
+      (should-error (supersonic--mpv-load-track "some-id" "replace"))
+      (should (= 5 supersonic-mpv--entry-counter))
+      (should (= 0 (hash-table-count supersonic--playlist))))))
+
 (ert-deftest supersonic-tests-start-assigns-sequential-ids ()
   "`supersonic-mpv-start' maps mpv's playlist entry ids 1..n, in order."
   (supersonic-tests--with-mpv
@@ -170,6 +184,52 @@ dropping the previous queue's entries rather than appending to them."
                (should (equal supersonic-tests--track-3 (aref (nth 1 entry) 1)))
                (should (equal "▶" (aref (nth 1 entry) 0)))))
          (kill-buffer buff))))))
+
+(ert-deftest supersonic-tests-refresh-shows-error-on-network-failure ()
+  "A refresh function surfaces network/HTTP failures to the user instead
+of silently doing nothing, e.g. when `supersonic-host' is misconfigured
+with the wrong scheme (https vs. http) and the request fails."
+  (cl-letf (((symbol-function 'supersonic-build-url) (lambda (_endpoint _extra-query) "dummy://url"))
+            ((symbol-function 'supersonic-get-json)
+             (aio-lambda (_url) (error "Failed to fetch %s: connection refused" "url"))))
+    (let ((buff (get-buffer-create "*supersonic-tests-artists*")))
+      (unwind-protect
+          (progn
+            (aio-wait-for (supersonic-artists-refresh buff))
+            (with-current-buffer buff
+              (should (string-match-p "Error" (buffer-string)))
+              (should (string-match-p "connection refused" (buffer-string)))))
+        (kill-buffer buff)))))
+
+(ert-deftest supersonic-tests-auth-picks-up-host-change-at-runtime ()
+  "`supersonic-auth' re-resolves against `auth-source-search' as soon as
+`supersonic-host' changes, instead of keeping whatever was looked up
+the first time it was called (which used to be frozen in for the rest
+of the Emacs session, e.g. via a `defvar' initializer evaluated once
+at load time)."
+  (let ((supersonic-host "host-a")
+        (supersonic--auth-cache nil))
+    (cl-letf (((symbol-function 'auth-source-search)
+               (lambda (&rest args)
+                 (list (list :host (plist-get args :host) :user "u" :secret (lambda () "p"))))))
+      (should (equal "host-a" (plist-get (supersonic-auth) :host)))
+      (setq supersonic-host "host-b")
+      (should (equal "host-b" (plist-get (supersonic-auth) :host))))))
+
+(ert-deftest supersonic-tests-tracks-parse-follows-browse-by-tags-toggle ()
+  "`supersonic-tracks-parse' reads the track list from whichever json path
+matches the *current* `supersonic-browse-by-tags' value, staying
+consistent with `supersonic-tracks-json' (which picks the endpoint
+the same way) rather than parsing at a path cached from whatever
+`supersonic-browse-by-tags' was when the package was loaded."
+  (let ((tag-response
+          '(("subsonic-response" ("album" ("song" (("title" . "Tag Song") ("id" . "1")))))))
+        (folder-response
+          '(("subsonic-response" ("directory" ("child" (("title" . "Folder Song") ("id" . "2"))))))))
+    (let ((supersonic-browse-by-tags t))
+      (should (equal "Tag Song" (aref (nth 1 (car (supersonic-tracks-parse tag-response))) 0))))
+    (let ((supersonic-browse-by-tags nil))
+      (should (equal "Folder Song" (aref (nth 1 (car (supersonic-tracks-parse folder-response))) 0))))))
 
 (provide 'supersonic-tests)
 
