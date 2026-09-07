@@ -104,6 +104,19 @@ frame. Its size is set per view: `supersonic-list-art-size` (default
 size requested from the server, and the cache keeps one file per size,
 so raising either one costs a single re-download.
 
+Enabling `supersonic-enable-waveform` adds a clickable waveform seekbar
+below the transport buttons, click anywhere on it to seek there. The
+first time a track is shown its waveform lags a beat behind the rest
+of the buffer, since generating it means transcoding the whole track
+through a disposable mpv process and analyzing the result -- it's
+cached on disk afterwards (`supersonic-waveform-cache-path`), so that
+only happens once per track. Like cover art, it needs a graphical
+frame; unlike cover art, it needs no external image library, since it
+renders as a PPM image, the one raster format Emacs always decodes
+itself. `supersonic-waveform-buckets` sets both its resolution and how
+finely the track is analyzed; `supersonic-waveform-width`/
+`-height` set its display size.
+
 ## MPRIS
 
 `supersonic-mpris.el` exposes supersonic.el's mpv playback as an MPRIS

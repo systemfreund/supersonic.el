@@ -272,6 +272,171 @@ open connection per row."
       (when (file-exists-p supersonic-art-cache-path)
         (delete-directory supersonic-art-cache-path t)))))
 
+(defun supersonic-tests--bytes (values)
+  "Return VALUES (a list of 0..255 ints) as a unibyte string."
+  (let ((s (make-string (length values) 0 nil))
+        (i 0))
+    (dolist (v values)
+      (aset s i v)
+      (setq i (1+ i)))
+    s))
+
+(defun supersonic-tests--le32 (n)
+  "Return N as a 4-byte little-endian unibyte string."
+  (supersonic-tests--bytes
+   (list (logand n 255) (logand (ash n -8) 255) (logand (ash n -16) 255) (logand (ash n -24) 255))))
+
+(defun supersonic-tests--wav (samples)
+  "Build a minimal mono s16le WAV wrapping SAMPLES (signed 16-bit ints).
+Uses a 40-byte extended \"fmt \" chunk, like the WAVE_FORMAT_EXTENSIBLE
+one mpv actually writes, rather than the minimal 16-byte PCM one, so
+tests against this catch a data-chunk scan that only handles the
+minimal case."
+  (let ((sample-bytes
+         (supersonic-tests--bytes
+          (cl-mapcan
+           (lambda (s)
+             (let ((u (if (< s 0) (+ s 65536) s)))
+               (list (logand u 255) (logand (ash u -8) 255))))
+           samples))))
+    (concat (string-to-unibyte "RIFF") (supersonic-tests--le32 0) (string-to-unibyte "WAVE") (string-to-unibyte "fmt ")
+            (supersonic-tests--le32 40) (make-string 40 0 nil) (string-to-unibyte "data")
+            (supersonic-tests--le32 (length sample-bytes)) sample-bytes)))
+
+(ert-deftest supersonic-tests-waveform-cache-file-is-per-bucket-count ()
+  "Waveform cache is keyed on the bucket count, mirroring
+`supersonic-tests-art-cache-file-is-per-size': raising
+`supersonic-waveform-buckets' must not resurrect a stale,
+wrong-resolution envelope cached before the change."
+  (let ((supersonic-waveform-cache-path "/tmp/supersonic-tests-waveform-cache"))
+    (should-not (equal (supersonic-waveform-cache-file "id-1" 200) (supersonic-waveform-cache-file "id-1" 300)))
+    (should (equal (supersonic-waveform-cache-file "id-1" 200) (supersonic-waveform-cache-file "id-1" 200)))))
+
+(ert-deftest supersonic-tests-waveform-find-data-chunk-skips-extended-fmt-chunk ()
+  "`supersonic-waveform--find-data-chunk' finds \"data\" behind a 40-byte
+extended \"fmt \" chunk -- what mpv actually writes -- rather than
+assuming the minimal 16-byte PCM one."
+  (let* ((wav (supersonic-tests--wav '(100 -100 200)))
+         (chunk (supersonic-waveform--find-data-chunk wav)))
+    (should chunk)
+    (should (= 6 (cdr chunk))) ; 3 samples * 2 bytes
+    (should (equal (string-to-unibyte "data") (substring wav (- (car chunk) 8) (- (car chunk) 4))))))
+
+(ert-deftest supersonic-tests-waveform-analyze-samples-computes-peak-and-rms ()
+  "Peak/RMS are computed independently per bucket and normalized to a
+0..255 byte -- full-scale samples in one half of the buffer, silence in
+the other."
+  (let* ((wav (supersonic-tests--wav (append (make-list 4 32767) (make-list 4 0))))
+         (chunk (supersonic-waveform--find-data-chunk wav))
+         (envelope (supersonic-waveform--analyze-samples wav (car chunk) (cdr chunk) 2)))
+    (should (= 255 (aref (car envelope) 0)))
+    (should (= 255 (aref (cdr envelope) 0)))
+    (should (= 0 (aref (car envelope) 1)))
+    (should (= 0 (aref (cdr envelope) 1)))))
+
+(ert-deftest supersonic-tests-waveform-analyze-file-reads-wav-off-disk ()
+  "`supersonic-waveform--analyze-file' works against a real file, not
+just an in-memory buffer -- the shape `supersonic-waveform-ensure'
+actually calls it in, on whatever mpv wrote to disk."
+  (let ((file (make-temp-file "supersonic-tests-wav-")))
+    (unwind-protect
+        (progn
+          (let ((coding-system-for-write 'no-conversion))
+            (write-region (supersonic-tests--wav (make-list 8 32767)) nil file nil 'no-message))
+          (should (= 255 (aref (car (supersonic-waveform--analyze-file file 1)) 0))))
+      (delete-file file))))
+
+(ert-deftest supersonic-tests-waveform-cache-round-trips ()
+  "A written envelope reads back byte-identical, and a cache file that
+doesn't hold exactly 2*BUCKETS bytes (e.g. left truncated by an
+interrupted write) is rejected instead of handed back as if valid."
+  (let* ((dir (make-temp-file "supersonic-tests-wf-cache-" t))
+         (file (expand-file-name "entry" dir))
+         (peaks (supersonic-tests--bytes '(1 2 3)))
+         (rms (supersonic-tests--bytes '(4 5 6))))
+    (unwind-protect
+        (progn
+          (supersonic-waveform--write-cache file (cons peaks rms))
+          (should (equal (cons peaks rms) (supersonic-waveform--read-cache file 3)))
+          (should-not (supersonic-waveform--read-cache file 4)))
+      (delete-directory dir t))))
+
+(ert-deftest supersonic-tests-waveform-ensure-reads-existing-cache-without-spawning-mpv ()
+  "A cached envelope is served straight off disk without starting a
+transcode at all."
+  (let ((supersonic-waveform-cache-path (make-temp-file "supersonic-tests-wf-cache-" t))
+        (supersonic-waveform-buckets 3))
+    (unwind-protect
+        (cl-letf (((symbol-function 'supersonic-waveform--start-transcode)
+                   (lambda (&rest _) (error "should not be called"))))
+          (let ((envelope (cons (supersonic-tests--bytes '(1 2 3)) (supersonic-tests--bytes '(4 5 6)))))
+            (supersonic-waveform--write-cache (supersonic-waveform-cache-file "id-1" 3) envelope)
+            (let (result)
+              (supersonic-waveform-ensure "id-1" (lambda (e) (setq result e)))
+              (should (equal envelope result)))))
+      (delete-directory supersonic-waveform-cache-path t))))
+
+(ert-deftest supersonic-tests-waveform-ensure-transcodes-and-caches ()
+  "A cache miss spawns a disposable mpv to transcode+analyze the track,
+then caches the result to disk for next time."
+  (supersonic-tests--with-mpv
+   (cl-letf (((symbol-function 'supersonic-build-url)
+              (lambda (_endpoint _extra-query) "av://lavfi:sine=frequency=440:duration=2")))
+     (let ((supersonic-waveform-cache-path (make-temp-file "supersonic-tests-wf-cache-" t))
+           (supersonic-waveform-buckets 5)
+           (result 'pending))
+       (unwind-protect
+           (progn
+             (supersonic-waveform-ensure "track-1" (lambda (envelope) (setq result envelope)))
+             (should (supersonic-tests--wait-for (lambda () (not (eq result 'pending))) 10))
+             (should result)
+             (should (= 5 (length (car result))))
+             (should (file-exists-p (supersonic-waveform-cache-file "track-1" 5))))
+         (delete-directory supersonic-waveform-cache-path t))))))
+
+(ert-deftest supersonic-tests-waveform-cancel-kills-in-flight-transcode ()
+  "`supersonic-waveform-cancel' kills the transcode process and forgets
+its output file, so a quick track change never leaves either behind."
+  (supersonic-tests--with-mpv
+   (cl-letf (((symbol-function 'supersonic-build-url)
+              (lambda (_endpoint _extra-query) "av://lavfi:sine=frequency=440:duration=30")))
+     (let ((supersonic-waveform-cache-path (make-temp-file "supersonic-tests-wf-cache-" t)))
+       (unwind-protect
+           (progn
+             (supersonic-waveform-ensure "long-track" #'ignore)
+             (should (process-live-p supersonic-waveform--process))
+             (let ((outfile supersonic-waveform--outfile))
+               (supersonic-waveform-cancel)
+               (should-not (process-live-p supersonic-waveform--process))
+               (should-not (and outfile (file-exists-p outfile)))))
+         (delete-directory supersonic-waveform-cache-path t))))))
+
+(ert-deftest supersonic-tests-waveform-image-produces-well-formed-ppm ()
+  "The rendered seekbar is a well-formed PPM: a header plus exactly
+WIDTH*HEIGHT*3 bytes of pixel data -- and building it doesn't error even
+against the placeholder \"unspecified-fg\"/\"unspecified-bg\" colors a
+frameless batch Emacs reports, thanks to `supersonic-waveform--rgb''s
+fallback."
+  (let* ((supersonic-waveform-width 12)
+         (supersonic-waveform-height 6)
+         (peaks (supersonic-tests--bytes (make-list 4 200)))
+         (rms (supersonic-tests--bytes (make-list 4 100)))
+         (img (supersonic-waveform-image (cons peaks rms) 0.5)))
+    (should (eq 'pbm (plist-get (cdr img) :type)))
+    (should (= (+ (length "P6\n12 6\n255\n") (* 12 6 3)) (length (plist-get (cdr img) :data))))))
+
+(ert-deftest supersonic-tests-waveform-available-p-requires-enable-and-graphic-frame ()
+  "The waveform seekbar needs both the user opt-in and a graphic frame --
+the same gating `supersonic-enable-art' has for cover art."
+  (let ((supersonic-enable-waveform nil))
+    (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
+      (should-not (supersonic-waveform-available-p))
+      (setq supersonic-enable-waveform t)
+      (should (supersonic-waveform-available-p)))
+    (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) nil)))
+      (setq supersonic-enable-waveform t)
+      (should-not (supersonic-waveform-available-p)))))
+
 (ert-deftest supersonic-tests-scrobble-does-not-leak-its-response-buffer ()
   "`supersonic-scrobble' kills the buffer `url-retrieve' hands its
 callback.  Nothing reads that reply, and nothing else cleans it up, so
@@ -392,6 +557,50 @@ track id instead of claiming that nothing is playing."
              (should
               (supersonic-tests--wait-for
                (lambda () (supersonic-tests--buffer-matches buff (regexp-quote supersonic-tests--track-1))))))
+         (kill-buffer buff))))))
+
+(defun supersonic-tests--waveform-image-shown-p (buff)
+  "Return non-nil if BUFF's waveform field holds a rendered image, not
+just the placeholder `supersonic-now-playing--render' inserts for it."
+  (with-current-buffer buff
+    (save-excursion
+      (goto-char (point-min))
+      (let ((match (text-property-search-forward 'supersonic-now-playing-field 'waveform t)))
+        (and match (get-text-property (prop-match-beginning match) 'display))))))
+
+(ert-deftest supersonic-tests-now-playing-buffer-shows-waveform-once-ready ()
+  "The now-playing buffer patches in a waveform seekbar once
+`supersonic-waveform-ensure' delivers an envelope for the current
+track, without disturbing anything else already rendered."
+  (supersonic-tests--with-mpv
+   ;; Play a plain, filesystem-safe track id (unlike the raw `av://...'
+   ;; urls `supersonic-tests--with-mpv' otherwise treats as ids), so it
+   ;; can double as the waveform cache key below; re-stub `supersonic-build-url'
+   ;; to still resolve it to a real playable url for mpv.  Long enough
+   ;; that mpv is still around (and its IPC socket still alive) for the
+   ;; whole test -- a track ending mid-assertion is exactly what
+   ;; `supersonic-tests-now-playing-position-advances-on-its-own' exercises
+   ;; on purpose elsewhere, not something this test is about.
+   (cl-letf (((symbol-function 'supersonic-get-json)
+              (aio-lambda (url) `(("subsonic-response" ("song" ("title" . ,url) ("duration" . 30))))))
+             ((symbol-function 'supersonic-build-url)
+              (lambda (_endpoint _extra-query) "av://lavfi:sine=frequency=440:duration=30"))
+             ((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
+     (let ((supersonic-enable-waveform t)
+           (supersonic-waveform-cache-path (make-temp-file "supersonic-tests-wf-cache-" t))
+           (supersonic-waveform-buckets 4)
+           (buff (get-buffer-create supersonic-now-playing-buffer-name)))
+       (unwind-protect
+           (progn
+             (with-current-buffer buff
+               (supersonic-now-playing-mode))
+             ;; Pre-seed the cache so the buffer gets a waveform without
+             ;; needing a real transcode.
+             (supersonic-waveform--write-cache
+              (supersonic-waveform-cache-file "track-1" 4)
+              (cons (supersonic-tests--bytes '(10 20 30 40)) (supersonic-tests--bytes '(5 10 15 20))))
+             (supersonic-mpv-start (list "track-1"))
+             (should (supersonic-tests--wait-for (lambda () (supersonic-tests--waveform-image-shown-p buff)))))
          (kill-buffer buff))))))
 
 (ert-deftest supersonic-tests-refresh-shows-error-on-network-failure ()
