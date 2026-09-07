@@ -222,34 +222,17 @@ sending PropertiesChanged itself."
    (error
     (message "supersonic-mpris: failed to fetch metadata for %s: %s" id err))))
 
-(defun supersonic-mpris--fetch-art (id art-id)
-  "Download cover art ART-ID for track ID into the shared art cache.
+(aio-defun
+ supersonic-mpris--fetch-art (id art-id)
+ "Download cover art ART-ID for track ID into the shared art cache.
 Re-announces Metadata once the art is available, unless ID is no
-longer the current track."
-  (let ((file (supersonic-art-cache-file art-id supersonic-art-size)))
-    (if (file-exists-p file)
-        (when (equal id (supersonic-mpris--current-track-id))
-          (setq supersonic-mpris--art-file file)
-          (supersonic-mpris--announce-metadata))
-      (unless (file-exists-p supersonic-art-cache-path)
-        (mkdir supersonic-art-cache-path))
-      (url-retrieve
-       (supersonic-build-url "/getCoverArt.view" `(("id" . ,art-id) ("size" . ,(int-to-string supersonic-art-size))))
-       (lambda (status)
-         ;; `url-retrieve' hands us the response buffer and then forgets about
-         ;; it, so kill it on the way out -- otherwise every track change
-         ;; leaves another ` *http host:port*' buffer behind.
-         (unwind-protect
-             (when (and (not (plist-get status :error)) (equal id (supersonic-mpris--current-track-id)))
-               ;; Cover art is arbitrary binary image data, not text -- write
-               ;; the bytes as-is instead of letting Emacs guess (and possibly
-               ;; prompt for) a coding system, exactly as `supersonic--fetch-art'
-               ;; does for the art the list buffers cache.
-               (let ((coding-system-for-write 'no-conversion))
-                 (write-region (+ url-http-end-of-headers 1) (point-max) file nil 'no-message))
-               (setq supersonic-mpris--art-file file)
-               (supersonic-mpris--announce-metadata))
-           (kill-buffer (current-buffer))))))))
+longer the current track.  Delegates the actual fetch-and-cache work to
+`supersonic--fetch-art' rather than reimplementing it here."
+ (aio-await (supersonic--fetch-art art-id supersonic-art-size))
+ (let ((file (supersonic-art-cache-file art-id supersonic-art-size)))
+   (when (and (file-exists-p file) (equal id (supersonic-mpris--current-track-id)))
+     (setq supersonic-mpris--art-file file)
+     (supersonic-mpris--announce-metadata))))
 
 (defun supersonic-mpris--set-track (index)
   "Record INDEX (mpv's 1-based playlist_entry_id) as the current track."

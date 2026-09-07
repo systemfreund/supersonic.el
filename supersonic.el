@@ -2,7 +2,7 @@
 
 ;; Author: systemfreund <github@o9z.de>
 ;; URL: https://github.com/systemfreund/supersonic.el
-;; Version: 0.1.0
+;; Version: 0.2.0
 ;; Keywords: multimedia
 ;; Package-Requires: ((emacs "27.1") (transient "0.2") (aio "1.0"))
 
@@ -23,11 +23,15 @@
 
 ;; This package is meant to act as a simple subsonic frontend that
 ;; uses mpv for playing the actual music.
+;;
+;; mpv is driven over its JSON IPC protocol through a Unix-domain
+;; socket (`--input-ipc-server'), so this only works on platforms that
+;; support those -- i.e. not native Windows, where mpv's IPC transport
+;; is a named pipe with a different naming scheme instead.
 
 ;;; Code:
 (require 'json)
 (require 'url)
-(require 'tq)
 (require 'seq)
 (require 'aio)
 
@@ -127,7 +131,16 @@ while that buffer is both open and on display."
   :group 'supersonic)
 
 (defvar supersonic-mpv--process nil)
-(defvar supersonic-mpv--queue nil)
+(defvar supersonic-mpv--socket nil
+  "The network process connected to mpv's `--input-ipc-server' socket.
+Commands are written to it directly with `process-send-string'; replies
+are matched by hand via `supersonic-mpv--pending-requests', so nothing
+here queues or waits for a response the way `tq.el' does.")
+(defvar supersonic-mpv--socket-buffer ""
+  "Bytes read from the mpv IPC socket that don't yet form a complete line.
+Process filters aren't guaranteed to see whole, newline-terminated JSON
+messages in a single call, so `supersonic--mpv-socket-filter' carries
+any trailing partial message over between invocations here.")
 
 (defvar supersonic-mpv--entry-counter 0
   "Client-side mirror of the mpv playlist entry id mpv will assign next.
@@ -154,18 +167,20 @@ Kept in sync via an `observe_property' registered once per mpv process
 in `supersonic-mpv-ensure-running'; consulted by the now-playing buffer
 so it never has to query mpv for this on every render.")
 
+;;;###autoload
 (defun supersonic-mpv-kill ()
   "Kill the mpv process."
   (interactive)
-  (when supersonic-mpv--queue
-    (tq-close supersonic-mpv--queue))
+  (when (process-live-p supersonic-mpv--socket)
+    (delete-process supersonic-mpv--socket))
   (when (supersonic-mpv-live-p)
     (kill-process supersonic-mpv--process))
   (with-timeout (supersonic-mpv-timeout (error "Failed to kill mpv"))
     (while (supersonic-mpv-live-p)
-      (sleep-for 0.05)))
+      (accept-process-output nil 0.05)))
   (setq supersonic-mpv--process nil)
-  (setq supersonic-mpv--queue nil)
+  (setq supersonic-mpv--socket nil)
+  (setq supersonic-mpv--socket-buffer "")
   (setq supersonic-mpv--entry-counter 0)
   (clrhash supersonic--playlist)
   (setq supersonic-mpv--request-counter 0)
@@ -182,6 +197,10 @@ so it never has to query mpv for this on every render.")
   "Make sure mpv is running as an idle player, starting it if necessary.
 Does nothing if mpv is already running, so it is safe to call before
 every play/enqueue action."
+  (when (eq system-type 'windows-nt)
+    (user-error
+     "supersonic.el talks to mpv over a Unix-domain socket, which native
+Windows does not support; this is not implemented for windows-nt"))
   (unless (supersonic-mpv-live-p)
     (supersonic-mpv-kill)
     (let ((socket (make-temp-name (expand-file-name "supersonic-mpv-" temporary-file-directory))))
@@ -205,10 +224,13 @@ every play/enqueue action."
                (delete-file socket))))))
       (with-timeout (supersonic-mpv-timeout (supersonic-mpv-kill) (error "Failed to connect to mpv"))
         (while (not (file-exists-p socket))
-          (sleep-for 0.05)))
-      (setq supersonic-mpv--queue
-            (tq-create (make-network-process :name "supersonic-mpv-socket" :family 'local :service socket)))
-      (set-process-filter (tq-process supersonic-mpv--queue) #'supersonic--mpv-socket-filter)
+          (accept-process-output nil 0.05)))
+      (setq supersonic-mpv--socket
+            (make-network-process
+             :name "supersonic-mpv-socket"
+             :family 'local
+             :service socket
+             :filter #'supersonic--mpv-socket-filter))
       ;; Have mpv tell us about pause/resume, whoever triggered it, so the now-playing buffer can follow along.  mpv
       ;; answers an `observe_property' with the property's current value right away, which also seeds
       ;; `supersonic--paused'.  Observer id 2 rather than 1 so it cannot collide with the one supersonic-mpris.el
@@ -243,7 +265,7 @@ to start playing now."
   (supersonic--mpv-load-track (car ids) "replace")
   (dolist (id (cdr ids))
     (supersonic--mpv-load-track id "append"))
-  (supersonic-mpv-command "set_property" "pause" :false)
+  (supersonic-mpv-command "set_property" "pause" :json-false)
   (supersonic-queue-maybe-refresh)
   (supersonic-now-playing-maybe-refresh))
 
@@ -258,34 +280,48 @@ already playing undisturbed and simply queues IDS after it."
   (supersonic-queue-maybe-refresh)
   (supersonic-now-playing-maybe-refresh))
 
+(defun supersonic--mpv-handle-message (parsed-response)
+  "Handle PARSED-RESPONSE, one message parsed from mpv's IPC socket."
+  (let* ((request-id (alist-get 'request_id parsed-response))
+         (callback (and request-id (gethash request-id supersonic-mpv--pending-requests))))
+    (cond
+     (callback
+      (remhash request-id supersonic-mpv--pending-requests)
+      (funcall callback parsed-response))
+     (t
+      (let ((event (alist-get 'event parsed-response)))
+        (when (member event '("start-file" "end-file"))
+          (supersonic-queue-maybe-refresh)
+          (supersonic-now-playing-maybe-refresh))
+        ;; mpv reports booleans as JSON true/false, which `json-read'
+        ;; turns into t and `:json-false' -- the latter being non-nil in
+        ;; Lisp, so this has to compare against t explicitly.
+        (when (and (string-equal event "property-change") (string-equal (alist-get 'name parsed-response) "pause"))
+          (setq supersonic--paused (eq (alist-get 'data parsed-response) t))
+          (supersonic-now-playing-maybe-refresh))
+        (when supersonic-scrobble-plays
+          (cond
+           ((string-equal event "end-file")
+            (supersonic-scrobble (gethash (alist-get 'playlist_entry_id parsed-response) supersonic--playlist)))
+           ((string-equal event "start-file")
+            (supersonic-scrobble (gethash (alist-get 'playlist_entry_id parsed-response) supersonic--playlist)
+                                 t)))))))))
+
 (defun supersonic--mpv-socket-filter (_ output)
   "Filter the mpv socket connection.
-OUTPUT is the stdout read from mpv"
-  (dolist (parsed-response (mapcar #'json-read-from-string (split-string output "\n" t)))
-    (let* ((request-id (alist-get 'request_id parsed-response))
-           (callback (and request-id (gethash request-id supersonic-mpv--pending-requests))))
-      (cond
-       (callback
-        (remhash request-id supersonic-mpv--pending-requests)
-        (funcall callback parsed-response))
-       (t
-        (let ((event (alist-get 'event parsed-response)))
-          (when (member event '("start-file" "end-file"))
-            (supersonic-queue-maybe-refresh)
-            (supersonic-now-playing-maybe-refresh))
-          ;; mpv reports booleans as JSON true/false, which `json-read'
-          ;; turns into t and `:json-false' -- the latter being non-nil in
-          ;; Lisp, so this has to compare against t explicitly.
-          (when (and (string-equal event "property-change") (string-equal (alist-get 'name parsed-response) "pause"))
-            (setq supersonic--paused (eq (alist-get 'data parsed-response) t))
-            (supersonic-now-playing-maybe-refresh))
-          (when supersonic-scrobble-plays
-            (cond
-             ((string-equal event "end-file")
-              (supersonic-scrobble (gethash (alist-get 'playlist_entry_id parsed-response) supersonic--playlist)))
-             ((string-equal event "start-file")
-              (supersonic-scrobble (gethash (alist-get 'playlist_entry_id parsed-response) supersonic--playlist)
-                                   t))))))))))
+OUTPUT is the latest chunk read from mpv's IPC socket.  A single call
+is not guaranteed to see whole, newline-terminated JSON messages, so
+any trailing partial message is carried over in
+`supersonic-mpv--socket-buffer' until the rest of it arrives."
+  (setq supersonic-mpv--socket-buffer (concat supersonic-mpv--socket-buffer output))
+  (let ((lines (split-string supersonic-mpv--socket-buffer "\n")))
+    ;; The last element of LINES is whatever follows the final newline in
+    ;; the buffer so far -- an empty string if it ends cleanly on one, or
+    ;; an incomplete message otherwise.  Either way, hold it back and only
+    ;; hand complete lines to `json-read-from-string'.
+    (setq supersonic-mpv--socket-buffer (car (last lines)))
+    (dolist (parsed-response (mapcar #'json-read-from-string (seq-remove #'string-empty-p (butlast lines))))
+      (supersonic--mpv-handle-message parsed-response))))
 
 (defun supersonic-scrobble (id &optional now-playing)
   "Scrobble ID and optionally use a NOW-PLAYING request."
@@ -322,12 +358,9 @@ session."
 
 (defun supersonic-alist->query (al)
   "Convert an alist -- AL to a set of url query parameters."
-  (seq-reduce
-   (lambda (accu q)
-     (if (string-empty-p accu)
-         (concat "?" (car q) "=" (cdr q))
-       (concat accu "&" (car q) "=" (cdr q))))
-   al ""))
+  (if al
+      (concat "?" (mapconcat (lambda (q) (concat (car q) "=" (cdr q))) al "&"))
+    ""))
 
 ;; fix byte-compiler complaints
 (defvar url-http-end-of-headers)
@@ -367,7 +400,7 @@ empty result instead of raising anything the user can see."
   (let ((response (supersonic-recursive-assoc data '("subsonic-response"))))
     (when (equal (assoc-default "status" response) "failed")
       (let ((err (assoc-default "error" response)))
-        (error "%s" (or (assoc-default "message" err) "Subsonic request failed"))))))
+        (user-error "%s" (or (assoc-default "message" err) "Subsonic request failed"))))))
 
 (defun supersonic-art-cache-file (id size)
   "Return the path cover art ID is cached under when fetched at SIZE.
@@ -480,7 +513,7 @@ EXTRA-QUERY is used for any extra query parameters"
            host "/rest" endpoint
            (supersonic-alist->query
             (append (supersonic--auth-query) `(("c" . "ElSonic") ("v" . "1.16.0") ("f" . "json")) extra-query))))
-      (error
+      (user-error
        "Failed to load .authinfo, please provide auth configuration for
 supersonic, and ensure supersonic-host is set correctly"))))
 
@@ -540,19 +573,15 @@ replaces it with real entries."
 
 (defun supersonic-mpv-command (&rest args)
   "Generate a mpv ipc command using ARGS.
-Returns non-nil if the command was actually handed to mpv's IPC queue;
-nil (after printing a \"MPV not running\" message) if there is no live
-connection, so callers that must stay in sync with mpv's actual state
--- like `supersonic--mpv-load-track' -- can tell the difference instead
-of assuming the command went through."
-  (if supersonic-mpv--queue
+Returns non-nil if the command was actually sent to mpv over the IPC
+socket; nil (after printing a \"MPV not running\" message) if there is
+no live connection, so callers that must stay in sync with mpv's
+actual state -- like `supersonic--mpv-load-track' -- can tell the
+difference instead of assuming the command went through."
+  (if supersonic-mpv--socket
       (progn
-        (tq-enqueue
-         supersonic-mpv--queue
-         (concat (json-serialize (list 'command (apply #'vector args))) "\n")
-         ""
-         nil
-         (lambda (_x _y)))
+        (process-send-string
+         supersonic-mpv--socket (concat (json-encode (list (cons 'command (apply #'vector args)))) "\n"))
         t)
     (progn
       (message "MPV not running")
@@ -564,15 +593,12 @@ Unlike `supersonic-mpv-command', this expects an actual answer: the
 command is tagged with a fresh request_id, and CALLBACK is invoked
 with the full parsed JSON reply once `supersonic--mpv-socket-filter'
 sees a response carrying that same request_id."
-  (if supersonic-mpv--queue
+  (if supersonic-mpv--socket
       (let ((request-id (setq supersonic-mpv--request-counter (1+ supersonic-mpv--request-counter))))
         (puthash request-id callback supersonic-mpv--pending-requests)
-        (tq-enqueue
-         supersonic-mpv--queue
-         (concat (json-serialize (list 'command (apply #'vector args) 'request_id request-id)) "\n")
-         ""
-         nil
-         (lambda (_x _y))))
+        (process-send-string
+         supersonic-mpv--socket
+         (concat (json-encode (list (cons 'command (apply #'vector args)) (cons 'request_id request-id))) "\n")))
     (message "MPV not running")))
 
 (aio-defun
@@ -597,13 +623,13 @@ unresolved forever."
 
 ;;;###autoload
 (defun supersonic-skip-track ()
-  "Toggle playing/paused state in mpv."
+  "Skip to the next track in mpv."
   (interactive)
   (supersonic-mpv-command "playlist-next"))
 
 ;;;###autoload
 (defun supersonic-prev-track ()
-  "Toggle playing/paused state in mpv."
+  "Go to the previous track in mpv."
   (interactive)
   (supersonic-mpv-command "playlist-prev"))
 
@@ -613,6 +639,7 @@ unresolved forever."
   (interactive)
   (supersonic-mpv-command "seek" "30" "relative"))
 
+;;;###autoload
 (defun supersonic-seek-back ()
   "Seek 30 seconds back in mpv."
   (interactive)
@@ -930,27 +957,27 @@ placeholder saying that nothing is playing."
 Tolerates a failing metadata lookup the way `supersonic-queue-parse'
 does: rather than blanking a view that refreshes on every track change,
 it falls back to showing the bare track id."
- (if (not (supersonic-mpv-live-p))
-     (supersonic-now-playing--render buff nil nil nil)
-   (let* ((playlist (aio-await (supersonic-mpv-get-property "playlist")))
-          (entry (seq-find (lambda (item) (alist-get 'current item)) playlist))
-          (track-id (and entry (gethash (alist-get 'id entry) supersonic--playlist))))
-     (if (not track-id)
-         (supersonic-now-playing--render buff nil nil nil)
-       (let* ((outcome
+ (if (supersonic-mpv-live-p)
+     (let* ((playlist (aio-await (supersonic-mpv-get-property "playlist")))
+            (entry (seq-find (lambda (item) (alist-get 'current item)) playlist))
+            (track-id (and entry (gethash (alist-get 'id entry) supersonic--playlist))))
+       (if track-id
+           (let* ((outcome
+                   (aio-await
+                    (aio-catch (supersonic-get-json (supersonic-build-url "/getSong.view" `(("id" . ,track-id)))))))
+                  (song
+                   (if (eq (car outcome) :success)
+                       (supersonic-recursive-assoc (cdr outcome) '("subsonic-response" "song"))
+                     `(("title" . ,track-id)))))
+             (when (and supersonic-enable-art (assoc-default "coverArt" song))
                (aio-await
-                (aio-catch (supersonic-get-json (supersonic-build-url "/getSong.view" `(("id" . ,track-id)))))))
-              (song
-               (if (eq (car outcome) :success)
-                   (supersonic-recursive-assoc (cdr outcome) '("subsonic-response" "song"))
-                 `(("title" . ,track-id)))))
-         (when (and supersonic-enable-art (assoc-default "coverArt" song))
-           (aio-await
-            (aio-catch (supersonic--fetch-art (assoc-default "coverArt" song) supersonic-now-playing-art-size))))
-         ;; Asked for last, so the position is as fresh as possible: the
-         ;; art fetch above can take a while on a cold cache.
-         (supersonic-now-playing--render
-          buff song supersonic--paused (aio-await (supersonic-mpv-get-property "time-pos"))))))))
+                (aio-catch (supersonic--fetch-art (assoc-default "coverArt" song) supersonic-now-playing-art-size))))
+             ;; Asked for last, so the position is as fresh as possible: the
+             ;; art fetch above can take a while on a cold cache.
+             (supersonic-now-playing--render
+              buff song supersonic--paused (aio-await (supersonic-mpv-get-property "time-pos"))))
+         (supersonic-now-playing--render buff nil nil nil)))
+   (supersonic-now-playing--render buff nil nil nil)))
 
 (defun supersonic-now-playing-refresh ()
   "Refresh the now-playing buffer from mpv's current state."
@@ -988,6 +1015,7 @@ play queue buffer keeps itself current."
     (pop-to-buffer-same-window buff)))
 
 (defun supersonic-get-id-as-string (data)
+  "Return DATA's \"id\" field as a string, converting from a number if necessary."
   (let ((id (assoc-default "id" data)))
     (if (numberp id)
         (number-to-string id)
@@ -1242,16 +1270,19 @@ the response at the wrong key."
     (define-key map (kbd "a") #'supersonic-enqueue-album)
     map))
 
+;;;###autoload
 (defun supersonic-recent-albums ()
   "Show a list of recently played albums."
   (interactive)
   (supersonic-albums nil "recent"))
 
+;;;###autoload
 (defun supersonic-random-albums ()
   "Show a list of random albums."
   (interactive)
   (supersonic-albums nil "random"))
 
+;;;###autoload
 (defun supersonic-newest-albums ()
   "Show a list of recently added albums."
   (interactive)
@@ -1297,18 +1328,14 @@ the response at the wrong key."
 
 (defun supersonic-artists-parse (data)
   "Retrieve a list of artists from some parsed json DATA."
-  (let* ((artists (supersonic-recursive-assoc data '("subsonic-response" "artists" "index")))
-         (result
-          (seq-reduce
-           (lambda (accu artist-index)
-             (append
-              accu
-              (mapcar
-               (lambda (artist)
-                 (list (supersonic-get-id-as-string artist) (vector (assoc-default "name" artist))))
-               (assoc-default "artist" artist-index))))
-           artists '())))
-    result))
+  (let ((artists (supersonic-recursive-assoc data '("subsonic-response" "artists" "index"))))
+    (mapcan
+     (lambda (artist-index)
+       (mapcar
+        (lambda (artist)
+          (list (supersonic-get-id-as-string artist) (vector (assoc-default "name" artist))))
+        (assoc-default "artist" artist-index)))
+     artists)))
 
 (aio-defun
  supersonic-artists-refresh (buff) "Refresh the list of artists into BUFF."

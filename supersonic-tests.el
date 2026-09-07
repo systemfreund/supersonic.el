@@ -212,6 +212,15 @@ actually re-fetches instead of reusing the old resolution forever."
     (should-not (equal (supersonic-art-cache-file "art-1" 100) (supersonic-art-cache-file "art-1" 300)))
     (should (equal (supersonic-art-cache-file "art-1" 100) (supersonic-art-cache-file "art-1" 100)))))
 
+(ert-deftest supersonic-tests-alist-to-query-builds-query-string ()
+  "`supersonic-alist->query' joins an alist into a leading-`?', `&'-separated
+query string, and returns the empty string (not a bare \"?\") for an
+empty alist, so `supersonic-build-url' never appends a dangling `?' to
+a url that has no extra query parameters."
+  (should (equal "" (supersonic-alist->query '())))
+  (should (equal "?a=1" (supersonic-alist->query '(("a" . "1")))))
+  (should (equal "?a=1&b=2" (supersonic-alist->query '(("a" . "1") ("b" . "2"))))))
+
 (ert-deftest supersonic-tests-fetch-art-creates-cache-directory ()
   "`supersonic--fetch-art' creates the cache directory itself, so callers
 that fetch a single image (the now-playing buffer) get art on a fresh
@@ -506,6 +515,22 @@ the same way) rather than parsing at a path cached from whatever
       (should (equal "Tag Song" (aref (nth 1 (car (supersonic-tracks-parse tag-response))) 0))))
     (let ((supersonic-browse-by-tags nil))
       (should (equal "Folder Song" (aref (nth 1 (car (supersonic-tracks-parse folder-response))) 0))))))
+
+(ert-deftest supersonic-tests-artists-parse-flattens-index-buckets ()
+  "`supersonic-artists-parse' flattens every letter bucket of the
+\"index\" array into a single list of (id [name]) tabulated-list
+entries, in bucket order, covering every bucket rather than just the
+first."
+  (let ((data
+         '(("subsonic-response"
+            ("artists"
+             ("index"
+              (("artist" (("id" . "1") ("name" . "Alice")) (("id" . "2") ("name" . "Bob"))))
+              (("artist" (("id" . "3") ("name" . "Carl"))))))))))
+    (should
+     (equal
+      '(("1" ["Alice"]) ("2" ["Bob"]) ("3" ["Carl"]))
+      (supersonic-artists-parse data)))))
 
 (ert-deftest supersonic-tests-albums-buffer-becomes-current ()
   "`supersonic-albums' leaves the freshly created album-list buffer as
