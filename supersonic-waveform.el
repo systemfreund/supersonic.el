@@ -216,13 +216,7 @@ real work; doing it all in one synchronous pass froze Emacs solid
 until it finished. Instead this processes buckets in small time-boxed
 slices (`supersonic-waveform--analysis-tick-budget' each), yielding
 back to Emacs between slices via a zero-delay timer so redisplay and
-input keep running throughout. Explicitly forces a `redisplay' at each
-of those points rather than just trusting the yield to eventually lead
-to one: a zero-delay timer that keeps immediately re-arming itself can
-otherwise make Emacs perpetually decide there's more pending work and
-keep deferring the actual screen update -- buffer text (e.g. another
-track's title, rendered in the meantime) can end up changed correctly
-underneath while the display still shows the old one.
+input keep running throughout.
 
 GENERATION must still equal `supersonic-waveform--generation' at the
 start of every slice, checked there and nowhere in between -- once
@@ -265,7 +259,6 @@ slice."
              (progn
                (when on-progress
                  (funcall on-progress (cons (copy-sequence peaks) (copy-sequence rms))))
-               (redisplay)
                (run-with-timer 0 nil #'step))
            (funcall on-done (cons peaks rms))))))
      (step))))
