@@ -1028,7 +1028,7 @@ the response at the wrong key."
    ("a" "Artists" supersonic-artists)
    ("r" "Random Albums" supersonic-random-albums)
    ("n" "Newest Albums" supersonic-newest-albums)
-   ("s" "Search supersonic" supersonic-search)
+   ("s" "Search" supersonic-search)
    ("p" "Podcasts" supersonic-podcasts)]
   ["Controls"
    ("Q" "Show queue" supersonic-show-queue)
