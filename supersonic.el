@@ -76,14 +76,6 @@ coincide (e.g. a track and its own cover art id)."
   :type 'boolean
   :group 'supersonic)
 
-(defcustom supersonic-art-size 100
-  "Set size for the album art download query.
-Applies where art is not shown in one of supersonic's own buffers;
-those download the art at exactly the size they display it at, see
-`supersonic-list-art-size' and `supersonic-now-playing-art-size'."
-  :type 'integer
-  :group 'supersonic)
-
 (defcustom supersonic-list-art-size 100
   "Height in pixels of the cover art in the album and podcast lists.
 The art is also downloaded at this size, so raising it costs a

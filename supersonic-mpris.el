@@ -51,6 +51,23 @@
   :prefix "supersonic-mpris-"
   :group 'supersonic)
 
+(defcustom supersonic-mpris-enable-art t
+  "Whether to hand cover art to MPRIS clients.
+Independent of `supersonic-enable-art', which only governs art drawn
+inside Emacs and therefore stays off in a terminal frame; art sent over
+D-Bus is just a file path, so it works regardless of what this Emacs
+can display."
+  :type 'boolean
+  :group 'supersonic-mpris)
+
+(defcustom supersonic-mpris-art-size 200
+  "Size in pixels of the cover art handed to MPRIS clients.
+Unlike the art in supersonic's own buffers this is a plain download
+size: the file is only pointed at via the mpris:artUrl metadata field,
+so how large it ends up on screen is up to the client."
+  :type 'integer
+  :group 'supersonic-mpris)
+
 (defconst supersonic-mpris--bus-name "org.mpris.MediaPlayer2.supersonic"
   "The well-known D-Bus name we register on the session bus.")
 
@@ -215,7 +232,7 @@ sending PropertiesChanged itself."
        (when (equal id (supersonic-mpris--current-track-id))
          (setq supersonic-mpris--track-song song)
          (supersonic-mpris--announce-metadata)
-         (when (and supersonic-enable-art song (assoc-default "coverArt" song))
+         (when (and supersonic-mpris-enable-art song (assoc-default "coverArt" song))
            (supersonic-mpris--fetch-art id (assoc-default "coverArt" song)))))
    (error
     (message "supersonic-mpris: failed to fetch metadata for %s: %s" id err))))
@@ -226,8 +243,8 @@ sending PropertiesChanged itself."
 Re-announces Metadata once the art is available, unless ID is no
 longer the current track.  Delegates the actual fetch-and-cache work to
 `supersonic--fetch-art' rather than reimplementing it here."
- (aio-await (supersonic--fetch-art art-id supersonic-art-size))
- (let ((file (supersonic-art-cache-file art-id supersonic-art-size)))
+ (aio-await (supersonic--fetch-art art-id supersonic-mpris-art-size))
+ (let ((file (supersonic-art-cache-file art-id supersonic-mpris-art-size)))
    (when (and (file-exists-p file) (equal id (supersonic-mpris--current-track-id)))
      (setq supersonic-mpris--art-file file)
      (supersonic-mpris--announce-metadata))))

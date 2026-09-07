@@ -89,6 +89,12 @@ explicitly:
   (supersonic-mpris-mode t))
 ```
 
+Cover art is passed on to MPRIS clients as well, switched by its own 
+`supersonic-mpris-enable-art` (on by default). 
+`supersonic-mpris-art-size` sets the size it is downloaded at; it is 
+only handed over as a file path, so how large the client draws it is 
+not up to us.
+
 ## Authentication
 
 Add a `~/.authinfo.gpg` or `~/.authinfo` file with the following contents
