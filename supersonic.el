@@ -1026,6 +1026,7 @@ the response at the wrong key."
  supersonic () "Help transient for supersonic."
  [["Supersonic"
    ("a" "Artists" supersonic-artists)
+   ("e" "Recent Albums" supersonic-recent-albums)
    ("r" "Random Albums" supersonic-random-albums)
    ("n" "Newest Albums" supersonic-newest-albums)
    ("s" "Search" supersonic-search)
@@ -1033,7 +1034,7 @@ the response at the wrong key."
   ["Controls"
    ("Q" "Show queue" supersonic-show-queue)
    ("N" "Now playing" supersonic-show-now-playing)
-   ("t" "Toggle playing" supersonic-toggle-playing)
+   ("SPC" "Toggle playing" supersonic-toggle-playing)
    ("f" "Skip track" supersonic-skip-track)
    ("b" "Previous track" supersonic-prev-track)
    ("F" "Seek forward" supersonic-seek-forward :transient t)
