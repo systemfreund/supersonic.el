@@ -168,9 +168,10 @@ Windows does not support; this is not implemented for windows-nt"))
              ;; Emacs can still deliver a raw SIGPIPE for a write that races
              ;; the close itself) the window where they'd write to a socket
              ;; whose peer already hung up.
-             :sentinel (lambda (process _event)
-                         (unless (process-live-p process)
-                           (setq supersonic-mpv--socket nil)))))
+             :sentinel
+             (lambda (process _event)
+               (unless (process-live-p process)
+                 (setq supersonic-mpv--socket nil)))))
       ;; Have mpv tell us about pause/resume, whoever triggered it, so the now-playing buffer can follow along.  mpv
       ;; answers an `observe_property' with the property's current value right away, which also seeds
       ;; `supersonic--paused'.  Observer id 2 rather than 1 so it cannot collide with the one supersonic-mpris.el
@@ -293,7 +294,9 @@ the write itself is a signal, not a Lisp error, and kills Emacs before
 `condition-case' ever sees it."
   (and (process-live-p supersonic-mpv--socket)
        (condition-case nil
-           (progn (process-send-string supersonic-mpv--socket string) t)
+           (progn
+             (process-send-string supersonic-mpv--socket string)
+             t)
          (file-error
           (delete-process supersonic-mpv--socket)
           (setq supersonic-mpv--socket nil)
