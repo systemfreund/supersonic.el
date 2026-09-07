@@ -158,7 +158,19 @@ Windows does not support; this is not implemented for windows-nt"))
              :name "supersonic-mpv-socket"
              :family 'local
              :service socket
-             :filter #'supersonic--mpv-socket-filter))
+             :filter #'supersonic--mpv-socket-filter
+             ;; mpv (`--idle=once') can exit and tear down its end of the
+             ;; socket at any time, racing `supersonic-mpv-command'/
+             ;; `-with-callback' writing to it -- see #15.  This sentinel is
+             ;; the fast path for noticing that: it lets those commands
+             ;; guard with `process-live-p' right before every
+             ;; `process-send-string', narrowing (though not eliminating --
+             ;; Emacs can still deliver a raw SIGPIPE for a write that races
+             ;; the close itself) the window where they'd write to a socket
+             ;; whose peer already hung up.
+             :sentinel (lambda (process _event)
+                         (unless (process-live-p process)
+                           (setq supersonic-mpv--socket nil)))))
       ;; Have mpv tell us about pause/resume, whoever triggered it, so the now-playing buffer can follow along.  mpv
       ;; answers an `observe_property' with the property's current value right away, which also seeds
       ;; `supersonic--paused'.  Observer id 2 rather than 1 so it cannot collide with the one supersonic-mpris.el
@@ -269,6 +281,24 @@ any trailing partial message is carried over in
      ;; `url-http-activate-callback').
      (lambda (_status) (kill-buffer (current-buffer))))))
 
+(defun supersonic-mpv--send (string)
+  "Write STRING to the mpv IPC socket, returning non-nil on success.
+Guards with `process-live-p' immediately beforehand and catches the
+`file-error' Emacs normally raises for a write to an already-closed
+socket, treating either as mpv having gone away: the socket is torn
+down and nil is returned instead of the write being attempted.  This
+narrows, but per #15 cannot fully close, the race against mpv
+(`--idle=once') exiting mid-command -- a raw SIGPIPE landing inside
+the write itself is a signal, not a Lisp error, and kills Emacs before
+`condition-case' ever sees it."
+  (and (process-live-p supersonic-mpv--socket)
+       (condition-case nil
+           (progn (process-send-string supersonic-mpv--socket string) t)
+         (file-error
+          (delete-process supersonic-mpv--socket)
+          (setq supersonic-mpv--socket nil)
+          nil))))
+
 (defun supersonic-mpv-command (&rest args)
   "Generate a mpv ipc command using ARGS.
 Returns non-nil if the command was actually sent to mpv over the IPC
@@ -276,14 +306,10 @@ socket; nil (after printing a \"MPV not running\" message) if there is
 no live connection, so callers that must stay in sync with mpv's
 actual state -- like `supersonic--mpv-load-track' -- can tell the
 difference instead of assuming the command went through."
-  (if supersonic-mpv--socket
-      (progn
-        (process-send-string
-         supersonic-mpv--socket (concat (json-encode (list (cons 'command (apply #'vector args)))) "\n"))
-        t)
-    (progn
-      (message "MPV not running")
-      nil)))
+  (if (supersonic-mpv--send (concat (json-encode (list (cons 'command (apply #'vector args)))) "\n"))
+      t
+    (message "MPV not running")
+    nil))
 
 (defun supersonic-mpv-command-with-callback (callback &rest args)
   "Send an mpv IPC command built from ARGS, calling CALLBACK with its reply.
@@ -291,13 +317,13 @@ Unlike `supersonic-mpv-command', this expects an actual answer: the
 command is tagged with a fresh request_id, and CALLBACK is invoked
 with the full parsed JSON reply once `supersonic--mpv-socket-filter'
 sees a response carrying that same request_id."
-  (if supersonic-mpv--socket
-      (let ((request-id (setq supersonic-mpv--request-counter (1+ supersonic-mpv--request-counter))))
-        (puthash request-id callback supersonic-mpv--pending-requests)
-        (process-send-string
-         supersonic-mpv--socket
-         (concat (json-encode (list (cons 'command (apply #'vector args)) (cons 'request_id request-id))) "\n")))
-    (message "MPV not running")))
+  (let ((request-id (1+ supersonic-mpv--request-counter)))
+    (puthash request-id callback supersonic-mpv--pending-requests)
+    (if (supersonic-mpv--send
+         (concat (json-encode (list (cons 'command (apply #'vector args)) (cons 'request_id request-id))) "\n"))
+        (setq supersonic-mpv--request-counter request-id)
+      (remhash request-id supersonic-mpv--pending-requests)
+      (message "MPV not running"))))
 
 (aio-defun
  supersonic-mpv-get-property (name)

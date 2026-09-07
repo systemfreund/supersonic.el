@@ -103,6 +103,27 @@ seen."
      (should (equal "success" (alist-get 'error result)))
      (should (= 1 (length (alist-get 'data result)))))))
 
+(ert-deftest supersonic-tests-command-after-mpv-exit-reports-not-running ()
+  "Commands sent right after mpv (`--idle=once') exits on its own fail
+gracefully instead of writing to the now-dead IPC socket -- see #15.
+`supersonic--mpv-socket''s sentinel is what notices the exit here, so
+this also exercises that it actually clears `supersonic-mpv--socket'
+rather than leaving it pointing at a dead process."
+  (supersonic-tests--with-mpv
+   (supersonic-mpv-start (list "av://lavfi:sine=frequency=440:duration=1"))
+   (should (supersonic-tests--wait-for (lambda () (= 1 (hash-table-count supersonic--playlist)))))
+   (should (supersonic-tests--wait-for (lambda () (not (supersonic-mpv-live-p))) 5))
+   (should-not (supersonic-mpv--send "irrelevant"))
+   (should-not supersonic-mpv--socket)
+   (should-not (supersonic-mpv-command "get_property" "time-pos"))
+   (let ((result 'pending))
+     (supersonic-mpv-command-with-callback (lambda (response) (setq result response)) "get_property" "time-pos")
+     ;; No live socket to ever deliver a reply on, so the callback must
+     ;; never have been registered -- otherwise it leaks in
+     ;; `supersonic-mpv--pending-requests' forever.
+     (should (eq result 'pending))
+     (should (= 0 (hash-table-count supersonic-mpv--pending-requests))))))
+
 (ert-deftest supersonic-tests-queue-parse-marks-current-track ()
   "`supersonic-queue-parse' marks whichever entry mpv reports as current."
   (supersonic-tests--with-mpv
