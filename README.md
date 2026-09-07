@@ -19,15 +19,16 @@ Based on [subsonic.el](https://git.sr.ht/~amk/subsonic.el)
 
 Example use-package config:
 
-```
+```elisp
 (use-package supersonic
   :load-path "~/src/supersonic.el" ;; clone the repository here
   :commands supersonic
   :bind (("C-c m" . supersonic))
   :custom
-  (supersonic-host "https://mysubsonicserver:4355")
+  (supersonic-host "https://mysubsonicserver:4355") ;; For authentication see section below
+  (supersonic-scrobble-plays t)
   (supersonic-enable-art t)
-  (supersonic-scrobble-plays t))
+  (supersonic-enable-waveform t))
 ```
 
 `supersonic-host` may be given without a scheme, in which case
@@ -97,8 +98,7 @@ Add a `~/.authinfo.gpg` or `~/.authinfo` file with the following contents
     machine SUBSONIC_URL login USERNAME password PASSWORD
 
 `SUBSONIC_URL` is the URL of your server, e.g.
-`https://coolsupersonic.example.com` or
-`http://coolsupersonic.example.com:4533`.
+`https://mysubsonicserver:4355` or `http://localhost:1234`.
 
 Make sure the `machine` field in your authinfo entry matches `supersonic-host` 
 exactly, scheme included.
@@ -119,6 +119,3 @@ these on the `Advanced` tab of the entry:
 - `user` set to your subsonic username
 
 The entry's regular password field is used as the secret.
-
-
-
