@@ -413,6 +413,14 @@ to report when this image was generated."
 (defvar supersonic-waveform-seek-map
   (let ((map (make-sparse-keymap)))
     (define-key map [mouse-1] #'supersonic-waveform--seek-at-click)
+    ;; The global `down-mouse-1' binding is `mouse-drag-region', which moves
+    ;; point to the click position as its very first act (to support
+    ;; selecting a region by dragging) -- visible here as the cursor box
+    ;; rendering right on top of the seekbar image after every click.
+    ;; Overriding it locally with a no-op keeps that from ever running for
+    ;; clicks on the image, so point (and the cursor drawn at it) never
+    ;; moves there in the first place.
+    (define-key map [down-mouse-1] #'ignore)
     map)
   "Keymap active on the waveform image; mouse-1 seeks to the click position.")
 

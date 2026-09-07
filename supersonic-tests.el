@@ -538,6 +538,15 @@ must leave the corner pixel it keys off of untouched."
       (should (eq 'heuristic (plist-get (cdr img) :mask)))
       (should (equal (list (aref pixels 0) (aref pixels 1) (aref pixels 2)) bg)))))
 
+(ert-deftest supersonic-tests-waveform-seek-map-suppresses-drag-region-point-move ()
+  "`supersonic-waveform-seek-map' overrides `down-mouse-1' with a no-op.
+The global `down-mouse-1' binding is `mouse-drag-region', which moves
+point to the click position as its first act; left unoverridden, that
+puts point (and the box cursor drawn at it) right on top of the
+seekbar image after every click -- visually a stray frame/border
+around it that has nothing to do with the actual click handling."
+  (should (eq #'ignore (lookup-key supersonic-waveform-seek-map [down-mouse-1]))))
+
 (ert-deftest supersonic-tests-waveform-seek-at-click-reads-image-via-posn-image ()
   "Clicking the waveform must read the clicked image via `posn-image',
 not `car' of `posn-object': for an image, `posn-object' returns the
