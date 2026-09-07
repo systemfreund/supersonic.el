@@ -417,23 +417,34 @@ WIDTH*HEIGHT*3 bytes of pixel data -- and building it doesn't error even
 against the placeholder \"unspecified-fg\"/\"unspecified-bg\" colors a
 frameless batch Emacs reports, thanks to `supersonic-waveform--rgb''s
 fallback."
-  (let* ((supersonic-waveform-width 12)
-         (supersonic-waveform-height 6)
-         (peaks (supersonic-tests--bytes (make-list 4 200)))
-         (rms (supersonic-tests--bytes (make-list 4 100)))
-         (img (supersonic-waveform-image (cons peaks rms) 0.5)))
-    (should (eq 'pbm (plist-get (cdr img) :type)))
-    (should (= (+ (length "P6\n12 6\n255\n") (* 12 6 3)) (length (plist-get (cdr img) :data))))))
+  ;; A `--without-x'-style build (e.g. the headless Emacs CI runs tests
+  ;; against) has no image support compiled in at all, `pbm' included --
+  ;; not something this package can work around, so skip like the mpv
+  ;; tests do when their own prerequisite is missing.
+  (if (not (image-type-available-p 'pbm))
+      (ert-skip "pbm image type not available")
+    (let* ((supersonic-waveform-width 12)
+           (supersonic-waveform-height 6)
+           (peaks (supersonic-tests--bytes (make-list 4 200)))
+           (rms (supersonic-tests--bytes (make-list 4 100)))
+           (img (supersonic-waveform-image (cons peaks rms) 0.5)))
+      (should (eq 'pbm (plist-get (cdr img) :type)))
+      (should (= (+ (length "P6\n12 6\n255\n") (* 12 6 3)) (length (plist-get (cdr img) :data)))))))
 
 (ert-deftest supersonic-tests-waveform-available-p-requires-enable-and-graphic-frame ()
   "The waveform seekbar needs both the user opt-in and a graphic frame --
-the same gating `supersonic-enable-art' has for cover art."
+the same gating `supersonic-enable-art' has for cover art.  Stubs
+`image-type-available-p' too, so this exercises just that gating
+regardless of whether the Emacs actually running these tests was built
+with image support at all."
   (let ((supersonic-enable-waveform nil))
-    (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
+    (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t))
+              ((symbol-function 'image-type-available-p) (lambda (&optional _type) t)))
       (should-not (supersonic-waveform-available-p))
       (setq supersonic-enable-waveform t)
       (should (supersonic-waveform-available-p)))
-    (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) nil)))
+    (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) nil))
+              ((symbol-function 'image-type-available-p) (lambda (&optional _type) t)))
       (setq supersonic-enable-waveform t)
       (should-not (supersonic-waveform-available-p)))))
 
@@ -572,6 +583,7 @@ just the placeholder `supersonic-now-playing--render' inserts for it."
   "The now-playing buffer patches in a waveform seekbar once
 `supersonic-waveform-ensure' delivers an envelope for the current
 track, without disturbing anything else already rendered."
+  (skip-unless (image-type-available-p 'pbm))
   (supersonic-tests--with-mpv
    ;; Play a plain, filesystem-safe track id (unlike the raw `av://...'
    ;; urls `supersonic-tests--with-mpv' otherwise treats as ids), so it
