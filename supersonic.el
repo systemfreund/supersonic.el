@@ -234,11 +234,16 @@ ahead of the playlist entries mpv has actually seen."
         (error "Failed to load track %s: mpv is not running" id)))))
 
 (defun supersonic-mpv-start (ids)
-  "Replace the current mpv queue with IDS and start playing immediately."
+  "Replace the current mpv queue with IDS and start playing immediately.
+`loadfile ... replace' swaps out the playlist but leaves mpv's `pause'
+property untouched, so if playback was paused before this call it
+would otherwise stay paused; explicitly unpause since the caller asked
+to start playing now."
   (supersonic-mpv-ensure-running)
   (supersonic--mpv-load-track (car ids) "replace")
   (dolist (id (cdr ids))
     (supersonic--mpv-load-track id "append"))
+  (supersonic-mpv-command "set_property" "pause" :false)
   (supersonic-queue-maybe-refresh)
   (supersonic-now-playing-maybe-refresh))
 

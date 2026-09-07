@@ -83,6 +83,16 @@ seen."
    (should (equal supersonic-tests--track-1 (gethash 1 supersonic--playlist)))
    (should (equal supersonic-tests--track-2 (gethash 2 supersonic--playlist)))))
 
+(ert-deftest supersonic-tests-start-resumes-if-paused ()
+  "`supersonic-mpv-start' resumes playback even if mpv was left paused."
+  (supersonic-tests--with-mpv
+   (supersonic-mpv-start (list supersonic-tests--track-1))
+   (should (supersonic-tests--wait-for (lambda () (= 1 (hash-table-count supersonic--playlist)))))
+   (supersonic-toggle-playing)
+   (should (supersonic-tests--wait-for (lambda () (eq supersonic--paused t))))
+   (supersonic-mpv-start (list supersonic-tests--track-2))
+   (should (supersonic-tests--wait-for (lambda () (eq supersonic--paused nil))))))
+
 (ert-deftest supersonic-tests-command-with-callback-round-trips ()
   "`supersonic-mpv-command-with-callback' delivers the matching reply."
   (supersonic-tests--with-mpv
