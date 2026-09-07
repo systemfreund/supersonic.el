@@ -515,6 +515,29 @@ fallback."
       (should (eq 'pbm (plist-get (cdr img) :type)))
       (should (= (+ (length "P6\n12 6\n255\n") (* 12 6 3)) (length (plist-get (cdr img) :data)))))))
 
+(ert-deftest supersonic-tests-waveform-image-has-transparent-background ()
+  "The seekbar's flat background is masked out rather than left as a
+solid rectangle baked into the bitmap, so the buffer's actual
+background -- or any highlighting drawn behind it, like `hl-line' or
+an active region -- shows through instead of clashing with whatever
+`face-background' happened to report at render time.  Also guards the
+assumption `:mask 'heuristic' relies on: even a full-height peak bar
+must leave the corner pixel it keys off of untouched."
+  (if (not (image-type-available-p 'pbm))
+      (ert-skip "pbm image type not available")
+    (let* ((supersonic-waveform-width 12)
+           (supersonic-waveform-height 6)
+           ;; Full-scale values: the tightest case for the margin the
+           ;; corner-pixel heuristic depends on.
+           (peaks (supersonic-tests--bytes (make-list 4 255)))
+           (rms (supersonic-tests--bytes (make-list 4 255)))
+           (img (supersonic-waveform-image (cons peaks rms) 0.5))
+           (header (format "P6\n%d %d\n255\n" 12 6))
+           (pixels (substring (plist-get (cdr img) :data) (length header)))
+           (bg (supersonic-waveform--rgb (face-background 'default nil t))))
+      (should (eq 'heuristic (plist-get (cdr img) :mask)))
+      (should (equal (list (aref pixels 0) (aref pixels 1) (aref pixels 2)) bg)))))
+
 (ert-deftest supersonic-tests-waveform-seek-at-click-reads-image-via-posn-image ()
   "Clicking the waveform must read the clicked image via `posn-image',
 not `car' of `posn-object': for an image, `posn-object' returns the

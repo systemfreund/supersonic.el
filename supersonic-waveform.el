@@ -366,7 +366,15 @@ buffer already uses for emphasis vs. de-emphasis.  RMS pixels are
 drawn solid; the extra reach out to the peak is blended halfway into
 the background instead, mirroring the solid/translucent split
 supersonic (the Go player this is ported from) draws its own seekbar
-with."
+with.
+
+The flat background fill is masked out (`:mask' set to `heuristic',
+keying off the corner pixel -- always pure background, since even a
+full-height peak bar leaves a margin at the very top and bottom row)
+rather than left as a solid rectangle, so whatever is actually behind
+the seekbar in the buffer -- the real background, `hl-line', an active
+region -- shows through instead of whatever `face-background' happened
+to report when this image was generated."
   (let* ((width supersonic-waveform-width)
          (height supersonic-waveform-height)
          (peaks (car envelope))
@@ -400,7 +408,7 @@ with."
           for i from rms-extent below peak-extent do
           (supersonic-waveform--set-pixel buf width x (max 0 (- center i)) translucent)
           (supersonic-waveform--set-pixel buf width x (min (1- height) (+ center i)) translucent)))))
-    (create-image (concat (string-to-unibyte (format "P6\n%d %d\n255\n" width height)) buf) 'pbm t)))
+    (create-image (concat (string-to-unibyte (format "P6\n%d %d\n255\n" width height)) buf) 'pbm t :mask 'heuristic)))
 
 (defvar supersonic-waveform-seek-map
   (let ((map (make-sparse-keymap)))
