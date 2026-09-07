@@ -787,6 +787,8 @@ track, without disturbing anything else already rendered."
            (progn
              (with-current-buffer buff
                (supersonic-now-playing-mode))
+             ;; A waveform is only ever fetched for a buffer on display.
+             (set-window-buffer (selected-window) buff)
              ;; Pre-seed the cache so the buffer gets a waveform without
              ;; needing a real transcode.
              (supersonic-waveform--write-cache
@@ -795,6 +797,48 @@ track, without disturbing anything else already rendered."
              (supersonic-mpv-start (list "track-1"))
              (should (supersonic-tests--wait-for (lambda () (supersonic-tests--waveform-image-shown-p buff)))))
          (kill-buffer buff))))))
+
+(ert-deftest supersonic-tests-now-playing-waveform-skips-fetch-while-buffer-hidden ()
+  "A waveform is not generated for a now-playing buffer that exists but
+isn't on display -- real CPU and network work not worth spending on
+nothing anyone can see -- and `supersonic-now-playing--tick' picks the
+fetch back up on its own the moment the buffer becomes visible again."
+  (supersonic-tests--with-mpv
+   (let ((fetch-count 0))
+     (cl-letf (((symbol-function 'supersonic-get-json)
+                (aio-lambda (url) `(("subsonic-response" ("song" ("title" . ,url) ("duration" . 30))))))
+               ((symbol-function 'supersonic-build-url)
+                (lambda (_endpoint _extra-query) "av://lavfi:sine=frequency=440:duration=30"))
+               ((symbol-function 'display-graphic-p) (lambda (&optional _display) t))
+               ((symbol-function 'image-type-available-p) (lambda (&optional _type) t))
+               ((symbol-function 'supersonic-waveform--start-transcode) (lambda (&rest _) (cl-incf fetch-count))))
+       (let ((supersonic-enable-waveform t)
+             (supersonic-cache-path (make-temp-file "supersonic-tests-wf-cache-" t))
+             (buff (get-buffer-create supersonic-now-playing-buffer-name))
+             (other (generate-new-buffer " *supersonic-tests-other*")))
+         (unwind-protect
+             (progn
+               (with-current-buffer buff
+                 (supersonic-now-playing-mode))
+               ;; buff exists but isn't shown anywhere -- `other' occupies
+               ;; the only window instead.
+               (set-window-buffer (selected-window) other)
+               (supersonic-mpv-start (list "track-1"))
+               (should (supersonic-tests--wait-for
+                        (lambda () (equal "track-1" (buffer-local-value 'supersonic-now-playing--track-id buff)))))
+               ;; Give `supersonic-now-playing-fetch-and-render' a moment to
+               ;; have (not) called it -- there's nothing to wait on for a
+               ;; negative assertion like this one.
+               (sit-for 0.3)
+               (should (= 0 fetch-count))
+               (should-not (buffer-local-value 'supersonic-now-playing--waveform-requested buff))
+               (set-window-buffer (selected-window) buff)
+               (should (supersonic-tests--wait-for (lambda () (> fetch-count 0)) 3))
+               (should (buffer-local-value 'supersonic-now-playing--waveform-requested buff)))
+           (supersonic-now-playing--stop-timer)
+           (kill-buffer buff)
+           (kill-buffer other)
+           (delete-directory supersonic-cache-path t)))))))
 
 (ert-deftest supersonic-tests-refresh-shows-error-on-network-failure ()
   "A refresh function surfaces network/HTTP failures to the user instead
