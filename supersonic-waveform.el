@@ -154,6 +154,12 @@ is found."
   "Seconds `supersonic-waveform--analyze-samples-async' spends per timer
 tick before yielding back to Emacs and resuming on the next one.")
 
+(defvar supersonic-waveform--progress-interval 0.1
+  "Minimum seconds between two ON-PROGRESS calls from
+`supersonic-waveform--analyze-samples-async'.  Each one has the caller
+re-render the seekbar image, which costs about as much as a slice of
+analysis itself; ten redraws a second look no different from forty.")
+
 (defun supersonic-waveform--analyze-bucket (buf data-start per-bucket total-samples b)
   "Return (PEAK . RMS), each 0..255, for bucket B of mono s16le PCM.
 Helper for `supersonic-waveform--analyze-samples-async'; BUF, DATA-START,
@@ -218,6 +224,24 @@ slices (`supersonic-waveform--analysis-tick-budget' each), yielding
 back to Emacs between slices via a zero-delay timer so redisplay and
 input keep running throughout.
 
+Yielding via a timer alone is not enough, though: process output has
+to be drained explicitly (`accept-process-output') before each
+reschedule.  When Emacs is idle in its command loop, it runs every due
+timer -- redisplaying in between -- and only goes on to read process
+output once no timer is due anymore.  A zero-delay timer that re-arms
+itself is *always* due, so without the explicit drain Emacs would spin
+on this chain until it finished, never reading a byte from mpv's IPC
+socket or an HTTP connection in the meantime (keyboard input still
+interrupts that loop, which is why a keypress would still reach mpv
+while the now-playing buffer sat frozen waiting for replies that never
+got delivered).
+
+ON-PROGRESS calls are rate-limited to one per
+`supersonic-waveform--progress-interval' (the first slice always
+reports): rendering a seekbar image costs about as much as a whole
+slice of analysis, and redrawing it dozens of times a second buys
+nothing over redrawing it ten.
+
 GENERATION must still equal `supersonic-waveform--generation' at the
 start of every slice, checked there and nowhere in between -- once
 `supersonic-waveform-cancel' bumps that counter out from under it, the
@@ -236,7 +260,8 @@ slice."
          (per-bucket (max 1 (/ total-samples buckets)))
          (peaks (make-string buckets 0 nil))
          (rms (make-string buckets 0 nil))
-         (b 0))
+         (b 0)
+         (last-progress 0.0))
     (cl-labels
      ((step
        ()
@@ -257,8 +282,14 @@ slice."
              (setq continue (and (< b buckets) (< (float-time) deadline)))))
          (if (< b buckets)
              (progn
-               (when on-progress
+               (when (and on-progress (>= (- (float-time) last-progress) supersonic-waveform--progress-interval))
+                 (setq last-progress (float-time))
                  (funcall on-progress (cons (copy-sequence peaks) (copy-sequence rms))))
+               ;; Let pending process output (mpv IPC replies, HTTP
+               ;; responses, subprocess sentinels) through before the
+               ;; next slice -- see the docstring for why the timer
+               ;; reschedule alone would never get around to that.
+               (accept-process-output nil 0)
                (run-with-timer 0 nil #'step))
            (funcall on-done (cons peaks rms))))))
      (step))))
