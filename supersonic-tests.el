@@ -393,6 +393,27 @@ blocks the UI exactly as badly as computing it synchronously would."
     (should (supersonic-tests--wait-for (lambda () (not (eq envelope 'pending)))))
     (should (= 5 (length (car envelope))))))
 
+(ert-deftest supersonic-tests-waveform-analyze-samples-async-forces-redisplay-between-slices ()
+  "Each yield point between slices explicitly forces a `redisplay'
+rather than just trusting the timer reschedule to eventually lead to
+one. A zero-delay timer that keeps immediately re-arming itself can
+make Emacs perpetually decide there's more pending work and defer the
+actual screen update indefinitely -- buffer text changed correctly
+underneath (e.g. another track's title, rendered while this analysis
+was still running) can end up not actually reflected on screen until
+long after the fact."
+  (let* ((wav (supersonic-tests--wav (make-list 20 100)))
+         (chunk (supersonic-waveform--find-data-chunk wav))
+         (supersonic-waveform--analysis-tick-budget 0)
+         (redisplay-count 0)
+         (envelope 'pending))
+    (cl-letf (((symbol-function 'redisplay) (lambda (&optional _force) (cl-incf redisplay-count) t)))
+      (supersonic-waveform--analyze-samples-async
+       wav (car chunk) (cdr chunk) 5 supersonic-waveform--generation (lambda (e) (setq envelope e)))
+      (should (supersonic-tests--wait-for (lambda () (not (eq envelope 'pending)))))
+      ;; 5 buckets means 4 non-final slices, one `redisplay' call each.
+      (should (= 4 redisplay-count)))))
+
 (ert-deftest supersonic-tests-waveform-analyze-file-reads-wav-off-disk ()
   "`supersonic-waveform--analyze-file-async' works against a real file,
 not just an in-memory buffer -- the shape `supersonic-waveform-ensure'
