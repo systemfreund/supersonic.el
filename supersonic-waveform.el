@@ -143,7 +143,7 @@ PER-BUCKET and TOTAL-SAMPLES are as computed there."
     (cons (supersonic-waveform--normalize peak)
           (supersonic-waveform--normalize (if (> n 0) (sqrt (/ sum-squares n)) 0)))))
 
-(defun supersonic-waveform--analyze-samples-async (buf data-start data-len buckets on-done)
+(defun supersonic-waveform--analyze-samples-async (buf data-start data-len buckets on-done &optional on-progress)
   "Compute peak/RMS envelopes over BUCKETS chunks of mono s16le PCM,
 without blocking Emacs while doing it. BUF is the full unibyte WAV file
 contents; DATA-START/DATA-LEN mark the sample data within it, as
@@ -156,7 +156,14 @@ real work; doing it all in one synchronous pass froze Emacs solid
 until it finished. Instead this processes buckets in small time-boxed
 slices (`supersonic-waveform--analysis-tick-budget' each), yielding
 back to Emacs between slices via a zero-delay timer so redisplay and
-input keep running throughout."
+input keep running throughout.
+
+If given, ON-PROGRESS is called with the same shape of (PEAKS . RMS)
+after every slice but the last -- still-unprocessed buckets read as 0
+in it -- so a caller can redraw the seekbar as it fills in instead of
+only once the whole track has been analyzed. Each call gets its own
+copies, safe to hold onto after this function has moved on to the next
+slice."
   (let* ((total-samples (/ data-len 2))
          (per-bucket (max 1 (/ total-samples buckets)))
          (peaks (make-string buckets 0 nil))
@@ -178,23 +185,27 @@ input keep running throughout."
                (setq b (1+ b))
                (setq continue (and (< b buckets) (< (float-time) deadline)))))
            (if (< b buckets)
-               (run-with-timer 0 nil #'step)
+               (progn
+                 (when on-progress
+                   (funcall on-progress (cons (copy-sequence peaks) (copy-sequence rms))))
+                 (run-with-timer 0 nil #'step))
              (funcall on-done (cons peaks rms)))))
       (step))))
 
-(defun supersonic-waveform--analyze-file-async (path buckets on-done)
+(defun supersonic-waveform--analyze-file-async (path buckets on-done &optional on-progress)
   "Read the mono s16le WAV at PATH and call ON-DONE with its (PEAKS . RMS)
 envelope. Signals an error synchronously -- before ON-DONE ever enters
 the picture -- if PATH is not a valid WAV file or has no \"data\" chunk.
 The sample-crunching itself happens via
 `supersonic-waveform--analyze-samples-async', spread across several
-event-loop turns rather than in one uninterrupted pass; see that
-function for why. Reads with `file-name-handler-alist' bound to nil:
-PATH is our own disposable temp file, not something a handler installed
-for the user's own purposes (e.g. a media-file minor mode intercepting
-file operations on recognized audio extensions) should ever get a say
-in -- see `supersonic-waveform--start-transcode' for why PATH
-deliberately doesn't have one of those extensions in the first place."
+event-loop turns rather than in one uninterrupted pass, reporting
+partial results via ON-PROGRESS if given; see that function for why.
+Reads with `file-name-handler-alist' bound to nil: PATH is our own
+disposable temp file, not something a handler installed for the user's
+own purposes (e.g. a media-file minor mode intercepting file
+operations on recognized audio extensions) should ever get a say in --
+see `supersonic-waveform--start-transcode' for why PATH deliberately
+doesn't have one of those extensions in the first place."
   (let ((file-name-handler-alist nil))
     (with-temp-buffer
       (set-buffer-multibyte nil)
@@ -205,7 +216,7 @@ deliberately doesn't have one of those extensions in the first place."
         (let ((chunk (supersonic-waveform--find-data-chunk buf)))
           (unless chunk
             (error "No \"data\" chunk found in %s" path))
-          (supersonic-waveform--analyze-samples-async buf (car chunk) (cdr chunk) buckets on-done))))))
+          (supersonic-waveform--analyze-samples-async buf (car chunk) (cdr chunk) buckets on-done on-progress))))))
 
 ;;;
 ;;; Disk cache
@@ -234,7 +245,7 @@ silently regenerated rather than crashing the caller."
 ;;; Transcode pipeline
 ;;;
 
-(defun supersonic-waveform--transcode-sentinel (outfile buckets cache-file callback)
+(defun supersonic-waveform--transcode-sentinel (outfile buckets cache-file callback &optional progress-callback)
   "Return a process sentinel finishing the job that wrote to OUTFILE.
 Reads and analyzes OUTFILE once the process exits -- asynchronously,
 via `supersonic-waveform--analyze-file-async', so a long track's worth
@@ -243,7 +254,8 @@ CACHE-FILE at BUCKETS resolution, and calls CALLBACK with it (or with
 nil if the process failed, or OUTFILE turned out not to be a readable
 WAV file).  Any such failure is also reported via `message', rather
 than only manifesting as \"no waveform ever showed up\" with nothing
-to explain why."
+to explain why.  PROGRESS-CALLBACK, if given, is passed through as
+`supersonic-waveform--analyze-file-async''s ON-PROGRESS."
   (lambda (proc event)
     (unless (process-live-p proc)
       (when (eq proc supersonic-waveform--process)
@@ -265,21 +277,22 @@ to explain why."
             (finish nil))
            (t
             (condition-case err
-                (supersonic-waveform--analyze-file-async outfile buckets #'finish)
+                (supersonic-waveform--analyze-file-async outfile buckets #'finish progress-callback)
               (error
                (message "[Supersonic] Failed to generate waveform: %s" (error-message-string err))
                (finish nil))))))))))
 
-(defun supersonic-waveform--start-transcode (id buckets cache-file callback)
+(defun supersonic-waveform--start-transcode (id buckets cache-file callback &optional progress-callback)
   "Spawn the disposable mpv subprocess that transcodes ID to WAV.
 Helper for `supersonic-waveform-ensure'; see
-`supersonic-waveform--transcode-sentinel' for what happens once it exits.
-The output file deliberately does NOT get a \".wav\" (or other
-media-file) extension: a media-file minor mode (e.g. ready-player.el)
-can register a `file-name-handler-alist' entry for such extensions
-that intercepts reads of the file and hands back empty/placeholder
-content instead of the real bytes, on the assumption that nothing
-needs the raw data of a file it's offering to play instead."
+`supersonic-waveform--transcode-sentinel' for what happens once it
+exits, and where PROGRESS-CALLBACK ends up.  The output file
+deliberately does NOT get a \".wav\" (or other media-file) extension: a
+media-file minor mode (e.g. ready-player.el) can register a
+`file-name-handler-alist' entry for such extensions that intercepts
+reads of the file and hands back empty/placeholder content instead of
+the real bytes, on the assumption that nothing needs the raw data of a
+file it's offering to play instead."
   (unless (and supersonic-mpv (executable-find supersonic-mpv))
     (error "mpv not found"))
   (let* ((outfile (make-temp-file "supersonic-waveform-" nil ".tmp"))
@@ -292,22 +305,28 @@ needs the raw data of a file it's offering to play instead."
                           (concat "--ao-pcm-file=" outfile) "--audio-samplerate=6000" "--audio-channels=mono"
                           "--audio-format=s16" url)
            :noquery t
-           :sentinel (supersonic-waveform--transcode-sentinel outfile buckets cache-file callback)))))
+           :sentinel (supersonic-waveform--transcode-sentinel outfile buckets cache-file callback progress-callback)))))
 
-(defun supersonic-waveform-ensure (id callback)
+(defun supersonic-waveform-ensure (id callback &optional progress-callback)
   "Ensure a (PEAKS . RMS) envelope for track ID exists, then call CALLBACK with it.
 Reads a disk cache if one exists (see `supersonic-waveform-cache-file');
 otherwise transcodes ID's stream through a disposable mpv subprocess
 and analyzes the result, caching it for next time.  CALLBACK is called
 with nil if generation fails for any reason (mpv missing, a transcode
-error, a corrupt result) rather than left unnotified."
+error, a corrupt result) rather than left unnotified.
+
+If given, PROGRESS-CALLBACK is called with a (PEAKS . RMS) envelope of
+whatever has been analyzed so far, repeatedly, before CALLBACK's final
+call -- letting a caller redraw the seekbar as it fills in rather than
+only once the whole track is done.  Never called on a cache hit, since
+there's nothing partial about that case."
   (let* ((buckets supersonic-waveform-buckets)
          (cache-file (supersonic-waveform-cache-file id buckets)))
     (if (file-exists-p cache-file)
         (funcall callback (supersonic-waveform--read-cache cache-file buckets))
       (supersonic-waveform-cancel)
       (condition-case err
-          (supersonic-waveform--start-transcode id buckets cache-file callback)
+          (supersonic-waveform--start-transcode id buckets cache-file callback progress-callback)
         (error
          (message "[Supersonic] Failed to start waveform generation: %s" (error-message-string err))
          (funcall callback nil))))))

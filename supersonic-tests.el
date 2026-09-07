@@ -435,6 +435,30 @@ then caches the result to disk for next time."
              (should (file-exists-p (supersonic-waveform-cache-file "track-1" 5))))
          (delete-directory supersonic-waveform-cache-path t))))))
 
+(ert-deftest supersonic-tests-waveform-ensure-reports-progress-before-final-envelope ()
+  "A cache miss reports partial envelopes via the optional progress
+callback as buckets finish analyzing, not just the final one -- the
+seekbar should be able to fill in gradually instead of only popping in
+once the whole track is done."
+  (supersonic-tests--with-mpv
+   (cl-letf (((symbol-function 'supersonic-build-url)
+              (lambda (_endpoint _extra-query) "av://lavfi:sine=frequency=440:duration=2")))
+     (let ((supersonic-waveform-cache-path (make-temp-file "supersonic-tests-wf-cache-" t))
+           (supersonic-waveform-buckets 20)
+           (supersonic-waveform--analysis-tick-budget 0)
+           (progress-count 0)
+           (result 'pending))
+       (unwind-protect
+           (progn
+             (supersonic-waveform-ensure
+              "track-1"
+              (lambda (envelope) (setq result envelope))
+              (lambda (envelope) (setq progress-count (1+ progress-count)) (should (= 20 (length (car envelope))))))
+             (should (supersonic-tests--wait-for (lambda () (not (eq result 'pending))) 10))
+             (should result)
+             (should (> progress-count 1)))
+         (delete-directory supersonic-waveform-cache-path t))))))
+
 (ert-deftest supersonic-tests-waveform-cancel-kills-in-flight-transcode ()
   "`supersonic-waveform-cancel' kills the transcode process and forgets
 its output file, so a quick track change never leaves either behind."
