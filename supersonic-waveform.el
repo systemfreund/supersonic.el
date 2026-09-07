@@ -193,14 +193,27 @@ silently regenerated rather than crashing the caller."
 Reads and analyzes OUTFILE once the process exits, caches the result
 to CACHE-FILE at BUCKETS resolution, and calls CALLBACK with it (or
 with nil if the process failed, or OUTFILE turned out not to be a
-readable WAV file)."
-  (lambda (proc _event)
+readable WAV file).  Any such failure is also reported via `message',
+rather than only manifesting as \"no waveform ever showed up\" with
+nothing to explain why."
+  (lambda (proc event)
     (unless (process-live-p proc)
       (when (eq proc supersonic-waveform--process)
         (setq supersonic-waveform--process nil supersonic-waveform--outfile nil))
       (let ((envelope
-             (and (eq (process-status proc) 'exit) (= (process-exit-status proc) 0) (file-exists-p outfile)
-                  (ignore-errors (supersonic-waveform--analyze-file outfile buckets)))))
+             (cond
+              ((not (and (eq (process-status proc) 'exit) (= (process-exit-status proc) 0)))
+               (message "[Supersonic] Failed to generate waveform: mpv exited abnormally (%s)" (string-trim event))
+               nil)
+              ((not (file-exists-p outfile))
+               (message "[Supersonic] Failed to generate waveform: mpv produced no output file")
+               nil)
+              (t
+               (condition-case err
+                   (supersonic-waveform--analyze-file outfile buckets)
+                 (error
+                  (message "[Supersonic] Failed to generate waveform: %s" (error-message-string err))
+                  nil))))))
         (when envelope
           (ignore-errors (supersonic-waveform--write-cache cache-file envelope)))
         (when (file-exists-p outfile)
