@@ -476,6 +476,32 @@ its output file, so a quick track change never leaves either behind."
                (should-not (and outfile (file-exists-p outfile)))))
          (delete-directory supersonic-waveform-cache-path t))))))
 
+(ert-deftest supersonic-tests-waveform-cancel-does-not-log-a-failure-message ()
+  "`supersonic-waveform-cancel' killing an in-flight transcode is a
+routine part of switching tracks, not a failure: the next track's
+waveform renders just fine right after.  It must not print
+\"[Supersonic] Failed to generate waveform: ...\" to *Messages*, which
+would look like something actually went wrong."
+  (supersonic-tests--with-mpv
+   (cl-letf (((symbol-function 'supersonic-build-url)
+              (lambda (_endpoint _extra-query) "av://lavfi:sine=frequency=440:duration=30")))
+     (let ((supersonic-waveform-cache-path (make-temp-file "supersonic-tests-wf-cache-" t))
+           (messages nil)
+           (finished nil))
+       (unwind-protect
+           (cl-letf (((symbol-function 'message)
+                      (lambda (fmt &rest args) (push (apply #'format fmt args) messages) nil)))
+             (supersonic-waveform-ensure "long-track" (lambda (_envelope) (setq finished t)))
+             (should (process-live-p supersonic-waveform--process))
+             (supersonic-waveform-cancel)
+             ;; Wait for the sentinel to actually finish (and, if it were
+             ;; going to, log a message) instead of just for the process to
+             ;; die -- `supersonic-waveform-cancel' clears the process
+             ;; variables itself, synchronously, well before that.
+             (should (supersonic-tests--wait-for (lambda () finished)))
+             (should-not (cl-some (lambda (m) (string-match-p "Failed to generate waveform" m)) messages)))
+         (delete-directory supersonic-waveform-cache-path t))))))
+
 (ert-deftest supersonic-tests-waveform-transcode-outfile-avoids-media-extension ()
   "The transcode output file must not use a media-file extension like
 \"wav\": a package that intercepts media-file reads via
