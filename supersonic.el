@@ -61,6 +61,16 @@ build request URLs.  May be given without a scheme (\"http://\" or
   :type 'integer
   :group 'supersonic)
 
+(defcustom supersonic-cache-path (expand-file-name "supersonic-cache" user-emacs-directory)
+  "Path to store cached cover art and waveform peak/RMS envelopes.
+Shared by both `supersonic-art-cache-file' and
+`supersonic-waveform-cache-file', which prefix their file names
+distinctly enough (\"art-\"/\"waveform-\") that the two never collide,
+even though both are keyed on a Subsonic id that could otherwise
+coincide (e.g. a track and its own cover art id)."
+  :type 'string
+  :group 'supersonic)
+
 (defcustom supersonic-enable-art nil
   "Enable displaying album art in supported frames."
   :type 'boolean
@@ -105,14 +115,8 @@ Requires a graphic frame and the `pbm' image type (see
 `supersonic-enable-art' has.  Generating a waveform means transcoding
 the whole track through a disposable mpv process, so the first time a
 track is shown its seekbar appears a beat after the rest of the
-buffer; it is cached on disk afterwards (see
-`supersonic-waveform-cache-path')."
+buffer; it is cached on disk afterwards (see `supersonic-cache-path')."
   :type 'boolean
-  :group 'supersonic)
-
-(defcustom supersonic-waveform-cache-path (expand-file-name "supersonic-waveform-cache" user-emacs-directory)
-  "Path to store cached per-track peak/RMS envelopes."
-  :type 'string
   :group 'supersonic)
 
 (defcustom supersonic-waveform-buckets 300
@@ -138,11 +142,6 @@ it costs a re-analysis of anything already cached, not just a redraw."
 Each update is a single query to the local mpv socket, and only runs
 while that buffer is both open and on display."
   :type 'number
-  :group 'supersonic)
-
-(defcustom supersonic-art-cache-path (expand-file-name "supersonic-cache" user-emacs-directory)
-  "Path to store cached art."
-  :type 'string
   :group 'supersonic)
 
 (defcustom supersonic-album-list-count 50
