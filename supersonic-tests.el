@@ -246,8 +246,7 @@ a url that has no extra query parameters."
   "`supersonic--fetch-art' creates the cache directory itself, so callers
 that fetch a single image (the now-playing buffer) get art on a fresh
 install too, instead of only those that populate a whole list."
-  (let ((supersonic-cache-path
-         (expand-file-name (make-temp-name "supersonic-tests-cache-") temporary-file-directory)))
+  (let ((supersonic-cache-path (expand-file-name (make-temp-name "supersonic-tests-cache-") temporary-file-directory)))
     (unwind-protect
         (cl-letf (((symbol-function 'supersonic-build-url) (lambda (_endpoint _extra-query) "dummy://url")))
           (supersonic-tests--with-stubbed-response "cover-art-bytes"
@@ -262,8 +261,7 @@ install too, instead of only those that populate a whole list."
 than the semaphore `supersonic-get-images' hands them allows -- a list
 buffer asks for every row's art at once, and without the cap that is one
 open connection per row."
-  (let ((supersonic-cache-path
-         (expand-file-name (make-temp-name "supersonic-tests-cache-") temporary-file-directory))
+  (let ((supersonic-cache-path (expand-file-name (make-temp-name "supersonic-tests-cache-") temporary-file-directory))
         (in-flight 0)
         (peak 0)
         (sem (aio-sem 2)))
@@ -317,12 +315,22 @@ minimal case."
          (supersonic-tests--bytes
           (cl-mapcan
            (lambda (s)
-             (let ((u (if (< s 0) (+ s 65536) s)))
+             (let ((u
+                    (if (< s 0)
+                        (+ s 65536)
+                      s)))
                (list (logand u 255) (logand (ash u -8) 255))))
            samples))))
-    (concat (string-to-unibyte "RIFF") (supersonic-tests--le32 0) (string-to-unibyte "WAVE") (string-to-unibyte "fmt ")
-            (supersonic-tests--le32 40) (make-string 40 0 nil) (string-to-unibyte "data")
-            (supersonic-tests--le32 (length sample-bytes)) sample-bytes)))
+    (concat
+     (string-to-unibyte "RIFF")
+     (supersonic-tests--le32 0)
+     (string-to-unibyte "WAVE")
+     (string-to-unibyte "fmt ")
+     (supersonic-tests--le32 40)
+     (make-string 40 0 nil)
+     (string-to-unibyte "data")
+     (supersonic-tests--le32 (length sample-bytes))
+     sample-bytes)))
 
 (ert-deftest supersonic-tests-waveform-cache-file-is-per-bucket-count ()
   "Waveform cache is keyed on the bucket count, mirroring
@@ -464,9 +472,10 @@ once the whole track is done."
        (unwind-protect
            (progn
              (supersonic-waveform-ensure
-              "track-1"
-              (lambda (envelope) (setq result envelope))
-              (lambda (envelope) (setq progress-count (1+ progress-count)) (should (= 20 (length (car envelope))))))
+              "track-1" (lambda (envelope) (setq result envelope))
+              (lambda (envelope)
+                (setq progress-count (1+ progress-count))
+                (should (= 20 (length (car envelope))))))
              (should (supersonic-tests--wait-for (lambda () (not (eq result 'pending))) 10))
              (should result)
              (should (> progress-count 1)))
@@ -503,7 +512,9 @@ would look like something actually went wrong."
            (finished nil))
        (unwind-protect
            (cl-letf (((symbol-function 'message)
-                      (lambda (fmt &rest args) (push (apply #'format fmt args) messages) nil)))
+                      (lambda (fmt &rest args)
+                        (push (apply #'format fmt args) messages)
+                        nil)))
              (supersonic-waveform-ensure "long-track" (lambda (_envelope) (setq finished t)))
              (should (process-live-p supersonic-waveform--process))
              (supersonic-waveform-cancel)
@@ -540,9 +551,7 @@ where the analysis keeps going instead of actually stopping."
        (unwind-protect
            (progn
              (supersonic-waveform-ensure
-              "track-1"
-              (lambda (envelope) (setq result envelope))
-              (lambda (_envelope) (cl-incf progress-count)))
+              "track-1" (lambda (envelope) (setq result envelope)) (lambda (_envelope) (cl-incf progress-count)))
              ;; Wait until analysis has actually started (mpv already
              ;; exited, at least one chunked slice done) before cancelling,
              ;; so this exercises the analysis phase specifically rather
@@ -654,7 +663,10 @@ nothing but log that error."
       ;; skip the whole test, since the point here is `posn-image' plumbing,
       ;; not image measurement.
       (cl-letf (((symbol-function 'supersonic-mpv-command) (lambda (&rest args) (setq command args)))
-                ((symbol-function 'image-size) (lambda (spec &optional _pixels _frame) (should (eq spec image)) '(10 . 4))))
+                ((symbol-function 'image-size)
+                 (lambda (spec &optional _pixels _frame)
+                   (should (eq spec image))
+                   '(10 . 4))))
         (supersonic-waveform--seek-at-click event)
         (should (equal '("seek" "40.0" "absolute-percent") command))))))
 
@@ -870,8 +882,9 @@ fetch back up on its own the moment the buffer becomes visible again."
                ;; the only window instead.
                (set-window-buffer (selected-window) other)
                (supersonic-mpv-start (list "track-1"))
-               (should (supersonic-tests--wait-for
-                        (lambda () (equal "track-1" (buffer-local-value 'supersonic-now-playing--track-id buff)))))
+               (should
+                (supersonic-tests--wait-for
+                 (lambda () (equal "track-1" (buffer-local-value 'supersonic-now-playing--track-id buff)))))
                ;; Give `supersonic-now-playing-fetch-and-render' a moment to
                ;; have (not) called it -- there's nothing to wait on for a
                ;; negative assertion like this one.
@@ -1014,15 +1027,10 @@ the same way) rather than parsing at a path cached from whatever
 entries, in bucket order, covering every bucket rather than just the
 first."
   (let ((data
-         '(("subsonic-response"
-            ("artists"
-             ("index"
+         '(("subsonic-response" ("artists" ("index"
               (("artist" (("id" . "1") ("name" . "Alice")) (("id" . "2") ("name" . "Bob"))))
               (("artist" (("id" . "3") ("name" . "Carl"))))))))))
-    (should
-     (equal
-      '(("1" ["Alice"]) ("2" ["Bob"]) ("3" ["Carl"]))
-      (supersonic-artists-parse data)))))
+    (should (equal '(("1" ["Alice"]) ("2" ["Bob"]) ("3" ["Carl"])) (supersonic-artists-parse data)))))
 
 (ert-deftest supersonic-tests-albums-buffer-becomes-current ()
   "`supersonic-albums' leaves the freshly created album-list buffer as

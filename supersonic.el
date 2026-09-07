@@ -360,12 +360,15 @@ again (see `supersonic-now-playing--waveform-requested')."
        (lambda (response)
          (let ((position (alist-get 'data response)))
            (supersonic-now-playing--update-field
-            buff 'duration
+            buff
+            'duration
             (supersonic-now-playing--position position (buffer-local-value 'supersonic-now-playing--duration buff)))
            (supersonic-now-playing--recolor-waveform buff position)
            (unless (buffer-local-value 'supersonic-now-playing--waveform-requested buff)
              (supersonic-now-playing--maybe-fetch-waveform
-              buff (buffer-local-value 'supersonic-now-playing--track-id buff) position
+              buff
+              (buffer-local-value 'supersonic-now-playing--track-id buff)
+              position
               (buffer-local-value 'supersonic-now-playing--duration buff)))))
        "get_property" "time-pos")))))
 
@@ -588,7 +591,8 @@ instead of only popping in once the whole track is done."
       (when (equal track-id supersonic-now-playing--track-id)
         (setq supersonic-now-playing--waveform (cons track-id envelope))
         (supersonic-now-playing--update-field
-         buff 'waveform (supersonic-waveform-propertize envelope (supersonic-now-playing--progress-ratio position duration)))))))
+         buff 'waveform
+         (supersonic-waveform-propertize envelope (supersonic-now-playing--progress-ratio position duration)))))))
 
 (defun supersonic-now-playing--maybe-fetch-waveform (buff track-id position duration)
   "Kick off waveform generation for TRACK-ID and patch it into BUFF as it
