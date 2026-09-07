@@ -393,6 +393,59 @@ blocks the UI exactly as badly as computing it synchronously would."
     (should (supersonic-tests--wait-for (lambda () (not (eq envelope 'pending)))))
     (should (= 5 (length (car envelope))))))
 
+(ert-deftest supersonic-tests-waveform-analyze-samples-async-drains-process-output-between-slices ()
+  "Every yield between slices explicitly drains pending process output.
+Rescheduling via a zero-delay timer alone is not a real yield as far
+as process I/O is concerned: idle in its command loop, Emacs runs every
+due timer (redisplaying in between) and only reads process output once
+no timer is due -- and a zero-delay timer that re-arms itself is always
+due.  Without the drain, a whole analysis would go by without a single
+mpv IPC reply or HTTP response being delivered, which is exactly what
+left the now-playing buffer frozen on a track change until the
+previous track's analysis had finished (keyboard input does interrupt
+that loop, so mpv itself still switched tracks right away).  This can't
+be reproduced under `--batch', where the wait loop behaves differently,
+so it's pinned structurally: one drain per non-final slice."
+  (let* ((wav (supersonic-tests--wav (make-list 20 100)))
+         (chunk (supersonic-waveform--find-data-chunk wav))
+         (supersonic-waveform--analysis-tick-budget 0)
+         (drains 0)
+         (envelope 'pending))
+    (cl-letf (((symbol-function 'accept-process-output)
+               (lambda (&rest _)
+                 (cl-incf drains)
+                 nil)))
+      (supersonic-waveform--analyze-samples-async
+       wav (car chunk) (cdr chunk) 5 supersonic-waveform--generation (lambda (e) (setq envelope e)))
+      (should (supersonic-tests--wait-for (lambda () (not (eq envelope 'pending))))))
+    ;; 5 buckets at one bucket per slice: 4 non-final slices, one drain each.
+    (should (= 4 drains))))
+
+(ert-deftest supersonic-tests-waveform-analyze-samples-async-throttles-progress ()
+  "ON-PROGRESS is rate-limited to `supersonic-waveform--progress-interval':
+each call has the caller re-render the seekbar image, which costs about
+as much as a slice of analysis, so reporting after every slice would
+double the work for no visible gain.  The first slice always reports,
+so the seekbar shows something right away."
+  (let* ((wav (supersonic-tests--wav (make-list 40 100)))
+         (chunk (supersonic-waveform--find-data-chunk wav))
+         (supersonic-waveform--analysis-tick-budget 0)
+         (supersonic-waveform--progress-interval 1000)
+         (progress-count 0)
+         (envelope 'pending))
+    (supersonic-waveform--analyze-samples-async
+     wav
+     (car chunk)
+     (cdr chunk)
+     10
+     supersonic-waveform--generation
+     (lambda (e) (setq envelope e))
+     (lambda (_partial) (cl-incf progress-count)))
+    (should (supersonic-tests--wait-for (lambda () (not (eq envelope 'pending)))))
+    ;; 9 non-final slices, but an interval no slice can reach: only the
+    ;; unconditional first report gets through.
+    (should (= 1 progress-count))))
+
 (ert-deftest supersonic-tests-waveform-analyze-file-reads-wav-off-disk ()
   "`supersonic-waveform--analyze-file-async' works against a real file,
 not just an in-memory buffer -- the shape `supersonic-waveform-ensure'
