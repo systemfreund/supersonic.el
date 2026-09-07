@@ -351,7 +351,7 @@ with."
   "Seek mpv to the position in the track EVENT clicked within the waveform."
   (interactive "e")
   (let* ((posn (event-start event))
-         (image (car (posn-object posn)))
+         (image (posn-image posn))
          (x (car (posn-object-x-y posn))))
     (when (and image x)
       (let* ((width (car (image-size image t)))
