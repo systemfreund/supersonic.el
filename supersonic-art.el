@@ -35,6 +35,15 @@
 (defvar supersonic-art-fetch-concurrency)
 (defvar url-http-end-of-headers)
 
+(defun supersonic-art-available-p ()
+  "Return non-nil if cover art can actually be shown right now.
+Mirrors `supersonic-waveform-available-p'.  Callers that only download
+art should test this too: a frame that cannot draw the image has no
+use for the file either.  Art handed to MPRIS clients is deliberately
+not covered by this -- it is rendered outside Emacs, see
+`supersonic-mpris-enable-art'."
+  (and supersonic-enable-art (display-graphic-p)))
+
 (defun supersonic-art-cache-file (id size)
   "Return the path cover art ID is cached under when fetched at SIZE.
 The size is part of the file name because the same art is shown at
@@ -94,7 +103,7 @@ Fetches are fired up front, before anything is awaited, but only
 failures are tolerated, leaving those entries without art rather than
 aborting the rest.  BUFF is (re)printed once every fetch has settled,
 so callers don't need to print again themselves."
- (if (or (not supersonic-enable-art) (not (display-graphic-p)))
+ (if (not (supersonic-art-available-p))
      (dolist (entry entries)
        (aset (nth 1 entry) n ""))
    (let* ((sem (aio-sem supersonic-art-fetch-concurrency))

@@ -766,6 +766,20 @@ with image support at all."
       (setq supersonic-enable-waveform t)
       (should-not (supersonic-waveform-available-p)))))
 
+(ert-deftest supersonic-tests-art-available-p-requires-enable-and-graphic-frame ()
+  "Cover art needs both the user opt-in and a graphic frame.  The frame
+half is what keeps a terminal Emacs from downloading covers it could
+never draw; art that leaves Emacs (MPRIS) deliberately does not go
+through this predicate."
+  (let ((supersonic-enable-art nil))
+    (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
+      (should-not (supersonic-art-available-p))
+      (setq supersonic-enable-art t)
+      (should (supersonic-art-available-p)))
+    (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) nil)))
+      (setq supersonic-enable-art t)
+      (should-not (supersonic-art-available-p)))))
+
 (ert-deftest supersonic-tests-scrobble-does-not-leak-its-response-buffer ()
   "`supersonic-scrobble' kills the buffer `url-retrieve' hands its
 callback.  Nothing reads that reply, and nothing else cleans it up, so

@@ -68,11 +68,14 @@ finely the track is analyzed; `supersonic-waveform-width`/
 
 ## Cover art
 
-Cover art needs `supersonic-enable-art` to be enabled. Its size is set 
+Cover art needs `supersonic-enable-art` to be enabled, and a graphical 
+frame to draw it in. Its size is set 
 per view: `supersonic-list-art-size`  for the album and podcast lists, 
 `supersonic-now-playing-art-size` here. Each is both the display height 
 in pixels and the size requested from the server, and the cache keeps 
 one file per size, so raising either one costs a single re-download.
+
+Art sent to other programs is configured separately, see MPRIS below.
 
 ## MPRIS
 

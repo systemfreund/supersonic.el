@@ -72,7 +72,12 @@ coincide (e.g. a track and its own cover art id)."
   :group 'supersonic)
 
 (defcustom supersonic-enable-art nil
-  "Enable displaying album art in supported frames."
+  "Enable displaying album art in supported frames.
+Governs art drawn by supersonic itself, and is therefore also a
+statement about this frame -- see `supersonic-art-available-p'.  Art
+handed to other programs is a separate question and has its own
+setting; supersonic-mpris.el, for one, sends covers to desktop clients
+regardless of what this Emacs can draw."
   :type 'boolean
   :group 'supersonic)
 
@@ -472,8 +477,7 @@ Expects the art to be cached already, which
 `supersonic-now-playing-fetch-and-render' takes care of before it
 renders."
   (let ((art-id (assoc-default "coverArt" song)))
-    (when (and supersonic-enable-art
-               (display-graphic-p)
+    (when (and (supersonic-art-available-p)
                art-id
                (file-exists-p (supersonic-art-cache-file art-id supersonic-now-playing-art-size)))
       (supersonic-image-propertize art-id supersonic-now-playing-art-size))))
@@ -558,7 +562,7 @@ it falls back to showing the bare track id."
                    (if (eq (car outcome) :success)
                        (supersonic-recursive-assoc (cdr outcome) '("subsonic-response" "song"))
                      `(("title" . ,track-id)))))
-             (when (and supersonic-enable-art (assoc-default "coverArt" song))
+             (when (and (supersonic-art-available-p) (assoc-default "coverArt" song))
                (aio-await
                 (aio-catch (supersonic--fetch-art (assoc-default "coverArt" song) supersonic-now-playing-art-size))))
              ;; Asked for last, so the position is as fresh as possible: the
