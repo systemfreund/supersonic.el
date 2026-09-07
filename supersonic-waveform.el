@@ -81,8 +81,12 @@ must not hand old callers a cached envelope at the wrong resolution."
   "Kill any in-flight waveform transcode, discarding its output file.
 Called before starting a new job so a quick track change doesn't leave
 a stale transcode running in the background, burning CPU and network
-on a waveform nothing will ever show."
+on a waveform nothing will ever show.  Tags the process as
+deliberately cancelled before killing it, so
+`supersonic-waveform--transcode-sentinel' knows not to report it as a
+failure -- killing it is the whole point here, not something gone wrong."
   (when (process-live-p supersonic-waveform--process)
+    (process-put supersonic-waveform--process 'supersonic-waveform-cancelled t)
     (delete-process supersonic-waveform--process))
   (when (and supersonic-waveform--outfile (file-exists-p supersonic-waveform--outfile))
     (ignore-errors (delete-file supersonic-waveform--outfile)))
@@ -254,7 +258,12 @@ CACHE-FILE at BUCKETS resolution, and calls CALLBACK with it (or with
 nil if the process failed, or OUTFILE turned out not to be a readable
 WAV file).  Any such failure is also reported via `message', rather
 than only manifesting as \"no waveform ever showed up\" with nothing
-to explain why.  PROGRESS-CALLBACK, if given, is passed through as
+to explain why.  A process `supersonic-waveform-cancel' killed on
+purpose (a track change interrupting an in-flight transcode, say) is
+the one exception: that's an ordinary part of switching tracks, not a
+failure, so it's cleaned up silently instead.
+
+PROGRESS-CALLBACK, if given, is passed through as
 `supersonic-waveform--analyze-file-async''s ON-PROGRESS."
   (lambda (proc event)
     (unless (process-live-p proc)
@@ -269,6 +278,8 @@ to explain why.  PROGRESS-CALLBACK, if given, is passed through as
                         (ignore-errors (delete-file outfile))))
                     (funcall callback envelope)))
           (cond
+           ((process-get proc 'supersonic-waveform-cancelled)
+            (finish nil))
            ((not (and (eq (process-status proc) 'exit) (= (process-exit-status proc) 0)))
             (message "[Supersonic] Failed to generate waveform: mpv exited abnormally (%s)" (string-trim event))
             (finish nil))
