@@ -66,6 +66,15 @@ Tracked separately from the process object so `supersonic-waveform-cancel'
 can clean it up even though it's a plain temp file mpv writes to
 directly, not something Emacs would otherwise know to delete.")
 
+(defvar supersonic-waveform--generation 0
+  "Bumped by `supersonic-waveform-cancel' to invalidate in-flight work.
+The mpv transcode process itself can just be killed, but the chunked
+sample analysis that runs after it exits (see
+`supersonic-waveform--analyze-samples-async') has no process object of
+its own -- this is what lets `supersonic-waveform-cancel' stop a stale
+analysis (for a track the user has since moved on from) from grinding
+on in the background regardless.")
+
 (defun supersonic-waveform-available-p ()
   "Return non-nil if a waveform can actually be shown right now."
   (and supersonic-enable-waveform (display-graphic-p) (image-type-available-p 'pbm)))
@@ -82,13 +91,19 @@ the same file name."
   (expand-file-name (format "waveform-%s-%d" id buckets) supersonic-cache-path))
 
 (defun supersonic-waveform-cancel ()
-  "Kill any in-flight waveform transcode, discarding its output file.
+  "Kill any in-flight waveform transcode, discarding its output file,
+and invalidate any in-flight chunked sample analysis too.
 Called before starting a new job so a quick track change doesn't leave
-a stale transcode running in the background, burning CPU and network
-on a waveform nothing will ever show.  Tags the process as
-deliberately cancelled before killing it, so
+a stale transcode -- or a stale analysis grinding through a track
+nobody cares about anymore, tying up Emacs's timer queue for however
+much longer that would have taken -- running in the background.  Tags
+the process as deliberately cancelled before killing it, so
 `supersonic-waveform--transcode-sentinel' knows not to report it as a
-failure -- killing it is the whole point here, not something gone wrong."
+failure -- killing it is the whole point here, not something gone
+wrong.  Bumps `supersonic-waveform--generation' unconditionally, since
+a stale analysis (the mpv process having already exited by the time it
+starts) has no process object left to kill in the first place."
+  (setq supersonic-waveform--generation (1+ supersonic-waveform--generation))
   (when (process-live-p supersonic-waveform--process)
     (process-put supersonic-waveform--process 'supersonic-waveform-cancelled t)
     (delete-process supersonic-waveform--process))
@@ -151,7 +166,7 @@ PER-BUCKET and TOTAL-SAMPLES are as computed there."
     (cons (supersonic-waveform--normalize peak)
           (supersonic-waveform--normalize (if (> n 0) (sqrt (/ sum-squares n)) 0)))))
 
-(defun supersonic-waveform--analyze-samples-async (buf data-start data-len buckets on-done &optional on-progress)
+(defun supersonic-waveform--analyze-samples-async (buf data-start data-len buckets generation on-done &optional on-progress)
   "Compute peak/RMS envelopes over BUCKETS chunks of mono s16le PCM,
 without blocking Emacs while doing it. BUF is the full unibyte WAV file
 contents; DATA-START/DATA-LEN mark the sample data within it, as
@@ -166,6 +181,14 @@ slices (`supersonic-waveform--analysis-tick-budget' each), yielding
 back to Emacs between slices via a zero-delay timer so redisplay and
 input keep running throughout.
 
+GENERATION must still equal `supersonic-waveform--generation' at the
+start of every slice, checked there and nowhere in between -- once
+`supersonic-waveform-cancel' bumps that counter out from under it, the
+current slice is still allowed to finish, but no further slice is
+scheduled and ON-DONE is never called.  Silent by design: this is how
+a stale analysis (for a track the user has since moved on from) is
+made to stop, not a failure to report.
+
 If given, ON-PROGRESS is called with the same shape of (PEAKS . RMS)
 after every slice but the last -- still-unprocessed buckets read as 0
 in it -- so a caller can redraw the seekbar as it fills in instead of
@@ -179,35 +202,38 @@ slice."
          (b 0))
     (cl-labels
         ((step ()
-           (let ((deadline (+ (float-time) supersonic-waveform--analysis-tick-budget))
-                 (continue t))
-             ;; Checking the deadline only after processing a bucket (rather
-             ;; than in a plain `while' condition checked up front) matters
-             ;; at the low end: with a small or zero budget, elapsed time
-             ;; can already exceed the deadline before a single bucket ran,
-             ;; which would make zero progress per tick and never finish.
-             (while continue
-               (let ((pr (supersonic-waveform--analyze-bucket buf data-start per-bucket total-samples b)))
-                 (aset peaks b (car pr))
-                 (aset rms b (cdr pr)))
-               (setq b (1+ b))
-               (setq continue (and (< b buckets) (< (float-time) deadline)))))
-           (if (< b buckets)
-               (progn
-                 (when on-progress
-                   (funcall on-progress (cons (copy-sequence peaks) (copy-sequence rms))))
-                 (run-with-timer 0 nil #'step))
-             (funcall on-done (cons peaks rms)))))
+           (when (= generation supersonic-waveform--generation)
+             (let ((deadline (+ (float-time) supersonic-waveform--analysis-tick-budget))
+                   (continue t))
+               ;; Checking the deadline only after processing a bucket
+               ;; (rather than in a plain `while' condition checked up
+               ;; front) matters at the low end: with a small or zero
+               ;; budget, elapsed time can already exceed the deadline
+               ;; before a single bucket ran, which would make zero
+               ;; progress per tick and never finish.
+               (while continue
+                 (let ((pr (supersonic-waveform--analyze-bucket buf data-start per-bucket total-samples b)))
+                   (aset peaks b (car pr))
+                   (aset rms b (cdr pr)))
+                 (setq b (1+ b))
+                 (setq continue (and (< b buckets) (< (float-time) deadline)))))
+             (if (< b buckets)
+                 (progn
+                   (when on-progress
+                     (funcall on-progress (cons (copy-sequence peaks) (copy-sequence rms))))
+                   (run-with-timer 0 nil #'step))
+               (funcall on-done (cons peaks rms))))))
       (step))))
 
-(defun supersonic-waveform--analyze-file-async (path buckets on-done &optional on-progress)
+(defun supersonic-waveform--analyze-file-async (path buckets generation on-done &optional on-progress)
   "Read the mono s16le WAV at PATH and call ON-DONE with its (PEAKS . RMS)
 envelope. Signals an error synchronously -- before ON-DONE ever enters
 the picture -- if PATH is not a valid WAV file or has no \"data\" chunk.
 The sample-crunching itself happens via
 `supersonic-waveform--analyze-samples-async', spread across several
 event-loop turns rather than in one uninterrupted pass, reporting
-partial results via ON-PROGRESS if given; see that function for why.
+partial results via ON-PROGRESS if given and stopping early if
+GENERATION goes stale -- see that function for why.
 Reads with `file-name-handler-alist' bound to nil: PATH is our own
 disposable temp file, not something a handler installed for the user's
 own purposes (e.g. a media-file minor mode intercepting file
@@ -224,7 +250,8 @@ doesn't have one of those extensions in the first place."
         (let ((chunk (supersonic-waveform--find-data-chunk buf)))
           (unless chunk
             (error "No \"data\" chunk found in %s" path))
-          (supersonic-waveform--analyze-samples-async buf (car chunk) (cdr chunk) buckets on-done on-progress))))))
+          (supersonic-waveform--analyze-samples-async
+           buf (car chunk) (cdr chunk) buckets generation on-done on-progress))))))
 
 ;;;
 ;;; Disk cache
@@ -268,7 +295,10 @@ the one exception: that's an ordinary part of switching tracks, not a
 failure, so it's cleaned up silently instead.
 
 PROGRESS-CALLBACK, if given, is passed through as
-`supersonic-waveform--analyze-file-async''s ON-PROGRESS."
+`supersonic-waveform--analyze-file-async''s ON-PROGRESS.  The
+`supersonic-waveform--generation' snapshot taken here, right as
+analysis begins, is what lets a later `supersonic-waveform-cancel'
+stop it -- see that function's GENERATION parameter."
   (lambda (proc event)
     (unless (process-live-p proc)
       (when (eq proc supersonic-waveform--process)
@@ -292,7 +322,8 @@ PROGRESS-CALLBACK, if given, is passed through as
             (finish nil))
            (t
             (condition-case err
-                (supersonic-waveform--analyze-file-async outfile buckets #'finish progress-callback)
+                (supersonic-waveform--analyze-file-async
+                 outfile buckets supersonic-waveform--generation #'finish progress-callback)
               (error
                (message "[Supersonic] Failed to generate waveform: %s" (error-message-string err))
                (finish nil))))))))))
