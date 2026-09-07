@@ -446,6 +446,30 @@ so the seekbar shows something right away."
     ;; unconditional first report gets through.
     (should (= 1 progress-count))))
 
+(ert-deftest supersonic-tests-waveform-analyze-file-async-deletes-its-input-even-when-cancelled ()
+  "The transcode's temp file is deleted as soon as its bytes are in
+memory, not once analysis has finished.  A cancelled analysis never
+reaches its completion path at all, so deleting there meant leaking the
+whole multi-megabyte file on every track skip that interrupted one --
+which is exactly what a real /tmp filled up with."
+  (let ((file (make-temp-file "supersonic-tests-wav-"))
+        (supersonic-waveform--analysis-tick-budget 0)
+        (done nil))
+    (unwind-protect
+        (progn
+          (let ((coding-system-for-write 'no-conversion))
+            (write-region (supersonic-tests--wav (make-list 40 32767)) nil file nil 'no-message))
+          (supersonic-waveform--analyze-file-async
+           file 20 supersonic-waveform--generation (lambda (_envelope) (setq done t)))
+          ;; A zero budget means one bucket per slice, so exactly one of
+          ;; the 20 has run by now -- cancelling here lands mid-analysis.
+          (supersonic-waveform-cancel)
+          (sit-for 0.2)
+          (should-not done)
+          (should-not (file-exists-p file)))
+      (ignore-errors
+        (delete-file file)))))
+
 (ert-deftest supersonic-tests-waveform-analyze-file-reads-wav-off-disk ()
   "`supersonic-waveform--analyze-file-async' works against a real file,
 not just an in-memory buffer -- the shape `supersonic-waveform-ensure'
@@ -459,7 +483,9 @@ actually calls it in, on whatever mpv wrote to disk."
            file 1 supersonic-waveform--generation (lambda (e) (setq envelope e)))
           (should (supersonic-tests--wait-for (lambda () (not (eq envelope 'pending)))))
           (should (= 255 (aref (car envelope) 0))))
-      (delete-file file))))
+      ;; Already gone: the file is deleted the moment it has been read.
+      (ignore-errors
+        (delete-file file)))))
 
 (ert-deftest supersonic-tests-waveform-cache-round-trips ()
   "A written envelope reads back byte-identical, and a cache file that

@@ -114,6 +114,11 @@ starts) has no process object left to kill in the first place."
    supersonic-waveform--process nil
    supersonic-waveform--outfile nil))
 
+;; A transcode in flight when Emacs exits would otherwise leave its temp
+;; file behind: mpv is still writing to it, so nothing has deleted it yet.
+;; Only covers a graceful exit -- there is no hook for being killed.
+(add-hook 'kill-emacs-hook #'supersonic-waveform-cancel)
+
 ;;;
 ;;; WAV parsing and peak/RMS analysis
 ;;;
@@ -303,24 +308,38 @@ The sample-crunching itself happens via
 event-loop turns rather than in one uninterrupted pass, reporting
 partial results via ON-PROGRESS if given and stopping early if
 GENERATION goes stale -- see that function for why.
+
+Deletes PATH as soon as its contents have been read, before any of
+that: it is a disposable temp file, nothing reads it again once the
+bytes are in memory, and waiting until analysis finishes would leak it
+whenever analysis gets cancelled instead.
+
 Reads with `file-name-handler-alist' bound to nil: PATH is our own
 disposable temp file, not something a handler installed for the user's
 own purposes (e.g. a media-file minor mode intercepting file
 operations on recognized audio extensions) should ever get a say in --
 see `supersonic-waveform--start-transcode' for why PATH deliberately
 doesn't have one of those extensions in the first place."
-  (let ((file-name-handler-alist nil))
-    (with-temp-buffer
-      (set-buffer-multibyte nil)
-      (insert-file-contents-literally path)
-      (let ((buf (buffer-string)))
-        (unless (string= (substring buf 0 4) "RIFF")
-          (error "Not a RIFF file: %s" path))
-        (let ((chunk (supersonic-waveform--find-data-chunk buf)))
-          (unless chunk
-            (error "No \"data\" chunk found in %s" path))
-          (supersonic-waveform--analyze-samples-async buf (car chunk) (cdr chunk) buckets generation on-done
-                                                      on-progress))))))
+  (let* ((file-name-handler-alist nil)
+         (buf
+          (with-temp-buffer
+            (set-buffer-multibyte nil)
+            (insert-file-contents-literally path)
+            (buffer-string))))
+    ;; PATH's bytes are in memory now, so the file itself is dead weight
+    ;; from here on -- delete it immediately rather than once analysis is
+    ;; done.  A cancelled analysis never reaches its completion path at
+    ;; all (see `supersonic-waveform--analyze-samples-async'), so deleting
+    ;; there leaked one multi-megabyte temp file per interrupted track.
+    (ignore-errors
+      (delete-file path))
+    (unless (string= (substring buf 0 4) "RIFF")
+      (error "Not a RIFF file: %s" path))
+    (let ((chunk (supersonic-waveform--find-data-chunk buf)))
+      (unless chunk
+        (error "No \"data\" chunk found in %s" path))
+      (supersonic-waveform--analyze-samples-async buf (car chunk) (cdr chunk) buckets generation on-done
+                                                  on-progress))))
 
 ;;;
 ;;; Disk cache
@@ -416,8 +435,13 @@ the real bytes, on the assumption that nothing needs the raw data of a
 file it's offering to play instead."
   (unless (and supersonic-mpv (executable-find supersonic-mpv))
     (error "mpv not found"))
-  (let* ((outfile (make-temp-file "supersonic-waveform-" nil ".tmp"))
-         (url (supersonic-build-url "/stream.view" `(("id" . ,id)))))
+  ;; Build the url first: `supersonic-build-url' signals when there are no
+  ;; usable credentials, and between `make-temp-file' and the `setq' below
+  ;; the temp file exists while nothing yet points at it -- an error thrown
+  ;; in that window would strand it where not even
+  ;; `supersonic-waveform-cancel' could find it again.
+  (let* ((url (supersonic-build-url "/stream.view" `(("id" . ,id))))
+         (outfile (make-temp-file "supersonic-waveform-" nil ".tmp")))
     (setq supersonic-waveform--outfile outfile)
     (setq supersonic-waveform--process
           (make-process
