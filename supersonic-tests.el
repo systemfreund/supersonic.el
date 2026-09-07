@@ -452,6 +452,35 @@ fallback."
       (should (eq 'pbm (plist-get (cdr img) :type)))
       (should (= (+ (length "P6\n12 6\n255\n") (* 12 6 3)) (length (plist-get (cdr img) :data)))))))
 
+(ert-deftest supersonic-tests-waveform-seek-at-click-reads-image-via-posn-image ()
+  "Clicking the waveform must read the clicked image via `posn-image',
+not `car' of `posn-object': for an image, `posn-object' returns the
+image spec itself -- a list whose car is the literal symbol `image',
+not a (IMAGE . POS) cons -- so `car'ing it yields that bare symbol
+instead of the spec, and `image-size' then errors with \"Invalid image
+specification\".  This bit a real user: clicking the seekbar did
+nothing but log that error."
+  (if (not (image-type-available-p 'pbm))
+      (ert-skip "pbm image type not available")
+    (let* ((peaks (supersonic-tests--bytes '(200 200)))
+           (rms (supersonic-tests--bytes '(100 100)))
+           (image (supersonic-waveform-image (cons peaks rms) 0))
+           ;; Mirrors the position list `event-start' hands back: nth 7 is
+           ;; the image (`posn-image'), nth 8 is (DX . DY) relative to it
+           ;; (`posn-object-x-y') -- see `posn-image' and
+           ;; `posn-object-x-y' in subr.el.
+           (posn (list nil nil nil nil nil nil nil image '(4 . 0)))
+           (event (list 'down-mouse-1 posn))
+           (command nil))
+      ;; `image-size' needs a window-system frame even just to measure a
+      ;; pixel count, which a batch Emacs never has -- stub it rather than
+      ;; skip the whole test, since the point here is `posn-image' plumbing,
+      ;; not image measurement.
+      (cl-letf (((symbol-function 'supersonic-mpv-command) (lambda (&rest args) (setq command args)))
+                ((symbol-function 'image-size) (lambda (spec &optional _pixels _frame) (should (eq spec image)) '(10 . 4))))
+        (supersonic-waveform--seek-at-click event)
+        (should (equal '("seek" "40.0" "absolute-percent") command))))))
+
 (ert-deftest supersonic-tests-waveform-available-p-requires-enable-and-graphic-frame ()
   "The waveform seekbar needs both the user opt-in and a graphic frame --
 the same gating `supersonic-enable-art' has for cover art.  Stubs
