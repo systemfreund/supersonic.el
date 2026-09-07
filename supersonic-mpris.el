@@ -158,14 +158,12 @@ goes away.")
 
 (defun supersonic-mpris--current-track-id ()
   "Return the supersonic id of the current track, or nil."
-  (and supersonic-mpris--track-index
-       (gethash supersonic-mpris--track-index supersonic--playlist)))
+  (and supersonic-mpris--track-index (gethash supersonic-mpris--track-index supersonic--playlist)))
 
 (defun supersonic-mpris--track-object-path (id)
   "Build a valid D-Bus object path for track ID."
   (if id
-      (concat "/org/mpris/MediaPlayer2/Track/"
-              (replace-regexp-in-string "[^a-zA-Z0-9_]" "_" id))
+      (concat "/org/mpris/MediaPlayer2/Track/" (replace-regexp-in-string "[^a-zA-Z0-9_]" "_" id))
     "/org/mpris/MediaPlayer2/TrackList/NoTrack"))
 
 (defun supersonic-mpris--metadata ()
@@ -181,8 +179,7 @@ goes away.")
      (delq
       nil
       (list
-       (list :dict-entry "mpris:trackid"
-             (list :variant :object-path (supersonic-mpris--track-object-path id)))
+       (list :dict-entry "mpris:trackid" (list :variant :object-path (supersonic-mpris--track-object-path id)))
        (when title
          (list :dict-entry "xesam:title" (list :variant title)))
        (when album
@@ -192,8 +189,7 @@ goes away.")
        (when duration
          (list :dict-entry "mpris:length" (list :variant :int64 (* duration 1000000))))
        (when supersonic-mpris--art-file
-         (list :dict-entry "mpris:artUrl"
-               (list :variant (concat "file://" supersonic-mpris--art-file)))))))))
+         (list :dict-entry "mpris:artUrl" (list :variant (concat "file://" supersonic-mpris--art-file)))))))))
 
 (defun supersonic-mpris--set-player-property (property value)
   "Set PROPERTY on the Player interface to VALUE and notify listeners.
@@ -201,8 +197,8 @@ This simply re-registers the property; `dbus-register-property'
 overwrites the previous value and, with EMITS-SIGNAL, takes care of
 sending PropertiesChanged itself."
   (dbus-register-property
-   :session supersonic-mpris--bus-name supersonic-mpris--path
-   supersonic-mpris--player-interface property :read value t))
+   :session supersonic-mpris--bus-name supersonic-mpris--path supersonic-mpris--player-interface property
+   :read value t))
 
 (defun supersonic-mpris--announce-metadata ()
   "Push the current Metadata dict out over D-Bus."
@@ -212,18 +208,19 @@ sending PropertiesChanged itself."
 ;;; Reacting to supersonic.el's mpv process, without supersonic.el knowing
 ;;;
 
-(aio-defun supersonic-mpris--fetch-song (id)
-  "Fetch and cache metadata + art for track ID, then re-announce Metadata."
-  (condition-case err
-      (let* ((data (aio-await (supersonic-get-json (supersonic-build-url "/getSong.view" `(("id" . ,id))))))
-             (song (supersonic-recursive-assoc data '("subsonic-response" "song"))))
-        ;; Ignore replies for a track we have since moved on from.
-        (when (equal id (supersonic-mpris--current-track-id))
-          (setq supersonic-mpris--track-song song)
-          (supersonic-mpris--announce-metadata)
-          (when (and supersonic-enable-art song (assoc-default "coverArt" song))
-            (supersonic-mpris--fetch-art id (assoc-default "coverArt" song)))))
-    (error (message "supersonic-mpris: failed to fetch metadata for %s: %s" id err))))
+(aio-defun
+ supersonic-mpris--fetch-song (id) "Fetch and cache metadata + art for track ID, then re-announce Metadata."
+ (condition-case err
+     (let* ((data (aio-await (supersonic-get-json (supersonic-build-url "/getSong.view" `(("id" . ,id))))))
+            (song (supersonic-recursive-assoc data '("subsonic-response" "song"))))
+       ;; Ignore replies for a track we have since moved on from.
+       (when (equal id (supersonic-mpris--current-track-id))
+         (setq supersonic-mpris--track-song song)
+         (supersonic-mpris--announce-metadata)
+         (when (and supersonic-enable-art song (assoc-default "coverArt" song))
+           (supersonic-mpris--fetch-art id (assoc-default "coverArt" song)))))
+   (error
+    (message "supersonic-mpris: failed to fetch metadata for %s: %s" id err))))
 
 (defun supersonic-mpris--fetch-art (id art-id)
   "Download cover art ART-ID for track ID into the shared art cache.
@@ -237,8 +234,7 @@ longer the current track."
       (unless (file-exists-p supersonic-art-cache-path)
         (mkdir supersonic-art-cache-path))
       (url-retrieve
-       (supersonic-build-url "/getCoverArt.view"
-                            `(("id" . ,art-id) ("size" . ,(int-to-string supersonic-art-size))))
+       (supersonic-build-url "/getCoverArt.view" `(("id" . ,art-id) ("size" . ,(int-to-string supersonic-art-size))))
        (lambda (status)
          ;; `url-retrieve' hands us the response buffer and then forgets about
          ;; it, so kill it on the way out -- otherwise every track change
@@ -276,16 +272,19 @@ longer the current track."
 (defun supersonic-mpris--socket-filter (_process output)
   "Watch mpv's own OUTPUT (advice on `supersonic--mpv-socket-filter') for events."
   (dolist (line (split-string output "\n" t))
-    (let ((parsed (ignore-errors (json-read-from-string line))))
+    (let ((parsed
+           (ignore-errors
+             (json-read-from-string line))))
       (when parsed
         (let ((event (alist-get 'event parsed)))
           (cond
            ((member event '("start-file" "end-file"))
             (supersonic-mpris--set-track (alist-get 'playlist_entry_id parsed)))
-           ((and (string-equal event "property-change")
-                 (string-equal (alist-get 'name parsed) "pause"))
+           ((and (string-equal event "property-change") (string-equal (alist-get 'name parsed) "pause"))
             (supersonic-mpris--set-playback-status
-             (if (eq (alist-get 'data parsed) t) "Paused" "Playing")))))))))
+             (if (eq (alist-get 'data parsed) t)
+                 "Paused"
+               "Playing")))))))))
 
 (defun supersonic-mpris--after-mpv-start (&rest _)
   "Advice: after `supersonic-mpv-start', observe mpv's pause state."
@@ -375,26 +374,31 @@ and reports `:ignore', which `dbus-handle-event' requires for an empty
 reply -- without it, HANDLER's return value would get sent back as a
 bogus reply argument, tripping up strict clients such as playerctl."
   (push (dbus-register-method
-         :session supersonic-mpris--bus-name supersonic-mpris--path
-         interface method (lambda (&rest _args) (funcall handler) :ignore) t)
+         :session supersonic-mpris--bus-name supersonic-mpris--path interface method
+         (lambda (&rest _args)
+           (funcall handler)
+           :ignore)
+         t)
         supersonic-mpris--registrations))
 
 (defun supersonic-mpris--register-fixed-property (interface property value)
   "Register PROPERTY on INTERFACE with a fixed, never-changing VALUE."
   (push (dbus-register-property
-         :session supersonic-mpris--bus-name supersonic-mpris--path
-         interface property :read value)
+         :session
+         supersonic-mpris--bus-name
+         supersonic-mpris--path
+         interface
+         property
+         :read value)
         supersonic-mpris--registrations))
 
 (defun supersonic-mpris--register ()
   "Register the MPRIS D-Bus service and its interfaces."
-  (unless (memq (dbus-register-service :session supersonic-mpris--bus-name :do-not-queue)
-                '(:primary-owner :already-owner))
-    (user-error "Could not acquire %s (already running elsewhere?)"
-                supersonic-mpris--bus-name))
+  (unless (memq
+           (dbus-register-service :session supersonic-mpris--bus-name :do-not-queue) '(:primary-owner :already-owner))
+    (user-error "Could not acquire %s (already running elsewhere?)" supersonic-mpris--bus-name))
   (supersonic-mpris--register-method
-   dbus-interface-introspectable "Introspect"
-   (lambda () supersonic-mpris--introspection-xml))
+   dbus-interface-introspectable "Introspect" (lambda () supersonic-mpris--introspection-xml))
   ;; Root interface: methods.
   (supersonic-mpris--register-method supersonic-mpris--root-interface "Raise" #'ignore)
   (supersonic-mpris--register-method supersonic-mpris--root-interface "Quit" #'supersonic-mpris--quit)
@@ -402,8 +406,7 @@ bogus reply argument, tripping up strict clients such as playerctl."
   (supersonic-mpris--register-fixed-property supersonic-mpris--root-interface "CanQuit" t)
   (supersonic-mpris--register-fixed-property supersonic-mpris--root-interface "CanRaise" nil)
   (supersonic-mpris--register-fixed-property supersonic-mpris--root-interface "HasTrackList" nil)
-  (supersonic-mpris--register-fixed-property
-   supersonic-mpris--root-interface "Identity" "supersonic.el")
+  (supersonic-mpris--register-fixed-property supersonic-mpris--root-interface "Identity" "supersonic.el")
   (supersonic-mpris--register-fixed-property supersonic-mpris--root-interface "DesktopEntry" "")
   (supersonic-mpris--register-fixed-property
    supersonic-mpris--root-interface "SupportedUriSchemes" '(:array :signature "as"))
@@ -411,25 +414,29 @@ bogus reply argument, tripping up strict clients such as playerctl."
    supersonic-mpris--root-interface "SupportedMimeTypes" '(:array :signature "as"))
   ;; Player interface: methods.
   (supersonic-mpris--register-method supersonic-mpris--player-interface "Play" #'supersonic-mpris--play)
-  (supersonic-mpris--register-method
-   supersonic-mpris--player-interface "Pause" #'supersonic-mpris--pause)
-  (supersonic-mpris--register-method
-   supersonic-mpris--player-interface "PlayPause" #'supersonic-mpris--play-pause)
+  (supersonic-mpris--register-method supersonic-mpris--player-interface "Pause" #'supersonic-mpris--pause)
+  (supersonic-mpris--register-method supersonic-mpris--player-interface "PlayPause" #'supersonic-mpris--play-pause)
   (supersonic-mpris--register-method supersonic-mpris--player-interface "Stop" #'supersonic-mpris--stop)
   (supersonic-mpris--register-method supersonic-mpris--player-interface "Next" #'supersonic-mpris--next)
-  (supersonic-mpris--register-method
-   supersonic-mpris--player-interface "Previous" #'supersonic-mpris--previous)
+  (supersonic-mpris--register-method supersonic-mpris--player-interface "Previous" #'supersonic-mpris--previous)
   ;; Player interface: properties.  PlaybackStatus and Metadata are kept
   ;; current via `supersonic-mpris--set-player-property'; the Can* flags are
   ;; fixed for the reduced v1 scope (no seeking, no track list).
   (push (dbus-register-property
-         :session supersonic-mpris--bus-name supersonic-mpris--path
-         supersonic-mpris--player-interface "PlaybackStatus" :read
-         supersonic-mpris--playback-status)
+         :session
+         supersonic-mpris--bus-name
+         supersonic-mpris--path
+         supersonic-mpris--player-interface
+         "PlaybackStatus"
+         :read supersonic-mpris--playback-status)
         supersonic-mpris--registrations)
   (push (dbus-register-property
-         :session supersonic-mpris--bus-name supersonic-mpris--path
-         supersonic-mpris--player-interface "Metadata" :read (supersonic-mpris--metadata))
+         :session
+         supersonic-mpris--bus-name
+         supersonic-mpris--path
+         supersonic-mpris--player-interface
+         "Metadata"
+         :read (supersonic-mpris--metadata))
         supersonic-mpris--registrations)
   (dolist (prop '("CanGoNext" "CanGoPrevious" "CanPlay" "CanPause" "CanControl"))
     (supersonic-mpris--register-fixed-property supersonic-mpris--player-interface prop t))
@@ -468,7 +475,8 @@ loop control are intentionally out of scope.
 
 This is a global mode with no association to any particular buffer."
   :global t
-  :group 'supersonic-mpris
+  :group
+  'supersonic-mpris
   (if supersonic-mpris-mode
       (condition-case err
           (supersonic-mpris--register)

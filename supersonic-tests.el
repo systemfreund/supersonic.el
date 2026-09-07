@@ -35,10 +35,10 @@ even if BODY signals."
   `(if (not (and supersonic-mpv (executable-find supersonic-mpv)))
        (ert-skip "mpv not found")
      (cl-letf (((symbol-function 'supersonic-build-url)
-                (lambda (_endpoint extra-query)
-                  (alist-get "id" extra-query nil nil #'equal))))
+                (lambda (_endpoint extra-query) (alist-get "id" extra-query nil nil #'equal))))
        (unwind-protect
-           (progn ,@body)
+           (progn
+             ,@body)
          (supersonic-mpv-kill)))))
 
 (defun supersonic-tests--wait-for (predicate &optional timeout)
@@ -66,8 +66,7 @@ seen."
 (ert-deftest supersonic-tests-start-assigns-sequential-ids ()
   "`supersonic-mpv-start' maps mpv's playlist entry ids 1..n, in order."
   (supersonic-tests--with-mpv
-   (supersonic-mpv-start
-    (list supersonic-tests--track-1 supersonic-tests--track-2 supersonic-tests--track-3))
+   (supersonic-mpv-start (list supersonic-tests--track-1 supersonic-tests--track-2 supersonic-tests--track-3))
    (should (supersonic-tests--wait-for (lambda () (= 3 (hash-table-count supersonic--playlist)))))
    (should (equal supersonic-tests--track-1 (gethash 1 supersonic--playlist)))
    (should (equal supersonic-tests--track-2 (gethash 2 supersonic--playlist)))
@@ -99,9 +98,7 @@ seen."
    (supersonic-mpv-start (list supersonic-tests--track-1))
    (should (supersonic-tests--wait-for (lambda () (= 1 (hash-table-count supersonic--playlist)))))
    (let ((result 'pending))
-     (supersonic-mpv-command-with-callback
-      (lambda (response) (setq result response))
-      "get_property" "playlist")
+     (supersonic-mpv-command-with-callback (lambda (response) (setq result response)) "get_property" "playlist")
      (should (supersonic-tests--wait-for (lambda () (not (eq result 'pending)))))
      (should (equal "success" (alist-get 'error result)))
      (should (= 1 (length (alist-get 'data result)))))))
@@ -110,14 +107,11 @@ seen."
   "`supersonic-queue-parse' marks whichever entry mpv reports as current."
   (supersonic-tests--with-mpv
    (cl-letf (((symbol-function 'supersonic-get-json)
-              (aio-lambda (url)
-                `(("subsonic-response" ("song" ("title" . ,url) ("artist" . "Test")))))))
+              (aio-lambda (url) `(("subsonic-response" ("song" ("title" . ,url) ("artist" . "Test")))))))
      (supersonic-mpv-start (list supersonic-tests--track-1 supersonic-tests--track-2))
      (should (supersonic-tests--wait-for (lambda () (= 2 (hash-table-count supersonic--playlist)))))
      (let ((result 'pending))
-       (supersonic-mpv-command-with-callback
-        (lambda (response) (setq result response))
-        "get_property" "playlist")
+       (supersonic-mpv-command-with-callback (lambda (response) (setq result response)) "get_property" "playlist")
        (should (supersonic-tests--wait-for (lambda () (not (eq result 'pending)))))
        (let ((entries (aio-wait-for (supersonic-queue-parse (alist-get 'data result)))))
          (should (equal "▶" (aref (nth 1 (car entries)) 0)))
@@ -127,15 +121,13 @@ seen."
   "`supersonic-queue-parse' fills in title, artist and album from the song lookup."
   (supersonic-tests--with-mpv
    (cl-letf (((symbol-function 'supersonic-get-json)
-              (aio-lambda (url)
-                `(("subsonic-response"
-                   ("song" ("title" . ,url) ("artist" . "Test Artist") ("album" . "Test Album")))))))
+              (aio-lambda
+               (url)
+               `(("subsonic-response" ("song" ("title" . ,url) ("artist" . "Test Artist") ("album" . "Test Album")))))))
      (supersonic-mpv-start (list supersonic-tests--track-1))
      (should (supersonic-tests--wait-for (lambda () (= 1 (hash-table-count supersonic--playlist)))))
      (let ((result 'pending))
-       (supersonic-mpv-command-with-callback
-        (lambda (response) (setq result response))
-        "get_property" "playlist")
+       (supersonic-mpv-command-with-callback (lambda (response) (setq result response)) "get_property" "playlist")
        (should (supersonic-tests--wait-for (lambda () (not (eq result 'pending)))))
        (let ((entry (car (aio-wait-for (supersonic-queue-parse (alist-get 'data result))))))
          (should (equal supersonic-tests--track-1 (aref (nth 1 entry) 1)))
@@ -146,28 +138,26 @@ seen."
   "An open queue buffer refreshes itself as mpv advances, with no manual refresh."
   (supersonic-tests--with-mpv
    (cl-letf (((symbol-function 'supersonic-get-json)
-              (aio-lambda (url)
-                `(("subsonic-response" ("song" ("title" . ,url) ("artist" . "Test")))))))
+              (aio-lambda (url) `(("subsonic-response" ("song" ("title" . ,url) ("artist" . "Test")))))))
      (let ((buff (get-buffer-create supersonic-queue-buffer-name)))
        (unwind-protect
            (progn
-             (with-current-buffer buff (supersonic-queue-mode))
+             (with-current-buffer buff
+               (supersonic-queue-mode))
              (supersonic-mpv-start (list supersonic-tests--track-1 supersonic-tests--track-2))
              ;; `supersonic-mpv-start' should have populated the buffer already,
              ;; without anyone calling `supersonic-queue-refresh'.
              (should
-              (supersonic-tests--wait-for
-               (lambda () (= 2 (length (buffer-local-value 'tabulated-list-entries buff))))))
-             (should
-              (equal "▶" (aref (nth 1 (car (buffer-local-value 'tabulated-list-entries buff))) 0)))
+              (supersonic-tests--wait-for (lambda () (= 2 (length (buffer-local-value 'tabulated-list-entries buff))))))
+             (should (equal "▶" (aref (nth 1 (car (buffer-local-value 'tabulated-list-entries buff))) 0)))
              ;; Once mpv auto-advances to track 2 (track 1 is 2s long), the
              ;; buffer should follow along on its own.
              (should
-              (supersonic-tests--wait-for
-               (lambda ()
-                 (equal "▶"
-                        (aref (nth 1 (cadr (buffer-local-value 'tabulated-list-entries buff))) 0)))
-               6)))
+              (supersonic-tests--wait-for (lambda ()
+                                            (equal
+                                             "▶"
+                                             (aref (nth 1 (cadr (buffer-local-value 'tabulated-list-entries buff))) 0)))
+                                          6)))
          (kill-buffer buff))))))
 
 (ert-deftest supersonic-tests-queue-buffer-follows-full-replacement ()
@@ -175,21 +165,19 @@ seen."
 dropping the previous queue's entries rather than appending to them."
   (supersonic-tests--with-mpv
    (cl-letf (((symbol-function 'supersonic-get-json)
-              (aio-lambda (url)
-                `(("subsonic-response" ("song" ("title" . ,url) ("artist" . "Test")))))))
+              (aio-lambda (url) `(("subsonic-response" ("song" ("title" . ,url) ("artist" . "Test")))))))
      (let ((buff (get-buffer-create supersonic-queue-buffer-name)))
        (unwind-protect
            (progn
-             (with-current-buffer buff (supersonic-queue-mode))
+             (with-current-buffer buff
+               (supersonic-queue-mode))
              (supersonic-mpv-start (list supersonic-tests--track-1 supersonic-tests--track-2))
              (should
-              (supersonic-tests--wait-for
-               (lambda () (= 2 (length (buffer-local-value 'tabulated-list-entries buff))))))
+              (supersonic-tests--wait-for (lambda () (= 2 (length (buffer-local-value 'tabulated-list-entries buff))))))
              ;; Replace the running queue outright with a single, different track.
              (supersonic-mpv-start (list supersonic-tests--track-3))
              (should
-              (supersonic-tests--wait-for
-               (lambda () (= 1 (length (buffer-local-value 'tabulated-list-entries buff))))))
+              (supersonic-tests--wait-for (lambda () (= 1 (length (buffer-local-value 'tabulated-list-entries buff))))))
              (let ((entry (car (buffer-local-value 'tabulated-list-entries buff))))
                (should (equal supersonic-tests--track-3 (aref (nth 1 entry) 1)))
                (should (equal "▶" (aref (nth 1 entry) 0)))))
@@ -202,8 +190,7 @@ were invoked from anywhere else -- e.g. from the now-playing buffer.
 The menu now stays open on its own via the suffixes' `:transient t'."
   (let ((commands nil)
         (opened-transient nil))
-    (cl-letf (((symbol-function 'supersonic-mpv-command)
-               (lambda (&rest args) (push args commands)))
+    (cl-letf (((symbol-function 'supersonic-mpv-command) (lambda (&rest args) (push args commands)))
               ((symbol-function 'supersonic) (lambda (&rest _) (setq opened-transient t))))
       (supersonic-seek-forward)
       (supersonic-seek-back)
@@ -222,24 +209,17 @@ so that the list and now-playing buffers can show the same cover at
 their own resolutions -- and so that changing either size setting
 actually re-fetches instead of reusing the old resolution forever."
   (let ((supersonic-art-cache-path "/tmp/supersonic-tests-cache"))
-    (should-not
-      (equal
-        (supersonic-art-cache-file "art-1" 100)
-        (supersonic-art-cache-file "art-1" 300)))
-    (should
-      (equal
-        (supersonic-art-cache-file "art-1" 100)
-        (supersonic-art-cache-file "art-1" 100)))))
+    (should-not (equal (supersonic-art-cache-file "art-1" 100) (supersonic-art-cache-file "art-1" 300)))
+    (should (equal (supersonic-art-cache-file "art-1" 100) (supersonic-art-cache-file "art-1" 100)))))
 
 (ert-deftest supersonic-tests-fetch-art-creates-cache-directory ()
   "`supersonic--fetch-art' creates the cache directory itself, so callers
 that fetch a single image (the now-playing buffer) get art on a fresh
 install too, instead of only those that populate a whole list."
   (let ((supersonic-art-cache-path
-          (expand-file-name (make-temp-name "supersonic-tests-cache-") temporary-file-directory)))
+         (expand-file-name (make-temp-name "supersonic-tests-cache-") temporary-file-directory)))
     (unwind-protect
-        (cl-letf (((symbol-function 'supersonic-build-url)
-                   (lambda (_endpoint _extra-query) "dummy://url")))
+        (cl-letf (((symbol-function 'supersonic-build-url) (lambda (_endpoint _extra-query) "dummy://url")))
           (supersonic-tests--with-stubbed-response "cover-art-bytes"
             (aio-wait-for (supersonic--fetch-art "art-1" 300))
             (should (file-exists-p (supersonic-art-cache-file "art-1" 300)))
@@ -253,31 +233,28 @@ than the semaphore `supersonic-get-images' hands them allows -- a list
 buffer asks for every row's art at once, and without the cap that is one
 open connection per row."
   (let ((supersonic-art-cache-path
-          (expand-file-name (make-temp-name "supersonic-tests-cache-") temporary-file-directory))
+         (expand-file-name (make-temp-name "supersonic-tests-cache-") temporary-file-directory))
         (in-flight 0)
         (peak 0)
         (sem (aio-sem 2)))
     (unwind-protect
-        (cl-letf (((symbol-function 'supersonic-build-url)
-                   (lambda (_endpoint _extra-query) "dummy://url"))
+        (cl-letf (((symbol-function 'supersonic-build-url) (lambda (_endpoint _extra-query) "dummy://url"))
                   ((symbol-function 'aio-url-retrieve)
-                   (aio-lambda (_url)
-                     (cl-incf in-flight)
-                     (setq peak (max peak in-flight))
-                     ;; Stay "on the wire" long enough for the other fetches
-                     ;; to pile up behind the semaphore.
-                     (aio-await (aio-sleep 0.05))
-                     (cl-decf in-flight)
-                     (let ((buff (generate-new-buffer " *supersonic-tests-response*")))
-                       (with-current-buffer buff
-                         (insert "HTTP/1.1 200 OK\n\n")
-                         (setq-local url-http-end-of-headers (1- (point)))
-                         (insert "cover-art-bytes"))
-                       (cons nil buff)))))
+                   (aio-lambda
+                    (_url) (cl-incf in-flight) (setq peak (max peak in-flight))
+                    ;; Stay "on the wire" long enough for the other fetches
+                    ;; to pile up behind the semaphore.
+                    (aio-await (aio-sleep 0.05)) (cl-decf in-flight)
+                    (let ((buff (generate-new-buffer " *supersonic-tests-response*")))
+                      (with-current-buffer buff
+                        (insert "HTTP/1.1 200 OK\n\n")
+                        (setq-local url-http-end-of-headers (1- (point)))
+                        (insert "cover-art-bytes"))
+                      (cons nil buff)))))
           (let ((pending
-                  (mapcar
-                    (lambda (id) (supersonic--fetch-art-throttled sem id 100))
-                    '("art-1" "art-2" "art-3" "art-4" "art-5" "art-6"))))
+                 (mapcar
+                  (lambda (id) (supersonic--fetch-art-throttled sem id 100))
+                  '("art-1" "art-2" "art-3" "art-4" "art-5" "art-6"))))
             (dolist (promise pending)
               (aio-wait-for promise)))
           (should (= peak 2))
@@ -293,19 +270,20 @@ without this every scrobbled track would leave a ` *http host:port*'
 buffer behind for the rest of the session."
   (let ((supersonic-scrobble-plays t)
         (response nil))
-    (cl-letf (((symbol-function 'supersonic-build-url)
-               (lambda (_endpoint _extra-query) "dummy://url"))
+    (cl-letf (((symbol-function 'supersonic-build-url) (lambda (_endpoint _extra-query) "dummy://url"))
               ((symbol-function 'url-retrieve)
                (lambda (_url callback &rest _)
                  (setq response (generate-new-buffer " *supersonic-tests-response*"))
-                 (with-current-buffer response (funcall callback nil)))))
+                 (with-current-buffer response
+                   (funcall callback nil)))))
       (supersonic-scrobble "track-1")
       (should response)
       (should-not (buffer-live-p response)))))
 
 (defun supersonic-tests--buffer-matches (buff regexp)
   "Return non-nil if BUFF's contents match REGEXP."
-  (with-current-buffer buff (string-match-p regexp (buffer-string))))
+  (with-current-buffer buff
+    (string-match-p regexp (buffer-string))))
 
 (ert-deftest supersonic-tests-now-playing-buffer-follows-track-changes ()
   "An open now-playing buffer refreshes itself as mpv advances, with no
@@ -316,21 +294,19 @@ manual refresh."
      (let ((buff (get-buffer-create supersonic-now-playing-buffer-name)))
        (unwind-protect
            (progn
-             (with-current-buffer buff (supersonic-now-playing-mode))
+             (with-current-buffer buff
+               (supersonic-now-playing-mode))
              (supersonic-mpv-start (list supersonic-tests--track-1 supersonic-tests--track-2))
              (should
               (supersonic-tests--wait-for
-               (lambda ()
-                 (supersonic-tests--buffer-matches
-                  buff (regexp-quote supersonic-tests--track-1)))))
+               (lambda () (supersonic-tests--buffer-matches buff (regexp-quote supersonic-tests--track-1)))))
              ;; Once mpv auto-advances to track 2 (track 1 is 2s long), the
              ;; buffer should follow along on its own.
              (should
-              (supersonic-tests--wait-for
-               (lambda ()
-                 (supersonic-tests--buffer-matches
-                  buff (regexp-quote supersonic-tests--track-2)))
-               6)))
+              (supersonic-tests--wait-for (lambda ()
+                                            (supersonic-tests--buffer-matches
+                                             buff (regexp-quote supersonic-tests--track-2)))
+                                          6)))
          (kill-buffer buff))))))
 
 (ert-deftest supersonic-tests-now-playing-position-is-as-short-as-possible ()
@@ -351,22 +327,18 @@ and shows position and duration in the same shape."
 without re-rendering the buffer, and stops ticking once mpv is gone."
   (supersonic-tests--with-mpv
    (cl-letf (((symbol-function 'supersonic-get-json)
-              (aio-lambda (url)
-                `(("subsonic-response" ("song" ("title" . ,url) ("duration" . 10)))))))
+              (aio-lambda (url) `(("subsonic-response" ("song" ("title" . ,url) ("duration" . 10)))))))
      (let ((buff (get-buffer-create supersonic-now-playing-buffer-name)))
        (unwind-protect
            (progn
-             (with-current-buffer buff (supersonic-now-playing-mode))
+             (with-current-buffer buff
+               (supersonic-now-playing-mode))
              ;; The tick keeps quiet unless the buffer is on display.
              (set-window-buffer (selected-window) buff)
              (supersonic-mpv-start (list "av://lavfi:sine=frequency=440:duration=10"))
+             (should (supersonic-tests--wait-for (lambda () (supersonic-tests--buffer-matches buff "00:00 / 00:10"))))
              (should
-              (supersonic-tests--wait-for
-               (lambda () (supersonic-tests--buffer-matches buff "00:00 / 00:10"))))
-             (should
-              (supersonic-tests--wait-for
-               (lambda () (supersonic-tests--buffer-matches buff "00:0[1-9] / 00:10"))
-               6))
+              (supersonic-tests--wait-for (lambda () (supersonic-tests--buffer-matches buff "00:0[1-9] / 00:10")) 6))
              (supersonic-mpv-kill)
              (should-not supersonic-now-playing--timer))
          (supersonic-now-playing--stop-timer)
@@ -381,7 +353,8 @@ reports as a property change rather than as a track event."
      (let ((buff (get-buffer-create supersonic-now-playing-buffer-name)))
        (unwind-protect
            (progn
-             (with-current-buffer buff (supersonic-now-playing-mode))
+             (with-current-buffer buff
+               (supersonic-now-playing-mode))
              (supersonic-mpv-start (list supersonic-tests--track-1))
              (should
               (supersonic-tests--wait-for
@@ -400,18 +373,16 @@ reports as a property change rather than as a track event."
   "A failing getSong.view lookup leaves the now-playing buffer showing the
 track id instead of claiming that nothing is playing."
   (supersonic-tests--with-mpv
-   (cl-letf (((symbol-function 'supersonic-get-json)
-              (aio-lambda (_url) (error "Failed to fetch: connection refused"))))
+   (cl-letf (((symbol-function 'supersonic-get-json) (aio-lambda (_url) (error "Failed to fetch: connection refused"))))
      (let ((buff (get-buffer-create supersonic-now-playing-buffer-name)))
        (unwind-protect
            (progn
-             (with-current-buffer buff (supersonic-now-playing-mode))
+             (with-current-buffer buff
+               (supersonic-now-playing-mode))
              (supersonic-mpv-start (list supersonic-tests--track-1))
              (should
               (supersonic-tests--wait-for
-               (lambda ()
-                 (supersonic-tests--buffer-matches
-                  buff (regexp-quote supersonic-tests--track-1))))))
+               (lambda () (supersonic-tests--buffer-matches buff (regexp-quote supersonic-tests--track-1))))))
          (kill-buffer buff))))))
 
 (ert-deftest supersonic-tests-refresh-shows-error-on-network-failure ()
@@ -437,21 +408,18 @@ message when a \"subsonic-response\" reports status \"failed\", e.g. the
 auth-source entry -- this used to pass through silently as if it were
 an ordinary, empty result."
   (should-error
-    (supersonic--signal-if-failed
-      '(("subsonic-response"
-          ("status" . "failed")
-          ("error" ("code" . 40) ("message" . "Wrong username or password.")))))
-    :type 'error)
+   (supersonic--signal-if-failed
+    '(("subsonic-response" ("status" . "failed") ("error" ("code" . 40) ("message" . "Wrong username or password.")))))
+   :type 'error)
   (condition-case err
-    (supersonic--signal-if-failed
-      '(("subsonic-response"
+      (supersonic--signal-if-failed
+       '(("subsonic-response"
           ("status" . "failed")
           ("error" ("code" . 40) ("message" . "Wrong username or password.")))))
     (error
-      (should (string-match-p "Wrong username or password" (error-message-string err)))))
+     (should (string-match-p "Wrong username or password" (error-message-string err)))))
   ;; A successful response must not raise.
-  (supersonic--signal-if-failed
-    '(("subsonic-response" ("status" . "ok") ("song" ("id" . "1"))))))
+  (supersonic--signal-if-failed '(("subsonic-response" ("status" . "ok") ("song" ("id" . "1"))))))
 
 (defmacro supersonic-tests--with-stubbed-response (body-json &rest body)
   "Run BODY with `aio-url-retrieve' stubbed to a 200 OK reply of BODY-JSON.
@@ -460,13 +428,14 @@ the body) that `supersonic-get-json' expects to parse, so BODY can
 exercise it end to end without a real supersonic server."
   (declare (indent 1))
   `(cl-letf (((symbol-function 'aio-url-retrieve)
-              (aio-lambda (_url)
-                (let ((buff (generate-new-buffer " *supersonic-tests-response*")))
-                  (with-current-buffer buff
-                    (insert "HTTP/1.1 200 OK\n\n")
-                    (setq-local url-http-end-of-headers (1- (point)))
-                    (insert ,body-json))
-                  (cons nil buff)))))
+              (aio-lambda
+               (_url)
+               (let ((buff (generate-new-buffer " *supersonic-tests-response*")))
+                 (with-current-buffer buff
+                   (insert "HTTP/1.1 200 OK\n\n")
+                   (setq-local url-http-end-of-headers (1- (point)))
+                   (insert ,body-json))
+                 (cons nil buff)))))
      ,@body))
 
 (ert-deftest supersonic-tests-get-json-raises-on-bad-credentials ()
@@ -476,9 +445,7 @@ auth-source entry -- as a visible `error' instead of returning it as an
 ordinary, empty-looking result."
   (supersonic-tests--with-stubbed-response
       "{\"subsonic-response\":{\"status\":\"failed\",\"error\":{\"code\":40,\"message\":\"Wrong username or password.\"}}}"
-    (should-error
-      (aio-wait-for (supersonic-get-json "dummy://url"))
-      :type 'error)))
+    (should-error (aio-wait-for (supersonic-get-json "dummy://url")) :type 'error)))
 
 (ert-deftest supersonic-tests-refresh-shows-error-on-bad-credentials ()
   "A refresh function surfaces a Subsonic-level \"failed\" response (e.g.
@@ -507,8 +474,7 @@ of the Emacs session, e.g. via a `defvar' initializer evaluated once
 at load time)."
   (let ((supersonic-host "host-a"))
     (cl-letf (((symbol-function 'auth-source-search)
-               (lambda (&rest args)
-                 (list (list :host (plist-get args :host) :user "u" :secret (lambda () "p"))))))
+               (lambda (&rest args) (list (list :host (plist-get args :host) :user "u" :secret (lambda () "p"))))))
       (should (equal "host-a" (plist-get (supersonic-auth) :host)))
       (setq supersonic-host "host-b")
       (should (equal "host-b" (plist-get (supersonic-auth) :host))))))
@@ -523,8 +489,7 @@ keeping whatever supersonic itself first memoized for that host."
   (let ((supersonic-host "host-a")
         (user "wrong-user"))
     (cl-letf (((symbol-function 'auth-source-search)
-               (lambda (&rest args)
-                 (list (list :host (plist-get args :host) :user user :secret (lambda () "p"))))))
+               (lambda (&rest args) (list (list :host (plist-get args :host) :user user :secret (lambda () "p"))))))
       (should (equal "wrong-user" (plist-get (supersonic-auth) :user)))
       (setq user "right-user")
       (should (equal "right-user" (plist-get (supersonic-auth) :user))))))
@@ -535,10 +500,8 @@ matches the *current* `supersonic-browse-by-tags' value, staying
 consistent with `supersonic-tracks-json' (which picks the endpoint
 the same way) rather than parsing at a path cached from whatever
 `supersonic-browse-by-tags' was when the package was loaded."
-  (let ((tag-response
-          '(("subsonic-response" ("album" ("song" (("title" . "Tag Song") ("id" . "1")))))))
-        (folder-response
-          '(("subsonic-response" ("directory" ("child" (("title" . "Folder Song") ("id" . "2"))))))))
+  (let ((tag-response '(("subsonic-response" ("album" ("song" (("title" . "Tag Song") ("id" . "1")))))))
+        (folder-response '(("subsonic-response" ("directory" ("child" (("title" . "Folder Song") ("id" . "2"))))))))
     (let ((supersonic-browse-by-tags t))
       (should (equal "Tag Song" (aref (nth 1 (car (supersonic-tracks-parse tag-response))) 0))))
     (let ((supersonic-browse-by-tags nil))
@@ -565,7 +528,8 @@ new albums list."
             (supersonic-albums nil "random")
             (should (eq (current-buffer) (get-buffer "*supersonic-albums*"))))
         (kill-buffer origin)
-        (when (get-buffer "*supersonic-albums*") (kill-buffer "*supersonic-albums*"))))))
+        (when (get-buffer "*supersonic-albums*")
+          (kill-buffer "*supersonic-albums*"))))))
 
 (ert-deftest supersonic-tests-artist-albums-buffer-becomes-current ()
   "Same regression as `supersonic-tests-albums-buffer-becomes-current',
@@ -578,7 +542,8 @@ for the artist-ID branch of `supersonic-albums' (i.e. `supersonic-open-album')."
             (supersonic-albums "42" nil)
             (should (eq (current-buffer) (get-buffer "*supersonic-artist-albums*"))))
         (kill-buffer origin)
-        (when (get-buffer "*supersonic-artist-albums*") (kill-buffer "*supersonic-artist-albums*"))))))
+        (when (get-buffer "*supersonic-artist-albums*")
+          (kill-buffer "*supersonic-artist-albums*"))))))
 
 (provide 'supersonic-tests)
 
