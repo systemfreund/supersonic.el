@@ -349,22 +349,42 @@ assuming the minimal 16-byte PCM one."
 the other."
   (let* ((wav (supersonic-tests--wav (append (make-list 4 32767) (make-list 4 0))))
          (chunk (supersonic-waveform--find-data-chunk wav))
-         (envelope (supersonic-waveform--analyze-samples wav (car chunk) (cdr chunk) 2)))
+         (envelope 'pending))
+    (supersonic-waveform--analyze-samples-async wav (car chunk) (cdr chunk) 2 (lambda (e) (setq envelope e)))
+    (should (supersonic-tests--wait-for (lambda () (not (eq envelope 'pending)))))
     (should (= 255 (aref (car envelope) 0)))
     (should (= 255 (aref (cdr envelope) 0)))
     (should (= 0 (aref (car envelope) 1)))
     (should (= 0 (aref (cdr envelope) 1)))))
 
+(ert-deftest supersonic-tests-waveform-analyze-samples-async-yields-between-buckets ()
+  "`supersonic-waveform--analyze-samples-async' doesn't compute every
+bucket in one uninterrupted pass -- it must give Emacs a chance to
+redraw and handle input in between ticks, or a long track's analysis
+blocks the UI exactly as badly as computing it synchronously would."
+  (let* ((wav (supersonic-tests--wav (make-list 20 100)))
+         (chunk (supersonic-waveform--find-data-chunk wav))
+         (supersonic-waveform--analysis-tick-budget 0)
+         (envelope 'pending))
+    (supersonic-waveform--analyze-samples-async wav (car chunk) (cdr chunk) 5 (lambda (e) (setq envelope e)))
+    ;; A zero-second budget yields after the very first bucket, so the
+    ;; callback must not have fired yet by the time the call returns.
+    (should (eq envelope 'pending))
+    (should (supersonic-tests--wait-for (lambda () (not (eq envelope 'pending)))))
+    (should (= 5 (length (car envelope))))))
+
 (ert-deftest supersonic-tests-waveform-analyze-file-reads-wav-off-disk ()
-  "`supersonic-waveform--analyze-file' works against a real file, not
-just an in-memory buffer -- the shape `supersonic-waveform-ensure'
+  "`supersonic-waveform--analyze-file-async' works against a real file,
+not just an in-memory buffer -- the shape `supersonic-waveform-ensure'
 actually calls it in, on whatever mpv wrote to disk."
   (let ((file (make-temp-file "supersonic-tests-wav-")))
     (unwind-protect
-        (progn
+        (let ((envelope 'pending))
           (let ((coding-system-for-write 'no-conversion))
             (write-region (supersonic-tests--wav (make-list 8 32767)) nil file nil 'no-message))
-          (should (= 255 (aref (car (supersonic-waveform--analyze-file file 1)) 0))))
+          (supersonic-waveform--analyze-file-async file 1 (lambda (e) (setq envelope e)))
+          (should (supersonic-tests--wait-for (lambda () (not (eq envelope 'pending)))))
+          (should (= 255 (aref (car envelope) 0))))
       (delete-file file))))
 
 (ert-deftest supersonic-tests-waveform-cache-round-trips ()

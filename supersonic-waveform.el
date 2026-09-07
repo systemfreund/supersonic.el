@@ -118,44 +118,83 @@ is found."
   "Scale a 16-bit sample MAGNITUDE (0..32768) to a 0..255 byte."
   (min 255 (round (* (/ magnitude 32768.0) 255))))
 
-(defun supersonic-waveform--analyze-samples (buf data-start data-len buckets)
-  "Compute peak/RMS envelopes over BUCKETS chunks of mono s16le PCM.
-BUF is the full unibyte WAV file contents; DATA-START/DATA-LEN mark the
-sample data within it, as returned by `supersonic-waveform--find-data-chunk'.
-Returns (PEAKS . RMS), each a BUCKETS-length unibyte string of 0..255
-magnitudes."
+(defvar supersonic-waveform--analysis-tick-budget 0.02
+  "Seconds `supersonic-waveform--analyze-samples-async' spends per timer
+tick before yielding back to Emacs and resuming on the next one.")
+
+(defun supersonic-waveform--analyze-bucket (buf data-start per-bucket total-samples b)
+  "Return (PEAK . RMS), each 0..255, for bucket B of mono s16le PCM.
+Helper for `supersonic-waveform--analyze-samples-async'; BUF, DATA-START,
+PER-BUCKET and TOTAL-SAMPLES are as computed there."
+  (let* ((start (* b per-bucket))
+         (end (min total-samples (+ start per-bucket)))
+         (peak 0)
+         (sum-squares 0.0)
+         (n 0))
+    (cl-loop
+     for i from start below end
+     for offset = (+ data-start (* i 2))
+     for lo = (aref buf offset)
+     for hi = (aref buf (1+ offset))
+     ;; 16-bit little-endian two's complement.
+     for sample = (let ((unsigned (logior lo (ash hi 8))))
+                    (if (>= unsigned 32768) (- unsigned 65536) unsigned))
+     do (setq peak (max peak (abs sample)) sum-squares (+ sum-squares (* (float sample) sample)) n (1+ n)))
+    (cons (supersonic-waveform--normalize peak)
+          (supersonic-waveform--normalize (if (> n 0) (sqrt (/ sum-squares n)) 0)))))
+
+(defun supersonic-waveform--analyze-samples-async (buf data-start data-len buckets on-done)
+  "Compute peak/RMS envelopes over BUCKETS chunks of mono s16le PCM,
+without blocking Emacs while doing it. BUF is the full unibyte WAV file
+contents; DATA-START/DATA-LEN mark the sample data within it, as
+returned by `supersonic-waveform--find-data-chunk'. Calls ON-DONE with
+\(PEAKS . RMS), each a BUCKETS-length unibyte string of 0..255
+magnitudes, once every bucket has been processed.
+
+Walking a multi-minute track's raw PCM sample-by-sample in Lisp is
+real work; doing it all in one synchronous pass froze Emacs solid
+until it finished. Instead this processes buckets in small time-boxed
+slices (`supersonic-waveform--analysis-tick-budget' each), yielding
+back to Emacs between slices via a zero-delay timer so redisplay and
+input keep running throughout."
   (let* ((total-samples (/ data-len 2))
          (per-bucket (max 1 (/ total-samples buckets)))
          (peaks (make-string buckets 0 nil))
-         (rms (make-string buckets 0 nil)))
-    (dotimes (b buckets)
-      (let* ((start (* b per-bucket))
-             (end (min total-samples (+ start per-bucket)))
-             (peak 0)
-             (sum-squares 0.0)
-             (n 0))
-        (cl-loop
-         for i from start below end
-         for offset = (+ data-start (* i 2))
-         for lo = (aref buf offset)
-         for hi = (aref buf (1+ offset))
-         ;; 16-bit little-endian two's complement.
-         for sample = (let ((unsigned (logior lo (ash hi 8))))
-                        (if (>= unsigned 32768) (- unsigned 65536) unsigned))
-         do (setq peak (max peak (abs sample)) sum-squares (+ sum-squares (* (float sample) sample)) n (1+ n)))
-        (aset peaks b (supersonic-waveform--normalize peak))
-        (aset rms b (supersonic-waveform--normalize (if (> n 0) (sqrt (/ sum-squares n)) 0)))))
-    (cons peaks rms)))
+         (rms (make-string buckets 0 nil))
+         (b 0))
+    (cl-labels
+        ((step ()
+           (let ((deadline (+ (float-time) supersonic-waveform--analysis-tick-budget))
+                 (continue t))
+             ;; Checking the deadline only after processing a bucket (rather
+             ;; than in a plain `while' condition checked up front) matters
+             ;; at the low end: with a small or zero budget, elapsed time
+             ;; can already exceed the deadline before a single bucket ran,
+             ;; which would make zero progress per tick and never finish.
+             (while continue
+               (let ((pr (supersonic-waveform--analyze-bucket buf data-start per-bucket total-samples b)))
+                 (aset peaks b (car pr))
+                 (aset rms b (cdr pr)))
+               (setq b (1+ b))
+               (setq continue (and (< b buckets) (< (float-time) deadline)))))
+           (if (< b buckets)
+               (run-with-timer 0 nil #'step)
+             (funcall on-done (cons peaks rms)))))
+      (step))))
 
-(defun supersonic-waveform--analyze-file (path buckets)
-  "Read the mono s16le WAV at PATH and return its (PEAKS . RMS) envelope.
-Signals an error if PATH is not a valid WAV file or has no \"data\" chunk.
-Reads with `file-name-handler-alist' bound to nil: PATH is our own
-disposable temp file, not something a handler installed for the user's
-own purposes (e.g. a media-file minor mode intercepting file
-operations on recognized audio extensions) should ever get a say in --
-see `supersonic-waveform--start-transcode' for why PATH deliberately
-doesn't have one of those extensions in the first place."
+(defun supersonic-waveform--analyze-file-async (path buckets on-done)
+  "Read the mono s16le WAV at PATH and call ON-DONE with its (PEAKS . RMS)
+envelope. Signals an error synchronously -- before ON-DONE ever enters
+the picture -- if PATH is not a valid WAV file or has no \"data\" chunk.
+The sample-crunching itself happens via
+`supersonic-waveform--analyze-samples-async', spread across several
+event-loop turns rather than in one uninterrupted pass; see that
+function for why. Reads with `file-name-handler-alist' bound to nil:
+PATH is our own disposable temp file, not something a handler installed
+for the user's own purposes (e.g. a media-file minor mode intercepting
+file operations on recognized audio extensions) should ever get a say
+in -- see `supersonic-waveform--start-transcode' for why PATH
+deliberately doesn't have one of those extensions in the first place."
   (let ((file-name-handler-alist nil))
     (with-temp-buffer
       (set-buffer-multibyte nil)
@@ -166,7 +205,7 @@ doesn't have one of those extensions in the first place."
         (let ((chunk (supersonic-waveform--find-data-chunk buf)))
           (unless chunk
             (error "No \"data\" chunk found in %s" path))
-          (supersonic-waveform--analyze-samples buf (car chunk) (cdr chunk) buckets))))))
+          (supersonic-waveform--analyze-samples-async buf (car chunk) (cdr chunk) buckets on-done))))))
 
 ;;;
 ;;; Disk cache
@@ -197,36 +236,39 @@ silently regenerated rather than crashing the caller."
 
 (defun supersonic-waveform--transcode-sentinel (outfile buckets cache-file callback)
   "Return a process sentinel finishing the job that wrote to OUTFILE.
-Reads and analyzes OUTFILE once the process exits, caches the result
-to CACHE-FILE at BUCKETS resolution, and calls CALLBACK with it (or
-with nil if the process failed, or OUTFILE turned out not to be a
-readable WAV file).  Any such failure is also reported via `message',
-rather than only manifesting as \"no waveform ever showed up\" with
-nothing to explain why."
+Reads and analyzes OUTFILE once the process exits -- asynchronously,
+via `supersonic-waveform--analyze-file-async', so a long track's worth
+of sample-crunching can't block Emacs -- caches the result to
+CACHE-FILE at BUCKETS resolution, and calls CALLBACK with it (or with
+nil if the process failed, or OUTFILE turned out not to be a readable
+WAV file).  Any such failure is also reported via `message', rather
+than only manifesting as \"no waveform ever showed up\" with nothing
+to explain why."
   (lambda (proc event)
     (unless (process-live-p proc)
       (when (eq proc supersonic-waveform--process)
         (setq supersonic-waveform--process nil supersonic-waveform--outfile nil))
-      (let* ((file-name-handler-alist nil)
-             (envelope
-              (cond
-               ((not (and (eq (process-status proc) 'exit) (= (process-exit-status proc) 0)))
-                (message "[Supersonic] Failed to generate waveform: mpv exited abnormally (%s)" (string-trim event))
-                nil)
-               ((not (file-exists-p outfile))
-                (message "[Supersonic] Failed to generate waveform: mpv produced no output file")
-                nil)
-               (t
-                (condition-case err
-                    (supersonic-waveform--analyze-file outfile buckets)
-                  (error
-                   (message "[Supersonic] Failed to generate waveform: %s" (error-message-string err))
-                   nil))))))
-        (when envelope
-          (ignore-errors (supersonic-waveform--write-cache cache-file envelope)))
-        (when (file-exists-p outfile)
-          (ignore-errors (delete-file outfile)))
-        (funcall callback envelope)))))
+      (let ((file-name-handler-alist nil))
+        (cl-flet ((finish (envelope)
+                    (let ((file-name-handler-alist nil))
+                      (when envelope
+                        (ignore-errors (supersonic-waveform--write-cache cache-file envelope)))
+                      (when (file-exists-p outfile)
+                        (ignore-errors (delete-file outfile))))
+                    (funcall callback envelope)))
+          (cond
+           ((not (and (eq (process-status proc) 'exit) (= (process-exit-status proc) 0)))
+            (message "[Supersonic] Failed to generate waveform: mpv exited abnormally (%s)" (string-trim event))
+            (finish nil))
+           ((not (file-exists-p outfile))
+            (message "[Supersonic] Failed to generate waveform: mpv produced no output file")
+            (finish nil))
+           (t
+            (condition-case err
+                (supersonic-waveform--analyze-file-async outfile buckets #'finish)
+              (error
+               (message "[Supersonic] Failed to generate waveform: %s" (error-message-string err))
+               (finish nil))))))))))
 
 (defun supersonic-waveform--start-transcode (id buckets cache-file callback)
   "Spawn the disposable mpv subprocess that transcodes ID to WAV.
@@ -247,7 +289,7 @@ needs the raw data of a file it's offering to play instead."
           (make-process
            :name "supersonic-waveform"
            :command (list supersonic-mpv "--no-config" "--no-terminal" "--really-quiet" "--no-video" "--ao=pcm"
-                          (concat "--ao-pcm-file=" outfile) "--audio-samplerate=22050" "--audio-channels=mono"
+                          (concat "--ao-pcm-file=" outfile) "--audio-samplerate=6000" "--audio-channels=mono"
                           "--audio-format=s16" url)
            :noquery t
            :sentinel (supersonic-waveform--transcode-sentinel outfile buckets cache-file callback)))))
