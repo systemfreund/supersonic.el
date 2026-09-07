@@ -1024,25 +1024,20 @@ the response at the wrong key."
 ;;;###autoload (autoload 'supersonic "supersonic" nil t)
 (transient-define-prefix
  supersonic () "Help transient for supersonic."
- ["Supersonic"
-  ("a" "Artists" supersonic-artists)
-  ("r" "Random Albums" supersonic-random-albums)
-  ("n" "Newest Albums" supersonic-newest-albums)
-  ("s" "Search supersonic" supersonic-search)
-  ("p" "Podcasts" supersonic-podcasts)]
- ["Controls"
-  ("Q" "Show queue" supersonic-show-queue)
-  ("N" "Now playing" supersonic-show-now-playing)
-  ("t" "Toggle playing" supersonic-toggle-playing)
-  ("f" "Skip track" supersonic-skip-track)
-  ("b" "Previous track" supersonic-prev-track)
-  ;; Seeking is the one control worth repeating in a row, so these two
-  ;; keep the transient open instead of dismissing it.  That used to be
-  ;; done by having the commands themselves re-invoke this prefix, which
-  ;; also popped it up when they were called from outside it, e.g. from
-  ;; the now-playing buffer.
-  ("F" "Seek forward" supersonic-seek-forward :transient t)
-  ("B" "Seek back" supersonic-seek-back :transient t)])
+ [["Supersonic"
+   ("a" "Artists" supersonic-artists)
+   ("r" "Random Albums" supersonic-random-albums)
+   ("n" "Newest Albums" supersonic-newest-albums)
+   ("s" "Search supersonic" supersonic-search)
+   ("p" "Podcasts" supersonic-podcasts)]
+  ["Controls"
+   ("Q" "Show queue" supersonic-show-queue)
+   ("N" "Now playing" supersonic-show-now-playing)
+   ("t" "Toggle playing" supersonic-toggle-playing)
+   ("f" "Skip track" supersonic-skip-track)
+   ("b" "Previous track" supersonic-prev-track)
+   ("F" "Seek forward" supersonic-seek-forward :transient t)
+   ("B" "Seek back" supersonic-seek-back :transient t)]])
 
 (provide 'supersonic)
 
