@@ -360,7 +360,8 @@ the other."
   (let* ((wav (supersonic-tests--wav (append (make-list 4 32767) (make-list 4 0))))
          (chunk (supersonic-waveform--find-data-chunk wav))
          (envelope 'pending))
-    (supersonic-waveform--analyze-samples-async wav (car chunk) (cdr chunk) 2 (lambda (e) (setq envelope e)))
+    (supersonic-waveform--analyze-samples-async
+     wav (car chunk) (cdr chunk) 2 supersonic-waveform--generation (lambda (e) (setq envelope e)))
     (should (supersonic-tests--wait-for (lambda () (not (eq envelope 'pending)))))
     (should (= 255 (aref (car envelope) 0)))
     (should (= 255 (aref (cdr envelope) 0)))
@@ -376,7 +377,8 @@ blocks the UI exactly as badly as computing it synchronously would."
          (chunk (supersonic-waveform--find-data-chunk wav))
          (supersonic-waveform--analysis-tick-budget 0)
          (envelope 'pending))
-    (supersonic-waveform--analyze-samples-async wav (car chunk) (cdr chunk) 5 (lambda (e) (setq envelope e)))
+    (supersonic-waveform--analyze-samples-async
+     wav (car chunk) (cdr chunk) 5 supersonic-waveform--generation (lambda (e) (setq envelope e)))
     ;; A zero-second budget yields after the very first bucket, so the
     ;; callback must not have fired yet by the time the call returns.
     (should (eq envelope 'pending))
@@ -392,7 +394,8 @@ actually calls it in, on whatever mpv wrote to disk."
         (let ((envelope 'pending))
           (let ((coding-system-for-write 'no-conversion))
             (write-region (supersonic-tests--wav (make-list 8 32767)) nil file nil 'no-message))
-          (supersonic-waveform--analyze-file-async file 1 (lambda (e) (setq envelope e)))
+          (supersonic-waveform--analyze-file-async
+           file 1 supersonic-waveform--generation (lambda (e) (setq envelope e)))
           (should (supersonic-tests--wait-for (lambda () (not (eq envelope 'pending)))))
           (should (= 255 (aref (car envelope) 0))))
       (delete-file file))))
@@ -510,6 +513,49 @@ would look like something actually went wrong."
              ;; variables itself, synchronously, well before that.
              (should (supersonic-tests--wait-for (lambda () finished)))
              (should-not (cl-some (lambda (m) (string-match-p "Failed to generate waveform" m)) messages)))
+         (delete-directory supersonic-cache-path t))))))
+
+(ert-deftest supersonic-tests-waveform-cancel-stops-in-flight-analysis ()
+  "`supersonic-waveform-cancel' can also invalidate chunked sample
+analysis that's already under way, not just kill the mpv transcode
+process -- by the time analysis is running, that process has already
+exited, so killing it (as
+`supersonic-tests-waveform-cancel-kills-in-flight-transcode' covers)
+does nothing to stop the analysis itself from grinding through a track
+nobody cares about anymore.  Asserted by comparing the progress-tick
+count right at the moment of cancelling against the count some time
+later, rather than by waiting for the whole (potentially very slow --
+each tick is its own timer reschedule, and that overhead adds up)
+analysis to either finish or conspicuously not: even a single
+straggling tick after cancelling would let this catch a regression
+where the analysis keeps going instead of actually stopping."
+  (supersonic-tests--with-mpv
+   (cl-letf (((symbol-function 'supersonic-build-url)
+              (lambda (_endpoint _extra-query) "av://lavfi:sine=frequency=440:duration=1")))
+     (let ((supersonic-cache-path (make-temp-file "supersonic-tests-wf-cache-" t))
+           (supersonic-waveform-buckets 300)
+           (supersonic-waveform--analysis-tick-budget 0)
+           (progress-count 0)
+           (result 'pending))
+       (unwind-protect
+           (progn
+             (supersonic-waveform-ensure
+              "track-1"
+              (lambda (envelope) (setq result envelope))
+              (lambda (_envelope) (cl-incf progress-count)))
+             ;; Wait until analysis has actually started (mpv already
+             ;; exited, at least one chunked slice done) before cancelling,
+             ;; so this exercises the analysis phase specifically rather
+             ;; than the transcode phase.
+             (should (supersonic-tests--wait-for (lambda () (> progress-count 0)) 10))
+             (let ((count-at-cancel progress-count))
+               (supersonic-waveform-cancel)
+               ;; Give a stray already-scheduled tick every chance to run
+               ;; anyway before checking that no further one did.
+               (sit-for 1)
+               (should (= count-at-cancel progress-count)))
+             (should (eq result 'pending))
+             (should-not (file-exists-p (supersonic-waveform-cache-file "track-1" 300))))
          (delete-directory supersonic-cache-path t))))))
 
 (ert-deftest supersonic-tests-waveform-transcode-outfile-avoids-media-extension ()
