@@ -432,6 +432,25 @@ its output file, so a quick track change never leaves either behind."
                (should-not (and outfile (file-exists-p outfile)))))
          (delete-directory supersonic-waveform-cache-path t))))))
 
+(ert-deftest supersonic-tests-waveform-transcode-outfile-avoids-media-extension ()
+  "The transcode output file must not use a media-file extension like
+\"wav\": a package that intercepts media-file reads via
+`file-name-handler-alist' (e.g. ready-player.el, which really does
+this) can silently hand back empty content instead of the real bytes
+for such a path -- breaking analysis with no error at all, since mpv
+itself still succeeds regardless. This bit a real user; guard against
+it coming back."
+  (cl-letf (((symbol-function 'executable-find) (lambda (&rest _) "/usr/bin/mpv"))
+            ((symbol-function 'supersonic-build-url) (lambda (&rest _) "dummy://url"))
+            ((symbol-function 'make-process) (lambda (&rest _) nil)))
+    (let ((supersonic-mpv "mpv"))
+      (unwind-protect
+          (progn
+            (supersonic-waveform--start-transcode "id" 10 "cache-file" #'ignore)
+            (should-not
+             (member (file-name-extension supersonic-waveform--outfile) '("wav" "mp3" "ogg" "flac" "m4a" "opus"))))
+        (supersonic-waveform-cancel)))))
+
 (ert-deftest supersonic-tests-waveform-image-produces-well-formed-ppm ()
   "The rendered seekbar is a well-formed PPM: a header plus exactly
 WIDTH*HEIGHT*3 bytes of pixel data -- and building it doesn't error even

@@ -149,17 +149,24 @@ magnitudes."
 
 (defun supersonic-waveform--analyze-file (path buckets)
   "Read the mono s16le WAV at PATH and return its (PEAKS . RMS) envelope.
-Signals an error if PATH is not a valid WAV file or has no \"data\" chunk."
-  (with-temp-buffer
-    (set-buffer-multibyte nil)
-    (insert-file-contents-literally path)
-    (let ((buf (buffer-string)))
-      (unless (string= (substring buf 0 4) "RIFF")
-        (error "Not a RIFF file: %s" path))
-      (let ((chunk (supersonic-waveform--find-data-chunk buf)))
-        (unless chunk
-          (error "No \"data\" chunk found in %s" path))
-        (supersonic-waveform--analyze-samples buf (car chunk) (cdr chunk) buckets)))))
+Signals an error if PATH is not a valid WAV file or has no \"data\" chunk.
+Reads with `file-name-handler-alist' bound to nil: PATH is our own
+disposable temp file, not something a handler installed for the user's
+own purposes (e.g. a media-file minor mode intercepting file
+operations on recognized audio extensions) should ever get a say in --
+see `supersonic-waveform--start-transcode' for why PATH deliberately
+doesn't have one of those extensions in the first place."
+  (let ((file-name-handler-alist nil))
+    (with-temp-buffer
+      (set-buffer-multibyte nil)
+      (insert-file-contents-literally path)
+      (let ((buf (buffer-string)))
+        (unless (string= (substring buf 0 4) "RIFF")
+          (error "Not a RIFF file: %s" path))
+        (let ((chunk (supersonic-waveform--find-data-chunk buf)))
+          (unless chunk
+            (error "No \"data\" chunk found in %s" path))
+          (supersonic-waveform--analyze-samples buf (car chunk) (cdr chunk) buckets))))))
 
 ;;;
 ;;; Disk cache
@@ -200,20 +207,21 @@ nothing to explain why."
     (unless (process-live-p proc)
       (when (eq proc supersonic-waveform--process)
         (setq supersonic-waveform--process nil supersonic-waveform--outfile nil))
-      (let ((envelope
-             (cond
-              ((not (and (eq (process-status proc) 'exit) (= (process-exit-status proc) 0)))
-               (message "[Supersonic] Failed to generate waveform: mpv exited abnormally (%s)" (string-trim event))
-               nil)
-              ((not (file-exists-p outfile))
-               (message "[Supersonic] Failed to generate waveform: mpv produced no output file")
-               nil)
-              (t
-               (condition-case err
-                   (supersonic-waveform--analyze-file outfile buckets)
-                 (error
-                  (message "[Supersonic] Failed to generate waveform: %s" (error-message-string err))
-                  nil))))))
+      (let* ((file-name-handler-alist nil)
+             (envelope
+              (cond
+               ((not (and (eq (process-status proc) 'exit) (= (process-exit-status proc) 0)))
+                (message "[Supersonic] Failed to generate waveform: mpv exited abnormally (%s)" (string-trim event))
+                nil)
+               ((not (file-exists-p outfile))
+                (message "[Supersonic] Failed to generate waveform: mpv produced no output file")
+                nil)
+               (t
+                (condition-case err
+                    (supersonic-waveform--analyze-file outfile buckets)
+                  (error
+                   (message "[Supersonic] Failed to generate waveform: %s" (error-message-string err))
+                   nil))))))
         (when envelope
           (ignore-errors (supersonic-waveform--write-cache cache-file envelope)))
         (when (file-exists-p outfile)
@@ -223,10 +231,16 @@ nothing to explain why."
 (defun supersonic-waveform--start-transcode (id buckets cache-file callback)
   "Spawn the disposable mpv subprocess that transcodes ID to WAV.
 Helper for `supersonic-waveform-ensure'; see
-`supersonic-waveform--transcode-sentinel' for what happens once it exits."
+`supersonic-waveform--transcode-sentinel' for what happens once it exits.
+The output file deliberately does NOT get a \".wav\" (or other
+media-file) extension: a media-file minor mode (e.g. ready-player.el)
+can register a `file-name-handler-alist' entry for such extensions
+that intercepts reads of the file and hands back empty/placeholder
+content instead of the real bytes, on the assumption that nothing
+needs the raw data of a file it's offering to play instead."
   (unless (and supersonic-mpv (executable-find supersonic-mpv))
     (error "mpv not found"))
-  (let* ((outfile (make-temp-file "supersonic-waveform-" nil ".wav"))
+  (let* ((outfile (make-temp-file "supersonic-waveform-" nil ".tmp"))
          (url (supersonic-build-url "/stream.view" `(("id" . ,id)))))
     (setq supersonic-waveform--outfile outfile)
     (setq supersonic-waveform--process
