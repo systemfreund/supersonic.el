@@ -2,9 +2,7 @@
 
 ;; Author: systemfreund <github@o9z.de>
 ;; URL: https://github.com/systemfreund/supersonic.el
-;; Version: 0.1.0
 ;; Keywords: multimedia
-;; Package-Requires: ((emacs "27.1") (supersonic "0.2.0") (aio "1.0"))
 
 ;; This program is free software: you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
