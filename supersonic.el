@@ -313,6 +313,16 @@ ENVELOPE lets `supersonic-now-playing--tick' recolor the seekbar's
 played/unplayed split every second without asking
 `supersonic-waveform-ensure' again.")
 
+(defvar-local supersonic-now-playing--waveform-requested nil
+  "Non-nil once a waveform fetch has actually been kicked off for the
+current track, successful or not.
+`supersonic-now-playing--maybe-fetch-waveform' skips generating a
+waveform for a buffer nobody is looking at -- real CPU and network
+work otherwise wasted on nothing -- so this is what
+`supersonic-now-playing--tick' checks to know whether it still owes
+the current track a first attempt once the buffer becomes visible,
+without retrying one that already ran (and maybe failed).")
+
 (defun supersonic-now-playing-buffer ()
   "Return the now-playing buffer if it is currently live, else nil."
   (let ((buff (get-buffer supersonic-now-playing-buffer-name)))
@@ -336,7 +346,10 @@ played/unplayed split every second without asking
 Asks mpv where it is rather than counting seconds locally, so seeking
 and pausing need no special handling here.  Stops itself once there is
 nothing left to update, and keeps quiet while the buffer is not on
-display."
+display.  Also picks up a waveform fetch
+`supersonic-now-playing--maybe-fetch-waveform' skipped earlier for
+exactly that reason, the first tick after the buffer becomes visible
+again (see `supersonic-now-playing--waveform-requested')."
   (let ((buff (supersonic-now-playing-buffer)))
     (cond
      ((or (not buff) (not (supersonic-mpv-live-p)))
@@ -349,7 +362,11 @@ display."
            (supersonic-now-playing--update-field
             buff 'duration
             (supersonic-now-playing--position position (buffer-local-value 'supersonic-now-playing--duration buff)))
-           (supersonic-now-playing--recolor-waveform buff position)))
+           (supersonic-now-playing--recolor-waveform buff position)
+           (unless (buffer-local-value 'supersonic-now-playing--waveform-requested buff)
+             (supersonic-now-playing--maybe-fetch-waveform
+              buff (buffer-local-value 'supersonic-now-playing--track-id buff) position
+              (buffer-local-value 'supersonic-now-playing--duration buff)))))
        "get_property" "time-pos")))))
 
 (defun supersonic-now-playing-maybe-refresh ()
@@ -486,6 +503,7 @@ from) -- see `supersonic-now-playing--track-id'."
         ;; track (or there wasn't one); `supersonic-now-playing--maybe-fetch-waveform'
         ;; repopulates it for the new one once it's ready.
         (setq supersonic-now-playing--waveform nil)
+        (setq supersonic-now-playing--waveform-requested nil)
         (if song
             (supersonic-now-playing--start-timer)
           (supersonic-now-playing--stop-timer))
@@ -574,15 +592,19 @@ instead of only popping in once the whole track is done."
 
 (defun supersonic-now-playing--maybe-fetch-waveform (buff track-id position duration)
   "Kick off waveform generation for TRACK-ID and patch it into BUFF as it
-becomes available.  No-op unless `supersonic-waveform-available-p'.
-Fires and forgets rather than being awaited by the caller, so a
-cold-cache waveform (a full-track transcode) never delays the rest of
-the buffer from appearing; POSITION/DURATION only matter for coloring
-the seekbar's played/unplayed split.  The seekbar fills in
-progressively, bucket by bucket, rather than only appearing once the
-whole track has been analyzed -- see
-`supersonic-waveform-ensure''s PROGRESS-CALLBACK."
-  (when (supersonic-waveform-available-p)
+becomes available.  No-op unless `supersonic-waveform-available-p' and
+BUFF is actually on display -- a full-track transcode is real CPU and
+network work, not worth spending on a buffer nobody is looking at (see
+`supersonic-now-playing--tick' for how a buffer that becomes visible
+again still gets one).  Fires and forgets rather than being awaited by
+the caller, so a cold-cache waveform never delays the rest of the
+buffer from appearing; POSITION/DURATION only matter for coloring the
+seekbar's played/unplayed split.  The seekbar fills in progressively,
+bucket by bucket, rather than only appearing once the whole track has
+been analyzed -- see `supersonic-waveform-ensure''s PROGRESS-CALLBACK."
+  (when (and (supersonic-waveform-available-p) (buffer-live-p buff) (get-buffer-window buff t))
+    (with-current-buffer buff
+      (setq supersonic-now-playing--waveform-requested t))
     (supersonic-waveform-ensure
      track-id
      (lambda (envelope) (supersonic-now-playing--show-waveform buff track-id envelope position duration))
