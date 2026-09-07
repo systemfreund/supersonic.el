@@ -52,7 +52,7 @@
 ;; fix byte-compiler complaints
 (defvar supersonic-mpv)
 (defvar supersonic-enable-waveform)
-(defvar supersonic-waveform-cache-path)
+(defvar supersonic-cache-path)
 (defvar supersonic-waveform-buckets)
 (defvar supersonic-waveform-width)
 (defvar supersonic-waveform-height)
@@ -74,8 +74,12 @@ directly, not something Emacs would otherwise know to delete.")
   "Return the path ID's peak/RMS envelope is cached under at BUCKETS resolution.
 BUCKETS is part of the file name for the same reason size is part of
 `supersonic-art-cache-file': changing `supersonic-waveform-buckets'
-must not hand old callers a cached envelope at the wrong resolution."
-  (expand-file-name (format "%s-%d" id buckets) supersonic-waveform-cache-path))
+must not hand old callers a cached envelope at the wrong resolution.
+Prefixed with \"waveform-\": `supersonic-cache-path' is shared with
+`supersonic-art-cache-file', whose own ID could otherwise coincide
+with this one (e.g. a track and its own cover art id) and collide on
+the same file name."
+  (expand-file-name (format "waveform-%s-%d" id buckets) supersonic-cache-path))
 
 (defun supersonic-waveform-cancel ()
   "Kill any in-flight waveform transcode, discarding its output file.
@@ -228,8 +232,8 @@ doesn't have one of those extensions in the first place."
 
 (defun supersonic-waveform--write-cache (file envelope)
   "Write (PEAKS . RMS) ENVELOPE to FILE as raw bytes, peaks then RMS."
-  (unless (file-exists-p supersonic-waveform-cache-path)
-    (mkdir supersonic-waveform-cache-path t))
+  (unless (file-exists-p supersonic-cache-path)
+    (mkdir supersonic-cache-path t))
   (let ((coding-system-for-write 'no-conversion))
     (write-region (concat (car envelope) (cdr envelope)) nil file nil 'no-message)))
 

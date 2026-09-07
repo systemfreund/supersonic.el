@@ -30,7 +30,7 @@
 
 ;; fix byte-compiler complaints
 (defvar supersonic-enable-art)
-(defvar supersonic-art-cache-path)
+(defvar supersonic-cache-path)
 (defvar supersonic-list-art-size)
 (defvar supersonic-art-fetch-concurrency)
 (defvar url-http-end-of-headers)
@@ -42,8 +42,11 @@ different sizes in different buffers (see `supersonic-list-art-size'
 and `supersonic-now-playing-art-size'): sharing one file per art id
 would hand whichever buffer asked second the other one's resolution,
 and would silently keep serving the old resolution after either
-setting is changed."
-  (expand-file-name (format "%s-%d" id size) supersonic-art-cache-path))
+setting is changed.  Prefixed with \"art-\": `supersonic-cache-path' is
+shared with `supersonic-waveform-cache-file', whose own ID could
+otherwise coincide with this one (e.g. a track and its own cover art
+id) and collide on the same file name."
+  (expand-file-name (format "art-%s-%d" id size) supersonic-cache-path))
 
 (defun supersonic-image-propertize (id size)
   "Generate a property displaying cover art ID at SIZE pixels high."
@@ -56,8 +59,8 @@ Returns a promise that resolves once the fetch has settled; callers
 should re-check `file-exists-p' afterwards rather than assume success,
 since a failed fetch resolves without signalling here."
  (unless (file-exists-p (supersonic-art-cache-file id size))
-   (unless (file-exists-p supersonic-art-cache-path)
-     (mkdir supersonic-art-cache-path))
+   (unless (file-exists-p supersonic-cache-path)
+     (mkdir supersonic-cache-path))
    (pcase-let ((`(,status . ,buffer)
                 (aio-await
                  (aio-url-retrieve

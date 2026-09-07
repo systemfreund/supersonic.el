@@ -229,7 +229,7 @@ and several seeks in a row can be done without reopening it."
 so that the list and now-playing buffers can show the same cover at
 their own resolutions -- and so that changing either size setting
 actually re-fetches instead of reusing the old resolution forever."
-  (let ((supersonic-art-cache-path "/tmp/supersonic-tests-cache"))
+  (let ((supersonic-cache-path "/tmp/supersonic-tests-cache"))
     (should-not (equal (supersonic-art-cache-file "art-1" 100) (supersonic-art-cache-file "art-1" 300)))
     (should (equal (supersonic-art-cache-file "art-1" 100) (supersonic-art-cache-file "art-1" 100)))))
 
@@ -246,7 +246,7 @@ a url that has no extra query parameters."
   "`supersonic--fetch-art' creates the cache directory itself, so callers
 that fetch a single image (the now-playing buffer) get art on a fresh
 install too, instead of only those that populate a whole list."
-  (let ((supersonic-art-cache-path
+  (let ((supersonic-cache-path
          (expand-file-name (make-temp-name "supersonic-tests-cache-") temporary-file-directory)))
     (unwind-protect
         (cl-letf (((symbol-function 'supersonic-build-url) (lambda (_endpoint _extra-query) "dummy://url")))
@@ -254,15 +254,15 @@ install too, instead of only those that populate a whole list."
             (aio-wait-for (supersonic--fetch-art "art-1" 300))
             (should (file-exists-p (supersonic-art-cache-file "art-1" 300)))
             (should-not (file-exists-p (supersonic-art-cache-file "art-1" 100)))))
-      (when (file-exists-p supersonic-art-cache-path)
-        (delete-directory supersonic-art-cache-path t)))))
+      (when (file-exists-p supersonic-cache-path)
+        (delete-directory supersonic-cache-path t)))))
 
 (ert-deftest supersonic-tests-art-fetches-run-capped-in-parallel ()
   "Cover art fetches run concurrently, but never more of them at a time
 than the semaphore `supersonic-get-images' hands them allows -- a list
 buffer asks for every row's art at once, and without the cap that is one
 open connection per row."
-  (let ((supersonic-art-cache-path
+  (let ((supersonic-cache-path
          (expand-file-name (make-temp-name "supersonic-tests-cache-") temporary-file-directory))
         (in-flight 0)
         (peak 0)
@@ -290,8 +290,8 @@ open connection per row."
           (should (= peak 2))
           ;; Capped, but every entry still got fetched.
           (should (file-exists-p (supersonic-art-cache-file "art-6" 100))))
-      (when (file-exists-p supersonic-art-cache-path)
-        (delete-directory supersonic-art-cache-path t)))))
+      (when (file-exists-p supersonic-cache-path)
+        (delete-directory supersonic-cache-path t)))))
 
 (defun supersonic-tests--bytes (values)
   "Return VALUES (a list of 0..255 ints) as a unibyte string."
@@ -329,9 +329,19 @@ minimal case."
 `supersonic-tests-art-cache-file-is-per-size': raising
 `supersonic-waveform-buckets' must not resurrect a stale,
 wrong-resolution envelope cached before the change."
-  (let ((supersonic-waveform-cache-path "/tmp/supersonic-tests-waveform-cache"))
+  (let ((supersonic-cache-path "/tmp/supersonic-tests-waveform-cache"))
     (should-not (equal (supersonic-waveform-cache-file "id-1" 200) (supersonic-waveform-cache-file "id-1" 300)))
     (should (equal (supersonic-waveform-cache-file "id-1" 200) (supersonic-waveform-cache-file "id-1" 200)))))
+
+(ert-deftest supersonic-tests-art-and-waveform-cache-files-never-collide ()
+  "Cover art and waveforms share `supersonic-cache-path', but their
+cache file names must never collide even for the same id and the same
+numeric size/bucket count -- a real scenario, not a hypothetical one:
+a track's own id often doubles as its cover art id, and
+`supersonic-now-playing-art-size' (300) happens to match the default
+`supersonic-waveform-buckets' (300)."
+  (let ((supersonic-cache-path "/tmp/supersonic-tests-shared-cache"))
+    (should-not (equal (supersonic-art-cache-file "shared-id" 300) (supersonic-waveform-cache-file "shared-id" 300)))))
 
 (ert-deftest supersonic-tests-waveform-find-data-chunk-skips-extended-fmt-chunk ()
   "`supersonic-waveform--find-data-chunk' finds \"data\" behind a 40-byte
@@ -405,7 +415,7 @@ interrupted write) is rejected instead of handed back as if valid."
 (ert-deftest supersonic-tests-waveform-ensure-reads-existing-cache-without-spawning-mpv ()
   "A cached envelope is served straight off disk without starting a
 transcode at all."
-  (let ((supersonic-waveform-cache-path (make-temp-file "supersonic-tests-wf-cache-" t))
+  (let ((supersonic-cache-path (make-temp-file "supersonic-tests-wf-cache-" t))
         (supersonic-waveform-buckets 3))
     (unwind-protect
         (cl-letf (((symbol-function 'supersonic-waveform--start-transcode)
@@ -415,7 +425,7 @@ transcode at all."
             (let (result)
               (supersonic-waveform-ensure "id-1" (lambda (e) (setq result e)))
               (should (equal envelope result)))))
-      (delete-directory supersonic-waveform-cache-path t))))
+      (delete-directory supersonic-cache-path t))))
 
 (ert-deftest supersonic-tests-waveform-ensure-transcodes-and-caches ()
   "A cache miss spawns a disposable mpv to transcode+analyze the track,
@@ -423,7 +433,7 @@ then caches the result to disk for next time."
   (supersonic-tests--with-mpv
    (cl-letf (((symbol-function 'supersonic-build-url)
               (lambda (_endpoint _extra-query) "av://lavfi:sine=frequency=440:duration=2")))
-     (let ((supersonic-waveform-cache-path (make-temp-file "supersonic-tests-wf-cache-" t))
+     (let ((supersonic-cache-path (make-temp-file "supersonic-tests-wf-cache-" t))
            (supersonic-waveform-buckets 5)
            (result 'pending))
        (unwind-protect
@@ -433,7 +443,7 @@ then caches the result to disk for next time."
              (should result)
              (should (= 5 (length (car result))))
              (should (file-exists-p (supersonic-waveform-cache-file "track-1" 5))))
-         (delete-directory supersonic-waveform-cache-path t))))))
+         (delete-directory supersonic-cache-path t))))))
 
 (ert-deftest supersonic-tests-waveform-ensure-reports-progress-before-final-envelope ()
   "A cache miss reports partial envelopes via the optional progress
@@ -443,7 +453,7 @@ once the whole track is done."
   (supersonic-tests--with-mpv
    (cl-letf (((symbol-function 'supersonic-build-url)
               (lambda (_endpoint _extra-query) "av://lavfi:sine=frequency=440:duration=2")))
-     (let ((supersonic-waveform-cache-path (make-temp-file "supersonic-tests-wf-cache-" t))
+     (let ((supersonic-cache-path (make-temp-file "supersonic-tests-wf-cache-" t))
            (supersonic-waveform-buckets 20)
            (supersonic-waveform--analysis-tick-budget 0)
            (progress-count 0)
@@ -457,7 +467,7 @@ once the whole track is done."
              (should (supersonic-tests--wait-for (lambda () (not (eq result 'pending))) 10))
              (should result)
              (should (> progress-count 1)))
-         (delete-directory supersonic-waveform-cache-path t))))))
+         (delete-directory supersonic-cache-path t))))))
 
 (ert-deftest supersonic-tests-waveform-cancel-kills-in-flight-transcode ()
   "`supersonic-waveform-cancel' kills the transcode process and forgets
@@ -465,7 +475,7 @@ its output file, so a quick track change never leaves either behind."
   (supersonic-tests--with-mpv
    (cl-letf (((symbol-function 'supersonic-build-url)
               (lambda (_endpoint _extra-query) "av://lavfi:sine=frequency=440:duration=30")))
-     (let ((supersonic-waveform-cache-path (make-temp-file "supersonic-tests-wf-cache-" t)))
+     (let ((supersonic-cache-path (make-temp-file "supersonic-tests-wf-cache-" t)))
        (unwind-protect
            (progn
              (supersonic-waveform-ensure "long-track" #'ignore)
@@ -474,7 +484,7 @@ its output file, so a quick track change never leaves either behind."
                (supersonic-waveform-cancel)
                (should-not (process-live-p supersonic-waveform--process))
                (should-not (and outfile (file-exists-p outfile)))))
-         (delete-directory supersonic-waveform-cache-path t))))))
+         (delete-directory supersonic-cache-path t))))))
 
 (ert-deftest supersonic-tests-waveform-cancel-does-not-log-a-failure-message ()
   "`supersonic-waveform-cancel' killing an in-flight transcode is a
@@ -485,7 +495,7 @@ would look like something actually went wrong."
   (supersonic-tests--with-mpv
    (cl-letf (((symbol-function 'supersonic-build-url)
               (lambda (_endpoint _extra-query) "av://lavfi:sine=frequency=440:duration=30")))
-     (let ((supersonic-waveform-cache-path (make-temp-file "supersonic-tests-wf-cache-" t))
+     (let ((supersonic-cache-path (make-temp-file "supersonic-tests-wf-cache-" t))
            (messages nil)
            (finished nil))
        (unwind-protect
@@ -500,7 +510,7 @@ would look like something actually went wrong."
              ;; variables itself, synchronously, well before that.
              (should (supersonic-tests--wait-for (lambda () finished)))
              (should-not (cl-some (lambda (m) (string-match-p "Failed to generate waveform" m)) messages)))
-         (delete-directory supersonic-waveform-cache-path t))))))
+         (delete-directory supersonic-cache-path t))))))
 
 (ert-deftest supersonic-tests-waveform-transcode-outfile-avoids-media-extension ()
   "The transcode output file must not use a media-file extension like
@@ -770,7 +780,7 @@ track, without disturbing anything else already rendered."
               (lambda (_endpoint _extra-query) "av://lavfi:sine=frequency=440:duration=30"))
              ((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
      (let ((supersonic-enable-waveform t)
-           (supersonic-waveform-cache-path (make-temp-file "supersonic-tests-wf-cache-" t))
+           (supersonic-cache-path (make-temp-file "supersonic-tests-wf-cache-" t))
            (supersonic-waveform-buckets 4)
            (buff (get-buffer-create supersonic-now-playing-buffer-name)))
        (unwind-protect

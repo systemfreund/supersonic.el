@@ -107,16 +107,20 @@ so raising either one costs a single re-download.
 
 Enabling `supersonic-enable-waveform` adds a clickable waveform seekbar
 below the transport buttons, click anywhere on it to seek there. The
-first time a track is shown its waveform lags a beat behind the rest
-of the buffer, since generating it means transcoding the whole track
-through a disposable mpv process and analyzing the result -- it's
-cached on disk afterwards (`supersonic-waveform-cache-path`), so that
+first time a track is shown its waveform fills in gradually as it's
+analyzed, rather than blocking the rest of the buffer, since generating
+it means transcoding the whole track through a disposable mpv process
+and analyzing the result -- it's cached on disk afterwards, so that
 only happens once per track. Like cover art, it needs a graphical
 frame; unlike cover art, it needs no external image library, since it
 renders as a PPM image, the one raster format Emacs always decodes
 itself. `supersonic-waveform-buckets` sets both its resolution and how
 finely the track is analyzed; `supersonic-waveform-width`/
 `-height` set its display size.
+
+Cover art and waveforms are both cached on disk under
+`supersonic-cache-path` (default `supersonic-cache` under
+`user-emacs-directory`).
 
 ## MPRIS
 
