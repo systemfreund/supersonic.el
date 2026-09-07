@@ -557,26 +557,37 @@ it falls back to showing the bare track id."
          (supersonic-now-playing--render buff nil nil nil nil)))
    (supersonic-now-playing--render buff nil nil nil nil)))
 
+(defun supersonic-now-playing--show-waveform (buff track-id envelope position duration)
+  "Patch BUFF's waveform field to display ENVELOPE for TRACK-ID, if still current.
+Shared by `supersonic-waveform-ensure''s final callback and its
+progress callback -- see `supersonic-now-playing--maybe-fetch-waveform'
+-- so the seekbar fills in gradually as buckets finish analyzing
+instead of only popping in once the whole track is done."
+  (when (and envelope (buffer-live-p buff))
+    (with-current-buffer buff
+      ;; The buffer may have moved on to a different track by the time a
+      ;; full-track transcode finishes; discard a now-stale result instead
+      ;; of showing another track's waveform under this one.
+      (when (equal track-id supersonic-now-playing--track-id)
+        (setq supersonic-now-playing--waveform (cons track-id envelope))
+        (supersonic-now-playing--update-field
+         buff 'waveform (supersonic-waveform-propertize envelope (supersonic-now-playing--progress-ratio position duration)))))))
+
 (defun supersonic-now-playing--maybe-fetch-waveform (buff track-id position duration)
-  "Kick off waveform generation for TRACK-ID and patch it into BUFF once ready.
-No-op unless `supersonic-waveform-available-p'.  Fires and forgets
-rather than being awaited by the caller, so a cold-cache waveform (a
-full-track transcode) never delays the rest of the buffer from
-appearing; POSITION/DURATION only matter for coloring the seekbar's
-played/unplayed split once it does arrive."
+  "Kick off waveform generation for TRACK-ID and patch it into BUFF as it
+becomes available.  No-op unless `supersonic-waveform-available-p'.
+Fires and forgets rather than being awaited by the caller, so a
+cold-cache waveform (a full-track transcode) never delays the rest of
+the buffer from appearing; POSITION/DURATION only matter for coloring
+the seekbar's played/unplayed split.  The seekbar fills in
+progressively, bucket by bucket, rather than only appearing once the
+whole track has been analyzed -- see
+`supersonic-waveform-ensure''s PROGRESS-CALLBACK."
   (when (supersonic-waveform-available-p)
     (supersonic-waveform-ensure
      track-id
-     (lambda (envelope)
-       (when (and envelope (buffer-live-p buff))
-         (with-current-buffer buff
-           ;; The buffer may have moved on to a different track by the time
-           ;; a full-track transcode finishes; discard a now-stale result
-           ;; instead of showing another track's waveform under this one.
-           (when (equal track-id supersonic-now-playing--track-id)
-             (setq supersonic-now-playing--waveform (cons track-id envelope))
-             (supersonic-now-playing--update-field
-              buff 'waveform (supersonic-waveform-propertize envelope (supersonic-now-playing--progress-ratio position duration))))))))))
+     (lambda (envelope) (supersonic-now-playing--show-waveform buff track-id envelope position duration))
+     (lambda (envelope) (supersonic-now-playing--show-waveform buff track-id envelope position duration)))))
 
 (defun supersonic-now-playing-refresh ()
   "Refresh the now-playing buffer from mpv's current state."
