@@ -39,36 +39,6 @@ commands available.
 
 For a list of available configuration options check `customize-group supersonic`
 
-## Authentication
-
-Add a `~/.authinfo.gpg` or `~/.authinfo` file with the following contents
-
-    machine SUBSONIC_URL login USERNAME password PASSWORD
-
-`SUBSONIC_URL` is the URL of your server, e.g.
-`https://coolsupersonic.example.com` or
-`http://coolsupersonic.example.com:4533`.
-
-Make sure the `machine` field in your authinfo entry matches `supersonic-host` 
-exactly, scheme included.
-
-### KeePassXC via Secret Service
-
-If you'd rather keep the credentials in KeePassXC than in an
-authinfo file, enable *Secret Service Integration* under
-`Tools -> Settings -> Secret Service Integration` and unlock the
-database. Then [tell](https://www.gnu.org/software/emacs/manual/html_node/auth/Secret-Service-API.html#Secret-Service-API-1) Emacs to also search that collection
-
-`auth-source`'s Secret Service backend only matches on an entry's
-custom *Attributes*, not on its regular URL/username fields, so add
-these on the `Advanced` tab of the entry:
-
-- `host` set to the same value as `supersonic-host` (with scheme, e.g.
-  `https://coolsupersonic.example.com`)
-- `user` set to your subsonic username
-
-The entry's regular password field is used as the secret.
-
 ## Play queue
 
 In the tracks and albums buffers, `RET` replaces the current play
@@ -118,6 +88,36 @@ explicitly:
   (require 'supersonic-mpris)
   (supersonic-mpris-mode t))
 ```
+
+## Authentication
+
+Add a `~/.authinfo.gpg` or `~/.authinfo` file with the following contents
+
+    machine SUBSONIC_URL login USERNAME password PASSWORD
+
+`SUBSONIC_URL` is the URL of your server, e.g.
+`https://coolsupersonic.example.com` or
+`http://coolsupersonic.example.com:4533`.
+
+Make sure the `machine` field in your authinfo entry matches `supersonic-host` 
+exactly, scheme included.
+
+### KeePassXC via Secret Service
+
+If you'd rather keep the credentials in KeePassXC than in an
+authinfo file, enable *Secret Service Integration* under
+`Tools -> Settings -> Secret Service Integration` and unlock the
+database. Then [tell](https://www.gnu.org/software/emacs/manual/html_node/auth/Secret-Service-API.html#Secret-Service-API-1) Emacs to also search that collection
+
+`auth-source`'s Secret Service backend only matches on an entry's
+custom *Attributes*, not on its regular URL/username fields, so add
+these on the `Advanced` tab of the entry:
+
+- `host` set to the same value as `supersonic-host` (with scheme, e.g.
+  `https://coolsupersonic.example.com`)
+- `user` set to your subsonic username
+
+The entry's regular password field is used as the secret.
 
 
 
