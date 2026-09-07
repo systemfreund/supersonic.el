@@ -75,8 +75,6 @@ per view: `supersonic-list-art-size`  for the album and podcast lists,
 in pixels and the size requested from the server, and the cache keeps 
 one file per size, so raising either one costs a single re-download.
 
-Art sent to other programs is configured separately, see MPRIS below.
-
 ## MPRIS
 
 `supersonic-mpris.el` exposes supersonic.el's playback as an MPRIS
@@ -91,12 +89,6 @@ explicitly:
   (require 'supersonic-mpris)
   (supersonic-mpris-mode t))
 ```
-
-Cover art is passed on to MPRIS clients as well, switched by its own 
-`supersonic-mpris-enable-art` (on by default). 
-`supersonic-mpris-art-size` sets the size it is downloaded at; it is 
-only handed over as a file path, so how large the client draws it is 
-not up to us.
 
 ## Authentication
 

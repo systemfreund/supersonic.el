@@ -73,11 +73,8 @@ coincide (e.g. a track and its own cover art id)."
 
 (defcustom supersonic-enable-art nil
   "Enable displaying album art in supported frames.
-Governs art drawn by supersonic itself, and is therefore also a
-statement about this frame -- see `supersonic-art-available-p'.  Art
-handed to other programs is a separate question and has its own
-setting; supersonic-mpris.el, for one, sends covers to desktop clients
-regardless of what this Emacs can draw."
+Also a statement about the frame itself, since supersonic only draws
+art it can draw -- see `supersonic-art-available-p'."
   :type 'boolean
   :group 'supersonic)
 

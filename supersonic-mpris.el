@@ -51,23 +51,6 @@
   :prefix "supersonic-mpris-"
   :group 'supersonic)
 
-(defcustom supersonic-mpris-enable-art t
-  "Whether to hand cover art to MPRIS clients.
-Independent of `supersonic-enable-art', which only governs art drawn
-inside Emacs and therefore stays off in a terminal frame; art sent over
-D-Bus is just a file path, so it works regardless of what this Emacs
-can display."
-  :type 'boolean
-  :group 'supersonic-mpris)
-
-(defcustom supersonic-mpris-art-size 200
-  "Size in pixels of the cover art handed to MPRIS clients.
-Unlike the art in supersonic's own buffers this is a plain download
-size: the file is only pointed at via the mpris:artUrl metadata field,
-so how large it ends up on screen is up to the client."
-  :type 'integer
-  :group 'supersonic-mpris)
-
 (defconst supersonic-mpris--bus-name "org.mpris.MediaPlayer2.supersonic"
   "The well-known D-Bus name we register on the session bus.")
 
@@ -164,9 +147,6 @@ goes away.")
 (defvar supersonic-mpris--track-song nil
   "Parsed \"song\" alist (as returned by getSong.view) for the current track.")
 
-(defvar supersonic-mpris--art-file nil
-  "Path to the cached art file for the current track, or nil.")
-
 ;;;
 ;;; Metadata dict construction
 ;;;
@@ -202,9 +182,7 @@ goes away.")
        (when artist
          (list :dict-entry "xesam:artist" (list :variant (list :array artist))))
        (when duration
-         (list :dict-entry "mpris:length" (list :variant :int64 (* duration 1000000))))
-       (when supersonic-mpris--art-file
-         (list :dict-entry "mpris:artUrl" (list :variant (concat "file://" supersonic-mpris--art-file)))))))))
+         (list :dict-entry "mpris:length" (list :variant :int64 (* duration 1000000)))))))))
 
 (defun supersonic-mpris--set-player-property (property value)
   "Set PROPERTY on the Player interface to VALUE and notify listeners.
@@ -224,36 +202,21 @@ sending PropertiesChanged itself."
 ;;;
 
 (aio-defun
- supersonic-mpris--fetch-song (id) "Fetch and cache metadata + art for track ID, then re-announce Metadata."
+ supersonic-mpris--fetch-song (id) "Fetch metadata for track ID, then re-announce Metadata."
  (condition-case err
      (let* ((data (aio-await (supersonic-get-json (supersonic-build-url "/getSong.view" `(("id" . ,id))))))
             (song (supersonic-recursive-assoc data '("subsonic-response" "song"))))
        ;; Ignore replies for a track we have since moved on from.
        (when (equal id (supersonic-mpris--current-track-id))
          (setq supersonic-mpris--track-song song)
-         (supersonic-mpris--announce-metadata)
-         (when (and supersonic-mpris-enable-art song (assoc-default "coverArt" song))
-           (supersonic-mpris--fetch-art id (assoc-default "coverArt" song)))))
+         (supersonic-mpris--announce-metadata)))
    (error
     (message "supersonic-mpris: failed to fetch metadata for %s: %s" id err))))
-
-(aio-defun
- supersonic-mpris--fetch-art (id art-id)
- "Download cover art ART-ID for track ID into the shared art cache.
-Re-announces Metadata once the art is available, unless ID is no
-longer the current track.  Delegates the actual fetch-and-cache work to
-`supersonic--fetch-art' rather than reimplementing it here."
- (aio-await (supersonic--fetch-art art-id supersonic-mpris-art-size))
- (let ((file (supersonic-art-cache-file art-id supersonic-mpris-art-size)))
-   (when (and (file-exists-p file) (equal id (supersonic-mpris--current-track-id)))
-     (setq supersonic-mpris--art-file file)
-     (supersonic-mpris--announce-metadata))))
 
 (defun supersonic-mpris--set-track (index)
   "Record INDEX (mpv's 1-based playlist_entry_id) as the current track."
   (setq supersonic-mpris--track-index index)
   (setq supersonic-mpris--track-song nil)
-  (setq supersonic-mpris--art-file nil)
   (supersonic-mpris--announce-metadata)
   (let ((id (supersonic-mpris--current-track-id)))
     (when id
@@ -310,7 +273,6 @@ must not disturb that."
   "Advice: after `supersonic-mpv-kill', reflect the stopped state."
   (setq supersonic-mpris--track-index nil)
   (setq supersonic-mpris--track-song nil)
-  (setq supersonic-mpris--art-file nil)
   (setq supersonic-mpris--pause-observed nil)
   (supersonic-mpris--set-playback-status "Stopped")
   (supersonic-mpris--announce-metadata))
@@ -458,8 +420,7 @@ bogus reply argument, tripping up strict clients such as playerctl."
   (dbus-unregister-service :session supersonic-mpris--bus-name)
   (setq supersonic-mpris--playback-status "Stopped")
   (setq supersonic-mpris--track-index nil)
-  (setq supersonic-mpris--track-song nil)
-  (setq supersonic-mpris--art-file nil))
+  (setq supersonic-mpris--track-song nil))
 
 ;;;###autoload
 (define-minor-mode supersonic-mpris-mode
@@ -468,7 +429,7 @@ bogus reply argument, tripping up strict clients such as playerctl."
 Once enabled, desktop environments and tools such as playerctl can see
 supersonic.el under the name `org.mpris.MediaPlayer2.supersonic' on the
 session bus, and use it to Play/Pause/Stop/Next/Previous and read
-Metadata (title/artist/album/art/length).  Seeking, volume, shuffle and
+Metadata (title/artist/album/length).  Seeking, volume, shuffle and
 loop control are intentionally out of scope.
 
 This is a global mode with no association to any particular buffer."

@@ -39,9 +39,7 @@
   "Return non-nil if cover art can actually be shown right now.
 Mirrors `supersonic-waveform-available-p'.  Callers that only download
 art should test this too: a frame that cannot draw the image has no
-use for the file either.  Art handed to MPRIS clients is deliberately
-not covered by this -- it is rendered outside Emacs, see
-`supersonic-mpris-enable-art'."
+use for the file either."
   (and supersonic-enable-art (display-graphic-p)))
 
 (defun supersonic-art-cache-file (id size)
