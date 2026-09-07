@@ -25,22 +25,19 @@ Example use-package config:
   :commands supersonic
   :bind (("C-c m" . supersonic))
   :custom
-  (supersonic-host "https://coolsupersonic.example.com")
+  (supersonic-host "https://mysubsonicserver:4355")
   (supersonic-enable-art t)
   (supersonic-scrobble-plays t))
 ```
 
 `supersonic-host` may be given without a scheme, in which case
 `https://` is assumed. In case you are running a subsonic server
-without HTTPS (HTTP only), prefix it with `http://` instead -- and
-make sure the `machine` field in your authinfo entry matches
-`supersonic-host` exactly, scheme included.
+without HTTPS, prefix it with `http://` instead.
 
 Use the `supersonic` command to open a transient with commonly used
 commands available.
 
 For a list of available configuration options check `customize-group supersonic`
-
 
 ## Authentication
 
@@ -52,8 +49,8 @@ Add a `~/.authinfo.gpg` or `~/.authinfo` file with the following contents
 `https://coolsupersonic.example.com` or
 `http://coolsupersonic.example.com:4533`.
 
-The `supersonic-host` in your init file must be set to the same
-value as `SUBSONIC_URL`, example below.
+Make sure the `machine` field in your authinfo entry matches `supersonic-host` 
+exactly, scheme included.
 
 ### KeePassXC via Secret Service
 
