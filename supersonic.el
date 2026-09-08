@@ -240,42 +240,39 @@ without retrying one that already ran (and maybe failed).")
 
 (defun supersonic-now-playing--tick ()
   "Update the playback position in the now-playing buffer.
-Asks mpv where it is rather than counting seconds locally, so a seek or
-a pause in between two ticks can never leave the position drifting --
-`supersonic-now-playing-maybe-update-position' exists only to show a
-seek sooner than the next tick would.  Stops itself once there is
-nothing left to update, and keeps quiet while the buffer is not on
-display.  Also picks up a waveform fetch
+Asks the active backend where it is rather than counting seconds
+locally, so a seek or a pause in between two ticks can never leave the
+position drifting -- `supersonic-now-playing-maybe-update-position'
+exists only to show a seek sooner than the next tick would.  Stops
+itself once there is nothing left to update, and keeps quiet while the
+buffer is not on display.  Also picks up a waveform fetch
 `supersonic-now-playing--maybe-fetch-waveform' skipped earlier for
 exactly that reason, the first tick after the buffer becomes visible
 again (see `supersonic-now-playing--waveform-requested')."
   (let ((buff (supersonic-now-playing-buffer)))
     (cond
-     ((or (not buff) (not (supersonic-mpv-live-p)))
+     ((or (not buff) (not (supersonic-playback-live-p)))
       (supersonic-now-playing--stop-timer))
      ((not (get-buffer-window buff t)))
      (t
       (supersonic-now-playing--show-position buff)))))
 
-(defun supersonic-now-playing--show-position (buff)
-  "Ask mpv where it is and update everything in BUFF that follows from it.
+(aio-defun
+ supersonic-now-playing--show-position (buff)
+ "Ask the active backend where it is and update everything in BUFF that follows.
 The position line, the seekbar's played/unplayed split, and a waveform
 fetch that was skipped while nobody was looking at BUFF."
-  (supersonic-mpv-command-with-callback
-   (lambda (response)
-     (when (buffer-live-p buff)
-       (let ((position (alist-get 'data response)))
-         (with-current-buffer buff
-           (setq supersonic-now-playing--position position))
-         (supersonic-now-playing--update-field
-          buff
-          'duration
-          (supersonic-now-playing--position position (buffer-local-value 'supersonic-now-playing--duration buff)))
-         (supersonic-now-playing--recolor-waveform buff position)
-         (unless (buffer-local-value 'supersonic-now-playing--waveform-requested buff)
-           (supersonic-now-playing--maybe-fetch-waveform
-            buff (buffer-local-value 'supersonic-now-playing--track-id buff))))))
-   "get_property" "time-pos"))
+ (let ((position (aio-await (supersonic-playback-status 'position))))
+   (when (buffer-live-p buff)
+     (with-current-buffer buff
+       (setq supersonic-now-playing--position position))
+     (supersonic-now-playing--update-field
+      buff 'duration
+      (supersonic-now-playing--position position (buffer-local-value 'supersonic-now-playing--duration buff)))
+     (supersonic-now-playing--recolor-waveform buff position)
+     (unless (buffer-local-value 'supersonic-now-playing--waveform-requested buff)
+       (supersonic-now-playing--maybe-fetch-waveform
+        buff (buffer-local-value 'supersonic-now-playing--track-id buff))))))
 
 (defun supersonic-now-playing-maybe-update-position ()
   "Update the position shown in the now-playing buffer, if it is on display.
@@ -291,9 +288,9 @@ looked up again."
       (supersonic-now-playing--show-position buff))))
 
 (defun supersonic-now-playing-maybe-refresh ()
-  "Refresh the now-playing buffer from mpv's state, if it is open.
+  "Refresh the now-playing buffer from the active backend's state, if it is open.
 Called at the same points as `supersonic-queue-maybe-refresh', plus
-whenever mpv reports that playback was paused or resumed."
+whenever the active backend reports that playback was paused or resumed."
   (let ((buff (supersonic-now-playing-buffer)))
     (when buff
       (supersonic-now-playing-fetch-and-render buff))))
@@ -519,7 +516,7 @@ from) -- see `supersonic-now-playing--track-id'."
 
 (aio-defun
  supersonic-now-playing-fetch-and-render (buff)
- "Query mpv for the track it is currently on and render it into BUFF.
+ "Query the active backend for its current track and render it into BUFF.
 Tolerates a failing metadata lookup the way `supersonic-queue-parse'
 does: rather than blanking a view that refreshes on every track change,
 it falls back to showing the bare track id.
@@ -532,10 +529,8 @@ reject a promise nobody is listening to and disappear without a trace,
 leaving nothing behind but a buffer that quietly stopped updating."
  (supersonic--with-async-error-handling
   buff "refresh the now-playing buffer"
-  (if (supersonic-mpv-live-p)
-      (let* ((playlist (aio-await (supersonic-mpv-get-property "playlist")))
-             (entry (seq-find (lambda (item) (alist-get 'current item)) playlist))
-             (track-id (and entry (gethash (alist-get 'id entry) supersonic--playlist))))
+  (if (supersonic-playback-live-p)
+      (let ((track-id (aio-await (supersonic-playback-status 'track-id))))
         (if track-id
             (let* ((outcome
                     (aio-await
@@ -547,10 +542,13 @@ leaving nothing behind but a buffer that quietly stopped updating."
               (when (and (supersonic-art-available-p) (assoc-default "coverArt" song))
                 (aio-await
                  (aio-catch (supersonic--fetch-art (assoc-default "coverArt" song) supersonic-now-playing-art-size))))
-              ;; Asked for last, so the position is as fresh as possible: the
-              ;; art fetch above can take a while on a cold cache.
-              (let ((position (aio-await (supersonic-mpv-get-property "time-pos"))))
-                (supersonic-now-playing--render buff song supersonic--paused position track-id)
+              ;; Fired concurrently and asked for last, so both are as fresh as
+              ;; possible: the art fetch above can take a while on a cold cache.
+              (let* ((position-promise (supersonic-playback-status 'position))
+                     (paused-promise (supersonic-playback-status 'paused))
+                     (position (aio-await position-promise))
+                     (paused (aio-await paused-promise)))
+                (supersonic-now-playing--render buff song paused position track-id)
                 (supersonic-now-playing--maybe-fetch-waveform buff track-id)))
           (supersonic-now-playing--render buff nil nil nil nil)))
     (supersonic-now-playing--render buff nil nil nil nil))))
@@ -606,7 +604,7 @@ that as the job it is already running and just re-points it (see
      (lambda (envelope) (supersonic-now-playing--show-waveform buff track-id envelope)))))
 
 (defun supersonic-now-playing-refresh ()
-  "Refresh the now-playing buffer from mpv's current state."
+  "Refresh the now-playing buffer from the active backend's current state."
   (interactive)
   (supersonic-now-playing-fetch-and-render (current-buffer)))
 
@@ -629,10 +627,10 @@ that as the job it is already running and just re-points it (see
 
 ;;;###autoload
 (defun supersonic-show-now-playing ()
-  "Open a buffer showing the track mpv is currently on.
-The buffer follows mpv on its own -- track changes, pausing and
-resuming are all reflected without a manual refresh, the same way the
-play queue buffer keeps itself current."
+  "Open a buffer showing the track the active backend is currently on.
+The buffer follows the active backend on its own -- track changes,
+pausing and resuming are all reflected without a manual refresh, the
+same way the play queue buffer keeps itself current."
   (interactive)
   (let ((buff (get-buffer-create supersonic-now-playing-buffer-name)))
     (with-current-buffer buff
