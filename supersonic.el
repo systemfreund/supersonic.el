@@ -245,8 +245,10 @@ without retrying one that already ran (and maybe failed).")
 
 (defun supersonic-now-playing--tick ()
   "Update the playback position in the now-playing buffer.
-Asks mpv where it is rather than counting seconds locally, so seeking
-and pausing need no special handling here.  Stops itself once there is
+Asks mpv where it is rather than counting seconds locally, so a seek or
+a pause in between two ticks can never leave the position drifting --
+`supersonic-now-playing-maybe-update-position' exists only to show a
+seek sooner than the next tick would.  Stops itself once there is
 nothing left to update, and keeps quiet while the buffer is not on
 display.  Also picks up a waveform fetch
 `supersonic-now-playing--maybe-fetch-waveform' skipped earlier for
@@ -258,21 +260,40 @@ again (see `supersonic-now-playing--waveform-requested')."
       (supersonic-now-playing--stop-timer))
      ((not (get-buffer-window buff t)))
      (t
-      (supersonic-mpv-command-with-callback
-       (lambda (response)
-         (when (buffer-live-p buff)
-           (let ((position (alist-get 'data response)))
-             (with-current-buffer buff
-               (setq supersonic-now-playing--position position))
-             (supersonic-now-playing--update-field
-              buff
-              'duration
-              (supersonic-now-playing--position position (buffer-local-value 'supersonic-now-playing--duration buff)))
-             (supersonic-now-playing--recolor-waveform buff position)
-             (unless (buffer-local-value 'supersonic-now-playing--waveform-requested buff)
-               (supersonic-now-playing--maybe-fetch-waveform
-                buff (buffer-local-value 'supersonic-now-playing--track-id buff))))))
-       "get_property" "time-pos")))))
+      (supersonic-now-playing--show-position buff)))))
+
+(defun supersonic-now-playing--show-position (buff)
+  "Ask mpv where it is and update everything in BUFF that follows from it.
+The position line, the seekbar's played/unplayed split, and a waveform
+fetch that was skipped while nobody was looking at BUFF."
+  (supersonic-mpv-command-with-callback
+   (lambda (response)
+     (when (buffer-live-p buff)
+       (let ((position (alist-get 'data response)))
+         (with-current-buffer buff
+           (setq supersonic-now-playing--position position))
+         (supersonic-now-playing--update-field
+          buff
+          'duration
+          (supersonic-now-playing--position position (buffer-local-value 'supersonic-now-playing--duration buff)))
+         (supersonic-now-playing--recolor-waveform buff position)
+         (unless (buffer-local-value 'supersonic-now-playing--waveform-requested buff)
+           (supersonic-now-playing--maybe-fetch-waveform
+            buff (buffer-local-value 'supersonic-now-playing--track-id buff))))))
+   "get_property" "time-pos"))
+
+(defun supersonic-now-playing-maybe-update-position ()
+  "Update the position shown in the now-playing buffer, if it is on display.
+Hung off `supersonic-playback-position-change-hook', so that a seek
+shows up as soon as it has taken effect rather than whenever the next
+`supersonic-now-playing--tick' happens to come round -- a wait of up
+to `supersonic-now-playing-interval' that made clicking the waveform
+seekbar feel unresponsive.  Cheaper than a refresh: only the position
+and the seekbar move when playback jumps, so none of the metadata is
+looked up again."
+  (let ((buff (supersonic-now-playing-buffer)))
+    (when (and buff (get-buffer-window buff t) (supersonic-playback-live-p))
+      (supersonic-now-playing--show-position buff))))
 
 (defun supersonic-now-playing-maybe-refresh ()
   "Refresh the now-playing buffer from mpv's state, if it is open.
@@ -289,6 +310,7 @@ whenever mpv reports that playback was paused or resumed."
 (add-hook 'supersonic-playback-track-change-hook #'supersonic-queue-maybe-refresh)
 (add-hook 'supersonic-playback-track-change-hook #'supersonic-now-playing-maybe-refresh)
 (add-hook 'supersonic-playback-state-change-hook #'supersonic-now-playing-maybe-refresh)
+(add-hook 'supersonic-playback-position-change-hook #'supersonic-now-playing-maybe-update-position)
 
 (defun supersonic-now-playing--insert-field (label value &optional field)
   "Insert one \"LABEL: VALUE\" metadata row, skipping it if VALUE is nil.

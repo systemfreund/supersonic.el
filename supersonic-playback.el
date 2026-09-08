@@ -78,6 +78,16 @@ off this from the outside, so no backend ever has to know they exist.")
 Only that: a change in the identity of what is playing runs
 `supersonic-playback-track-change-hook' instead.")
 
+(defvar supersonic-playback-position-change-hook nil
+  "Hook run whenever the playback position jumped rather than crept on.
+Seeking is what this is for.  A position that only advances by itself
+needs no signal -- whoever shows it re-reads it on a timer of its own
+choosing -- but a seek makes the value they last read wrong at once,
+and waiting out the rest of a tick to notice is what makes a click on
+the waveform seekbar look like it did not land.  So a backend says so
+as soon as the seek has actually taken effect, and consumers pull the
+new position back through `supersonic-playback-status'.")
+
 (defvar supersonic-playback--backends (make-hash-table :test #'eq)
   "Map of backend name (a symbol) to that backend's operation alist.
 Populated by `supersonic-playback-register-backend', which every
@@ -147,7 +157,9 @@ A negative OFFSET seeks backwards."
 ARG is a raw prefix argument or nil, nil meaning `supersonic-seek-step'.
 The magnitude only: which way the seek goes is the command's business,
 so a negative prefix does not turn a forward seek into a backward one."
-  (if arg (abs (prefix-numeric-value arg)) supersonic-seek-step))
+  (if arg
+      (abs (prefix-numeric-value arg))
+    supersonic-seek-step))
 
 (defun supersonic-playback-seek-fraction (fraction)
   "Seek to FRACTION of the way through the current track.

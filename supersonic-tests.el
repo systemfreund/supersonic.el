@@ -210,16 +210,21 @@ so they must not wait on one bare.  TIMEOUT defaults to two seconds."
 it was called with -- not for a snapshot of everything -- and hands
 back what the backend resolved."
   (let ((asked nil))
-    (supersonic-tests--with-backend
-     `((live-p . ,(lambda () t))
-       (status . ,(lambda (key)
-                    (push key asked)
-                    (let ((promise (aio-promise)))
-                      (aio-resolve promise (lambda () (alist-get key '((track-id . "id-7") (position . 12.5)))))
-                      promise))))
-     (should (equal "id-7" (supersonic-tests--resolve (supersonic-playback-status 'track-id))))
-     (should (equal 12.5 (supersonic-tests--resolve (supersonic-playback-status 'position))))
-     (should (equal '(track-id position) (nreverse asked))))))
+    (supersonic-tests--with-backend `((live-p . ,(lambda () t))
+                                      (status
+                                       .
+                                       ,(lambda (key)
+                                          (push key asked)
+                                          (let ((promise (aio-promise)))
+                                            (aio-resolve
+                                             promise
+                                             (lambda () (alist-get key '((track-id . "id-7") (position . 12.5)))))
+                                            promise))))
+                                    (should
+                                     (equal "id-7" (supersonic-tests--resolve (supersonic-playback-status 'track-id))))
+                                    (should
+                                     (equal 12.5 (supersonic-tests--resolve (supersonic-playback-status 'position))))
+                                    (should (equal '(track-id position) (nreverse asked))))))
 
 (ert-deftest supersonic-tests-playback-status-is-nil-when-nothing-is-live ()
   "With no live backend `supersonic-playback-status' resolves to nil
@@ -227,19 +232,21 @@ instead of leaving the caller waiting on a reply that can never come --
 the whole point being that consumers need no liveness guard of their
 own before asking.  The backend is not consulted at all."
   (let ((consulted nil))
-    (supersonic-tests--with-backend
-     `((live-p . ,(lambda () nil))
-       (status . ,(lambda (_key) (setq consulted t) (aio-promise))))
-     (should-not (supersonic-tests--resolve (supersonic-playback-status 'position)))
-     (should-not consulted))))
+    (supersonic-tests--with-backend `((live-p . ,(lambda () nil))
+                                      (status
+                                       .
+                                       ,(lambda (_key)
+                                          (setq consulted t)
+                                          (aio-promise))))
+                                    (should-not (supersonic-tests--resolve (supersonic-playback-status 'position)))
+                                    (should-not consulted))))
 
 (ert-deftest supersonic-tests-playback-status-rejects-unknown-keys ()
   "A key outside `supersonic-playback-status-keys' is a programming
 error, caught here rather than passed down for each backend to shrug
 at differently."
-  (supersonic-tests--with-backend
-   `((live-p . ,(lambda () t)) (status . ,(lambda (_key) (aio-promise))))
-   (should-error (supersonic-tests--resolve (supersonic-playback-status 'volume)))))
+  (supersonic-tests--with-backend `((live-p . ,(lambda () t)) (status . ,(lambda (_key) (aio-promise))))
+                                  (should-error (supersonic-tests--resolve (supersonic-playback-status 'volume)))))
 
 (ert-deftest supersonic-tests-playback-live-p-dispatches-synchronously ()
   "`supersonic-playback-live-p' is a plain predicate, not a promise:
@@ -255,14 +262,16 @@ seconds, and its pause state."
   (supersonic-tests--with-mpv
    (supersonic-mpv-start (list "av://lavfi:sine=frequency=440:duration=10"))
    (should (supersonic-tests--wait-for (lambda () (= 1 (hash-table-count supersonic--playlist)))))
-   (should (equal "av://lavfi:sine=frequency=440:duration=10"
-                  (supersonic-tests--resolve (supersonic-playback-status 'track-id))))
+   (should
+    (equal
+     "av://lavfi:sine=frequency=440:duration=10" (supersonic-tests--resolve (supersonic-playback-status 'track-id))))
    ;; mpv reports `time-pos' as unavailable until it has actually started
    ;; decoding, which is a moment after the `loadfile' that populated
    ;; `supersonic--playlist' above -- so wait for a position rather than
    ;; expecting one to exist the instant the queue does.
    (should
-    (supersonic-tests--wait-for (lambda () (numberp (supersonic-tests--resolve (supersonic-playback-status 'position))))))
+    (supersonic-tests--wait-for
+     (lambda () (numberp (supersonic-tests--resolve (supersonic-playback-status 'position))))))
    (should-not (supersonic-tests--resolve (supersonic-playback-status 'paused)))
    (supersonic-toggle-playing)
    (should (supersonic-tests--wait-for (lambda () (eq supersonic--paused t))))
@@ -406,11 +415,13 @@ so a negative prefix does not turn a forward seek backwards."
         (supersonic-seek-back))
       (supersonic-seek-forward 45)
       (supersonic-seek-back '-)
-      (should (equal '(("seek" "5" "relative")
-                       ("seek" "-5" "relative")
-                       ("seek" "45" "relative")
-                       ("seek" "-1" "relative"))
-                     (nreverse commands))))))
+      (should
+       (equal
+        '(("seek" "5" "relative")
+          ("seek" "-5" "relative")
+          ("seek" "45" "relative")
+          ("seek" "-1" "relative"))
+        (nreverse commands))))))
 
 (ert-deftest supersonic-tests-transient-stays-open-while-seeking ()
   "The seek suffixes are marked `:transient t', so the menu survives them
@@ -1156,6 +1167,38 @@ without re-rendering the buffer, and stops ticking once mpv is gone."
          (supersonic-now-playing--stop-timer)
          (kill-buffer buff))))))
 
+(ert-deftest supersonic-tests-now-playing-position-follows-a-seek-at-once ()
+  "A seek shows up in the now-playing buffer as soon as mpv has carried it
+out, rather than sitting on the pre-seek position until the next tick --
+which is what made clicking the waveform seekbar look like nothing had
+happened.  `supersonic-now-playing-interval' is set far beyond the test's
+own patience here, so only `supersonic-playback-position-change-hook' can
+account for the buffer catching up.
+
+Seeks by an offset rather than by the fraction the seekbar itself
+works in, because mpv only estimates the duration of the synthetic
+stream played here and a percentage of a wrong duration lands
+somewhere unpredictable.  Everything from mpv reporting the seek
+onwards -- which is all this is about -- is the same either way."
+  (supersonic-tests--with-mpv
+   (cl-letf (((symbol-function 'supersonic-get-json)
+              (aio-lambda (url) `(("subsonic-response" ("song" ("title" . ,url) ("duration" . 60)))))))
+     (let ((buff (get-buffer-create supersonic-now-playing-buffer-name))
+           (supersonic-now-playing-interval 300))
+       (unwind-protect
+           (progn
+             (with-current-buffer buff
+               (supersonic-now-playing-mode))
+             (set-window-buffer (selected-window) buff)
+             (supersonic-mpv-start (list "av://lavfi:sine=frequency=440:duration=60"))
+             (should
+              (supersonic-tests--wait-for (lambda () (supersonic-tests--buffer-matches buff "00:0[0-9] / 01:00"))))
+             (supersonic-playback-seek 30)
+             (should
+              (supersonic-tests--wait-for (lambda () (supersonic-tests--buffer-matches buff "00:3[0-9] / 01:00")) 3)))
+         (supersonic-now-playing--stop-timer)
+         (kill-buffer buff))))))
+
 (ert-deftest supersonic-tests-now-playing-buffer-follows-pause-toggle ()
   "An open now-playing buffer reflects pausing and resuming, which mpv
 reports as a property change rather than as a track event."
@@ -1622,8 +1665,9 @@ PlaybackStatus stale on the bus."
 (defun supersonic-tests--package-files ()
   "Return the package's own source files, absolute, excluding this one."
   (let ((dir (file-name-directory (locate-library "supersonic"))))
-    (seq-remove (lambda (f) (equal (file-name-nondirectory f) "supersonic-tests.el"))
-                (directory-files dir t "\\`supersonic.*\\.el\\'"))))
+    (seq-remove
+     (lambda (f) (equal (file-name-nondirectory f) "supersonic-tests.el"))
+     (directory-files dir t "\\`supersonic.*\\.el\\'"))))
 
 (ert-deftest supersonic-tests-user-options-all-live-in-one-file ()
   "Every `defcustom' in the package belongs to `supersonic-custom.el'.
@@ -1665,11 +1709,17 @@ peak/RMS is measured over, so an envelope analyzed at another rate is a
 different measurement of the same track rather than a reusable one."
   (let ((supersonic-cache-path "/tmp/supersonic-tests-waveform-cache"))
     (should-not
-     (equal (let ((supersonic-waveform-samplerate 3000)) (supersonic-waveform-cache-file "id-1" 300))
-            (let ((supersonic-waveform-samplerate 6000)) (supersonic-waveform-cache-file "id-1" 300))))
+     (equal
+      (let ((supersonic-waveform-samplerate 3000))
+        (supersonic-waveform-cache-file "id-1" 300))
+      (let ((supersonic-waveform-samplerate 6000))
+        (supersonic-waveform-cache-file "id-1" 300))))
     (should
-     (equal (let ((supersonic-waveform-samplerate 3000)) (supersonic-waveform-cache-file "id-1" 300))
-            (let ((supersonic-waveform-samplerate 3000)) (supersonic-waveform-cache-file "id-1" 300))))))
+     (equal
+      (let ((supersonic-waveform-samplerate 3000))
+        (supersonic-waveform-cache-file "id-1" 300))
+      (let ((supersonic-waveform-samplerate 3000))
+        (supersonic-waveform-cache-file "id-1" 300))))))
 
 (ert-deftest supersonic-tests-waveform-transcode-uses-the-configured-samplerate ()
   "`supersonic-waveform-samplerate' is what mpv is actually asked to
@@ -1679,7 +1729,9 @@ transcode to, not just part of the cache key."
     (cl-letf (((symbol-function 'executable-find) (lambda (&rest _) "/usr/bin/mpv"))
               ((symbol-function 'supersonic-build-url) (lambda (&rest _) "dummy://url"))
               ((symbol-function 'make-process)
-               (lambda (&rest args) (setq command (plist-get args :command)) 'fake-process))
+               (lambda (&rest args)
+                 (setq command (plist-get args :command))
+                 'fake-process))
               ((symbol-function 'process-send-string) #'ignore)
               ((symbol-function 'process-send-eof) #'ignore))
       (let ((supersonic-mpv "mpv"))

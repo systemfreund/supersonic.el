@@ -218,9 +218,15 @@ already playing undisturbed and simply queues IDS after it."
       (let ((event (alist-get 'event parsed-response)))
         (when (member event '("start-file" "end-file"))
           (run-hooks 'supersonic-playback-track-change-hook))
-        ;; mpv reports booleans as JSON true/false, which `json-read'
-        ;; turns into t and `:json-false' -- the latter being non-nil in
-        ;; Lisp, so this has to compare against t explicitly.
+        ;; mpv reports a seek twice: `seek' when one is requested, and
+        ;; `playback-restart' once it has actually taken effect.  The
+        ;; latter is the one worth passing on, because it is only by
+        ;; then that `time-pos' reads the position sought to instead of
+        ;; the one left behind.  It also fires when a file starts
+        ;; playing, which is harmless: the position is then simply read
+        ;; once more alongside the track change.
+        (when (string-equal event "playback-restart")
+          (run-hooks 'supersonic-playback-position-change-hook))
         (when (and (string-equal event "property-change") (string-equal (alist-get 'name parsed-response) "pause"))
           (setq supersonic--paused (eq (alist-get 'data parsed-response) t))
           (run-hooks 'supersonic-playback-state-change-hook))
@@ -333,9 +339,9 @@ of nesting callbacks.  Resolves to nil if the request could not be sent
 at all, so that a caller awaiting this never ends up waiting on a reply
 that by then can never arrive."
  (let ((promise (aio-promise)))
-   (if (supersonic-mpv-command-with-callback
-        (lambda (response) (aio-resolve promise (lambda () (alist-get 'data response))))
-        "get_property" name)
+   (if (supersonic-mpv-command-with-callback (lambda (response)
+                                               (aio-resolve promise (lambda () (alist-get 'data response))))
+                                             "get_property" name)
        (aio-await promise)
      nil)))
 
