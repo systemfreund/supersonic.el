@@ -255,6 +255,51 @@ it as a guard."
   (supersonic-tests--with-backend `((live-p . ,(lambda () 'yes))) (should (eq 'yes (supersonic-playback-live-p))))
   (supersonic-tests--with-backend `((live-p . ,(lambda () nil))) (should-not (supersonic-playback-live-p))))
 
+(ert-deftest supersonic-tests-playback-queue-dispatches-to-active-backend ()
+  "`supersonic-playback-queue' asks the active backend for its queue and
+hands back whatever it resolved to."
+  (supersonic-tests--with-backend `((live-p . ,(lambda () t))
+                                    (queue
+                                     .
+                                     ,(lambda ()
+                                        (let ((promise (aio-promise)))
+                                          (aio-resolve
+                                           promise
+                                           (lambda () '((:track-id "a" :current nil) (:track-id "b" :current t))))
+                                          promise))))
+                                  (should
+                                   (equal
+                                    '((:track-id "a" :current nil) (:track-id "b" :current t))
+                                    (supersonic-tests--resolve (supersonic-playback-queue))))))
+
+(ert-deftest supersonic-tests-playback-queue-is-nil-when-nothing-is-live ()
+  "With no live backend `supersonic-playback-queue' resolves to nil
+instead of leaving the caller waiting on a reply that can never come,
+the same as `supersonic-playback-status'.  The backend is not consulted
+at all."
+  (let ((consulted nil))
+    (supersonic-tests--with-backend `((live-p . ,(lambda () nil))
+                                      (queue
+                                       .
+                                       ,(lambda ()
+                                          (setq consulted t)
+                                          (aio-promise))))
+                                    (should-not (supersonic-tests--resolve (supersonic-playback-queue)))
+                                    (should-not consulted))))
+
+(ert-deftest supersonic-tests-mpv-queue-answers-track-ids-and-current ()
+  "mpv's `queue' operation resolves entries carrying supersonic track ids,
+translated from its own private playlist entry ids, with the currently
+playing entry marked `:current'."
+  (supersonic-tests--with-mpv
+   (supersonic-mpv-start (list supersonic-tests--track-1 supersonic-tests--track-2))
+   (should (supersonic-tests--wait-for (lambda () (= 2 (hash-table-count supersonic--playlist)))))
+   (let ((entries (supersonic-tests--resolve (supersonic-playback-queue))))
+     (should (equal supersonic-tests--track-1 (plist-get (nth 0 entries) :track-id)))
+     (should (plist-get (nth 0 entries) :current))
+     (should (equal supersonic-tests--track-2 (plist-get (nth 1 entries) :track-id)))
+     (should-not (plist-get (nth 1 entries) :current)))))
+
 (ert-deftest supersonic-tests-mpv-status-answers-the-facade-keys ()
   "mpv answers all three status keys in the facade's own vocabulary: a
 supersonic track id rather than an mpv playlist entry id, a position in
@@ -311,18 +356,16 @@ point where what is playing may have changed runs
          (should (> track-changes before)))))))
 
 (ert-deftest supersonic-tests-queue-parse-marks-current-track ()
-  "`supersonic-queue-parse' marks whichever entry mpv reports as current."
+  "`supersonic-queue-parse' marks whichever entry the backend reports as current."
   (supersonic-tests--with-mpv
    (cl-letf (((symbol-function 'supersonic-get-json)
               (aio-lambda (url) `(("subsonic-response" ("song" ("title" . ,url) ("artist" . "Test")))))))
      (supersonic-mpv-start (list supersonic-tests--track-1 supersonic-tests--track-2))
      (should (supersonic-tests--wait-for (lambda () (= 2 (hash-table-count supersonic--playlist)))))
-     (let ((result 'pending))
-       (supersonic-mpv-command-with-callback (lambda (response) (setq result response)) "get_property" "playlist")
-       (should (supersonic-tests--wait-for (lambda () (not (eq result 'pending)))))
-       (let ((entries (aio-wait-for (supersonic-queue-parse (alist-get 'data result)))))
-         (should (equal "▶" (aref (nth 1 (car entries)) 0)))
-         (should (equal "" (aref (nth 1 (cadr entries)) 0))))))))
+     (let* ((queue (supersonic-tests--resolve (supersonic-playback-queue)))
+            (entries (aio-wait-for (supersonic-queue-parse queue))))
+       (should (equal "▶" (aref (nth 1 (car entries)) 0)))
+       (should (equal "" (aref (nth 1 (cadr entries)) 0)))))))
 
 (ert-deftest supersonic-tests-queue-parse-includes-song-metadata ()
   "`supersonic-queue-parse' fills in title, artist and album from the song lookup."
@@ -333,13 +376,11 @@ point where what is playing may have changed runs
                `(("subsonic-response" ("song" ("title" . ,url) ("artist" . "Test Artist") ("album" . "Test Album")))))))
      (supersonic-mpv-start (list supersonic-tests--track-1))
      (should (supersonic-tests--wait-for (lambda () (= 1 (hash-table-count supersonic--playlist)))))
-     (let ((result 'pending))
-       (supersonic-mpv-command-with-callback (lambda (response) (setq result response)) "get_property" "playlist")
-       (should (supersonic-tests--wait-for (lambda () (not (eq result 'pending)))))
-       (let ((entry (car (aio-wait-for (supersonic-queue-parse (alist-get 'data result))))))
-         (should (equal supersonic-tests--track-1 (aref (nth 1 entry) 1)))
-         (should (equal "Test Artist" (aref (nth 1 entry) 2)))
-         (should (equal "Test Album" (aref (nth 1 entry) 3))))))))
+     (let* ((queue (supersonic-tests--resolve (supersonic-playback-queue)))
+            (entry (car (aio-wait-for (supersonic-queue-parse queue)))))
+       (should (equal supersonic-tests--track-1 (aref (nth 1 entry) 1)))
+       (should (equal "Test Artist" (aref (nth 1 entry) 2)))
+       (should (equal "Test Album" (aref (nth 1 entry) 3)))))))
 
 (ert-deftest supersonic-tests-queue-buffer-follows-track-changes ()
   "An open queue buffer refreshes itself as mpv advances, with no manual refresh."
