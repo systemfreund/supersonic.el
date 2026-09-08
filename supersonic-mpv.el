@@ -227,6 +227,9 @@ already playing undisturbed and simply queues IDS after it."
         ;; once more alongside the track change.
         (when (string-equal event "playback-restart")
           (run-hooks 'supersonic-playback-position-change-hook))
+        ;; mpv reports booleans as JSON true/false, which `json-read'
+        ;; turns into t and `:json-false' -- the latter being non-nil in
+        ;; Lisp, so this has to compare against t explicitly.
         (when (and (string-equal event "property-change") (string-equal (alist-get 'name parsed-response) "pause"))
           (setq supersonic--paused (eq (alist-get 'data parsed-response) t))
           (run-hooks 'supersonic-playback-state-change-hook))

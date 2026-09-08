@@ -61,8 +61,7 @@
     (and buff (buffer-live-p buff) buff)))
 
 (defun supersonic-queue-maybe-refresh ()
-  "Refresh the play queue buffer from the active backend's play queue,
-if it is open.
+  "Refresh the play queue buffer from the active backend's play queue, if it is open.
 Called whenever the queue is likely to have changed: after
 starting/enqueueing tracks and whenever the active backend reports a
 track starting or ending."
@@ -1199,6 +1198,7 @@ holding references to functions that no longer exist.  Returns nil so
   (remove-hook 'supersonic-playback-track-change-hook #'supersonic-queue-maybe-refresh)
   (remove-hook 'supersonic-playback-track-change-hook #'supersonic-now-playing-maybe-refresh)
   (remove-hook 'supersonic-playback-state-change-hook #'supersonic-now-playing-maybe-refresh)
+  (remove-hook 'supersonic-playback-position-change-hook #'supersonic-now-playing-maybe-update-position)
   nil)
 
 (provide 'supersonic)
