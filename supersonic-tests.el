@@ -143,6 +143,7 @@ the active backend registered, passing their arguments through."
                                       (toggle-play . ,(lambda () (push '(toggle-play) calls)))
                                       (next . ,(lambda () (push '(next) calls)))
                                       (prev . ,(lambda () (push '(prev) calls)))
+                                      (stop . ,(lambda () (push '(stop) calls)))
                                       (seek . ,(lambda (offset) (push (cons 'seek offset) calls)))
                                       (seek-fraction
                                        . ,(lambda (fraction) (push (cons 'seek-fraction fraction) calls))))
@@ -151,6 +152,7 @@ the active backend registered, passing their arguments through."
                                     (supersonic-toggle-playing)
                                     (supersonic-skip-track)
                                     (supersonic-prev-track)
+                                    (supersonic-playback-stop)
                                     (supersonic-seek-forward)
                                     (supersonic-seek-back)
                                     (supersonic-playback-seek-fraction 0.5))
@@ -161,6 +163,7 @@ the active backend registered, passing their arguments through."
         (toggle-play)
         (next)
         (prev)
+        (stop)
         (seek . 10)
         (seek . -10)
         (seek-fraction . 0.5))
@@ -1783,30 +1786,41 @@ playback is not already paused."
                                     (should (= 1 toggles)))))
 
 (ert-deftest supersonic-tests-mpris-controls-are-noops-when-nothing-is-live ()
-  "Every MPRIS Player control call is a no-op against the facade -- and
-never reaches `supersonic-mpv-kill' either -- when nothing is live, the
-same guard each of `supersonic-mpris--play'/`-pause'/`-play-pause'/
-`-stop'/`-next'/`-previous'/`-quit' applies before touching anything."
+  "Every MPRIS Player control call is a no-op against the facade when
+nothing is live, the same guard each of `supersonic-mpris--play'/
+`-pause'/`-play-pause'/`-stop'/`-next'/`-previous'/`-quit' applies
+before touching anything."
   (skip-unless (and (featurep 'dbusbind) (require 'supersonic-mpris nil t)))
   (let ((calls 0))
     (supersonic-tests--with-backend `((live-p . ,(lambda () nil))
                                       (toggle-play . ,(lambda () (cl-incf calls)))
                                       (next . ,(lambda () (cl-incf calls)))
                                       (prev . ,(lambda () (cl-incf calls)))
+                                      (stop . ,(lambda () (cl-incf calls)))
                                       (status
                                        .
                                        ,(lambda (_key)
                                           (cl-incf calls)
                                           (aio-promise))))
-                                    (cl-letf (((symbol-function 'supersonic-mpv-kill) (lambda () (cl-incf calls))))
-                                      (supersonic-tests--resolve (supersonic-mpris--play))
-                                      (supersonic-tests--resolve (supersonic-mpris--pause))
-                                      (supersonic-mpris--play-pause)
-                                      (supersonic-mpris--stop)
-                                      (supersonic-mpris--next)
-                                      (supersonic-mpris--previous)
-                                      (supersonic-mpris--quit)
-                                      (should (= 0 calls))))))
+                                    (supersonic-tests--resolve (supersonic-mpris--play))
+                                    (supersonic-tests--resolve (supersonic-mpris--pause))
+                                    (supersonic-mpris--play-pause)
+                                    (supersonic-mpris--stop)
+                                    (supersonic-mpris--next)
+                                    (supersonic-mpris--previous)
+                                    (supersonic-mpris--quit)
+                                    (should (= 0 calls)))))
+
+(ert-deftest supersonic-tests-mpris-stop-and-quit-reach-the-facade ()
+  "MPRIS Stop and Quit both stop playback through `supersonic-playback-stop'
+-- the facade's own operation -- rather than reaching past it to any
+particular backend."
+  (skip-unless (and (featurep 'dbusbind) (require 'supersonic-mpris nil t)))
+  (let ((stops 0))
+    (supersonic-tests--with-backend `((live-p . ,(lambda () t)) (stop . ,(lambda () (cl-incf stops))))
+                                    (supersonic-mpris--stop)
+                                    (supersonic-mpris--quit)
+                                    (should (= 2 stops)))))
 
 (defun supersonic-tests--package-files ()
   "Return the package's own source files, absolute, excluding this one."

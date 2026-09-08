@@ -413,6 +413,7 @@ current."
    (toggle-play . supersonic-mpv-toggle-play)
    (next . supersonic-mpv-next)
    (prev . supersonic-mpv-prev)
+   (stop . supersonic-mpv-kill)
    (seek . supersonic-mpv-seek)
    (seek-fraction . supersonic-mpv-seek-fraction)
    (live-p . supersonic-mpv-live-p)

@@ -28,8 +28,8 @@
 ;; `supersonic-playback-track-change-hook'/`supersonic-playback-state-change-hook'
 ;; and pulling whatever changed back through `supersonic-playback-status',
 ;; and issuing control through `supersonic-playback-toggle-play'/`-next'/
-;; `-prev' -- so it behaves the same regardless of which backend is
-;; active, and neither side has to know the other exists.
+;; `-prev'/`-stop' -- so it behaves the same regardless of which backend
+;; is active, and neither side has to know the other exists.
 ;;
 ;; Enable it explicitly, it is never loaded or activated as a side
 ;; effect of requiring `supersonic':
@@ -48,7 +48,6 @@
 (require 'supersonic-custom)
 (require 'supersonic-api)
 (require 'supersonic-playback)
-(require 'supersonic-mpv)
 
 (defgroup supersonic-mpris nil
   "MPRIS (D-Bus) remote control support for supersonic.el."
@@ -254,14 +253,9 @@ has to be able to update either half of what MPRIS reports."
 ;;;
 
 (defun supersonic-mpris--quit ()
-  "Handle the MPRIS Quit method: stop playback, never Emacs.
-Calls `supersonic-mpv-kill' directly rather than through the facade:
-killing the player outright has no equivalent among
-`supersonic-playback-operations' yet, so this -- together with
-`supersonic-mpris--stop' -- is the one place MPRIS still has to reach
-past it."
+  "Handle the MPRIS Quit method: stop playback, never Emacs."
   (when (supersonic-playback-live-p)
-    (supersonic-mpv-kill)))
+    (supersonic-playback-stop)))
 
 ;;;
 ;;; org.mpris.MediaPlayer2.Player
@@ -295,7 +289,7 @@ paused."
 (defun supersonic-mpris--stop ()
   "Handle the MPRIS Stop method.  See `supersonic-mpris--quit'."
   (when (supersonic-playback-live-p)
-    (supersonic-mpv-kill)))
+    (supersonic-playback-stop)))
 
 (defun supersonic-mpris--next ()
   "Handle the MPRIS Next method."

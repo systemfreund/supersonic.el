@@ -46,7 +46,8 @@
 
 (require 'supersonic-custom)
 
-(defconst supersonic-playback-operations '(start enqueue toggle-play next prev seek seek-fraction live-p status queue)
+(defconst supersonic-playback-operations
+  '(start enqueue toggle-play next prev stop seek seek-fraction live-p status queue)
   "The playback operations a backend can implement.
 `start' and `enqueue' each take a list of supersonic track ids; `seek'
 takes an offset in seconds, which may be negative; `seek-fraction'
@@ -148,6 +149,10 @@ playback starts."
 (defun supersonic-playback-prev ()
   "Go back to the previous track in the play queue."
   (supersonic-playback--call 'prev))
+
+(defun supersonic-playback-stop ()
+  "Stop whatever the active backend currently has playing."
+  (supersonic-playback--call 'stop))
 
 (defun supersonic-playback-seek (offset)
   "Seek OFFSET seconds relative to the current position.
