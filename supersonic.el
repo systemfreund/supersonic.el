@@ -153,6 +153,16 @@ while that buffer is both open and on display."
   :type 'boolean
   :group 'supersonic)
 
+(defcustom supersonic-playback-backend 'mpv
+  "Which playback backend plays what supersonic.el is asked to play.
+The symbol a backend registered itself under via
+`supersonic-playback-register-backend'; every play, enqueue and
+transport command dispatches to it.  Only `mpv' is built in, and
+selecting a backend whose file has not been loaded is reported when a
+playback command is next used."
+  :type '(choice (const :tag "Local mpv process" mpv) (symbol :tag "Other registered backend"))
+  :group 'supersonic)
+
 (defcustom supersonic-mpv-timeout 0.5
   "How long to wait when starting or killing the mpv process."
   :type 'float
@@ -160,6 +170,7 @@ while that buffer is both open and on display."
 
 (require 'supersonic-api)
 (require 'supersonic-art)
+(require 'supersonic-playback)
 (require 'supersonic-mpv)
 (require 'supersonic-waveform)
 
@@ -691,7 +702,7 @@ play queue buffer keeps itself current."
      ((string-equal type "album")
       (supersonic-tracks (car result)))
      ((string-equal type "song")
-      (supersonic-mpv-start (list (car result)))))))
+      (supersonic-playback-start (list (car result)))))))
 
 (defun supersonic-open-search-result ()
   "Open a view of the result from the result at point."
@@ -792,13 +803,13 @@ the response at the wrong key."
 (defun supersonic-play-tracks ()
   "Play all the tracks after the point in the list."
   (interactive)
-  (supersonic-mpv-start (supersonic-get-tracklist-id (tabulated-list-get-id))))
+  (supersonic-playback-start (supersonic-get-tracklist-id (tabulated-list-get-id))))
 
 (defun supersonic-enqueue-tracks ()
   "Add all the tracks after the point in the list to the play queue."
   (interactive)
   (let ((ids (supersonic-get-tracklist-id (tabulated-list-get-id))))
-    (supersonic-mpv-enqueue ids)
+    (supersonic-playback-enqueue ids)
     (message "Added %d track(s) to the queue" (length ids))))
 
 (defvar supersonic-tracks-mode-map
@@ -888,7 +899,7 @@ the response at the wrong key."
   nil "enqueue album"
   (let* ((track-id (tabulated-list-get-id))
          (ids (aio-await (supersonic-get-album-track-ids track-id))))
-    (supersonic-mpv-enqueue ids)
+    (supersonic-playback-enqueue ids)
     (message "Added %d track(s) to the queue" (length ids)))))
 
 (defvar supersonic-album-mode-map
@@ -1101,7 +1112,7 @@ the response at the wrong key."
 (defun supersonic-play-podcast ()
   "Play a podcast episode at point."
   (interactive)
-  (supersonic-mpv-start (list (tabulated-list-get-id))))
+  (supersonic-playback-start (list (tabulated-list-get-id))))
 
 (aio-defun
  supersonic-podcasts-episode-refresh (id buff) "Refresh the list of podcast episodes for a podcast ID into BUFF."

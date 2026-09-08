@@ -38,6 +38,12 @@
 ;;   `image-type-available-p'); SVG/PNG support depends on how Emacs
 ;;   was built.
 ;;
+;; The mpv subprocess here is only ever a transcoder: it is spawned to
+;; turn a stream into PCM and exits, independently of which playback
+;; backend is actually playing anything (see `supersonic-playback.el').
+;; The one place this file does touch playback is the seekbar click,
+;; which goes through that facade.
+;;
 ;; This file knows nothing about the now-playing buffer itself, the
 ;; same way `supersonic-art.el' doesn't: `supersonic-waveform-ensure'
 ;; hands back peak/RMS data via a callback, and `supersonic-waveform-image'
@@ -47,7 +53,7 @@
 ;;; Code:
 (require 'cl-lib)
 (require 'supersonic-api)
-(require 'supersonic-mpv)
+(require 'supersonic-playback)
 
 ;; fix byte-compiler complaints
 (defvar supersonic-mpv)
@@ -338,8 +344,7 @@ doesn't have one of those extensions in the first place."
     (let ((chunk (supersonic-waveform--find-data-chunk buf)))
       (unless chunk
         (error "No \"data\" chunk found in %s" path))
-      (supersonic-waveform--analyze-samples-async buf (car chunk) (cdr chunk) buckets generation on-done
-                                                  on-progress))))
+      (supersonic-waveform--analyze-samples-async buf (car chunk) (cdr chunk) buckets generation on-done on-progress))))
 
 ;;;
 ;;; Disk cache
@@ -596,7 +601,11 @@ to report when this image was generated."
   "Keymap active on the waveform image; mouse-1 seeks to the click position.")
 
 (defun supersonic-waveform--seek-at-click (event)
-  "Seek mpv to the position in the track EVENT clicked within the waveform."
+  "Seek to the position in the track EVENT clicked within the waveform.
+The image's width stands for the whole track, so the click's x offset
+within it is a fraction of the track -- which is exactly what
+`supersonic-playback-seek-fraction' takes, whichever backend is
+playing."
   (interactive "e")
   (let* ((posn (event-start event))
          (image (posn-image posn))
@@ -604,7 +613,7 @@ to report when this image was generated."
     (when (and image x)
       (let* ((width (car (image-size image t)))
              (ratio (max 0.0 (min 1.0 (/ (float x) width)))))
-        (supersonic-mpv-command "seek" (number-to-string (* ratio 100)) "absolute-percent")))))
+        (supersonic-playback-seek-fraction ratio)))))
 
 (defun supersonic-waveform-propertize (envelope progress)
   "Return a display string embedding ENVELOPE's seekbar image, clickable to seek.
