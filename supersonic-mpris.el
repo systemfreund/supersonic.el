@@ -342,21 +342,31 @@ bogus reply argument, tripping up strict clients such as playerctl."
         supersonic-mpris--registrations))
 
 (defun supersonic-mpris--register-fixed-property (interface property value)
-  "Register PROPERTY on INTERFACE with a fixed, never-changing VALUE."
+  "Register PROPERTY on INTERFACE with a fixed, never-changing VALUE.
+Passes DONT-REGISTER-SERVICE so this does not itself put the service
+name on the bus -- see `supersonic-mpris--register' for why that
+matters."
   (push (dbus-register-property
          :session
          supersonic-mpris--bus-name
          supersonic-mpris--path
          interface
          property
-         :read value)
+         :read value nil t)
         supersonic-mpris--registrations))
 
 (defun supersonic-mpris--register ()
-  "Register the MPRIS D-Bus service and its interfaces."
-  (unless (memq
-           (dbus-register-service :session supersonic-mpris--bus-name :do-not-queue) '(:primary-owner :already-owner))
-    (user-error "Could not acquire %s (already running elsewhere?)" supersonic-mpris--bus-name))
+  "Register the MPRIS D-Bus service and its interfaces.
+Every method/property below is registered with DONT-REGISTER-SERVICE,
+and the well-known service name is only requested as the very last
+step, once the whole object is built.  Without that, each
+`dbus-register-method'/`dbus-register-property' call implicitly
+(re-)requests the name itself -- a synchronous D-Bus round trip during
+which Emacs services other pending D-Bus traffic, including an MPRIS
+client reacting to the resulting NameOwnerChanged by introspecting us
+immediately, while the interface is still half-built.  Clients that
+don't retry on that (playerctld, notably) then get stuck treating us as
+broken until they are restarted."
   (supersonic-mpris--register-method
    dbus-interface-introspectable "Introspect" (lambda () supersonic-mpris--introspection-xml))
   ;; Root interface: methods.
@@ -388,7 +398,7 @@ bogus reply argument, tripping up strict clients such as playerctl."
          supersonic-mpris--path
          supersonic-mpris--player-interface
          "PlaybackStatus"
-         :read supersonic-mpris--playback-status)
+         :read supersonic-mpris--playback-status nil t)
         supersonic-mpris--registrations)
   (push (dbus-register-property
          :session
@@ -396,7 +406,7 @@ bogus reply argument, tripping up strict clients such as playerctl."
          supersonic-mpris--path
          supersonic-mpris--player-interface
          "Metadata"
-         :read (supersonic-mpris--metadata))
+         :read (supersonic-mpris--metadata) nil t)
         supersonic-mpris--registrations)
   (dolist (prop '("CanGoNext" "CanGoPrevious" "CanPlay" "CanPause" "CanControl"))
     (supersonic-mpris--register-fixed-property supersonic-mpris--player-interface prop t))
@@ -406,7 +416,13 @@ bogus reply argument, tripping up strict clients such as playerctl."
   (advice-add 'supersonic--mpv-socket-filter :after #'supersonic-mpris--socket-filter)
   (advice-add 'supersonic-mpv-start :after #'supersonic-mpris--after-mpv-start)
   (advice-add 'supersonic-mpv-enqueue :around #'supersonic-mpris--around-mpv-enqueue)
-  (advice-add 'supersonic-mpv-kill :after #'supersonic-mpris--after-mpv-kill))
+  (advice-add 'supersonic-mpv-kill :after #'supersonic-mpris--after-mpv-kill)
+  ;; Only now, with every method/property handler wired up locally, put the
+  ;; well-known name on the bus -- see the docstring above for why this has
+  ;; to be last.
+  (unless (memq
+           (dbus-register-service :session supersonic-mpris--bus-name :do-not-queue) '(:primary-owner :already-owner))
+    (user-error "Could not acquire %s (already running elsewhere?)" supersonic-mpris--bus-name)))
 
 (defun supersonic-mpris--unregister ()
   "Tear down the MPRIS D-Bus service and stop observing supersonic.el."
