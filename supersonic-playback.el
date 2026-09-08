@@ -142,6 +142,13 @@ playback starts."
 A negative OFFSET seeks backwards."
   (supersonic-playback--call 'seek offset))
 
+(defun supersonic-playback--seek-step (arg)
+  "Return the number of seconds a seek command called with ARG should move.
+ARG is a raw prefix argument or nil, nil meaning `supersonic-seek-step'.
+The magnitude only: which way the seek goes is the command's business,
+so a negative prefix does not turn a forward seek into a backward one."
+  (if arg (abs (prefix-numeric-value arg)) supersonic-seek-step))
+
 (defun supersonic-playback-seek-fraction (fraction)
   "Seek to FRACTION of the way through the current track.
 FRACTION is between 0.0 and 1.0.  Separate from
@@ -202,16 +209,18 @@ without issuing anything."
   (supersonic-playback-prev))
 
 ;;;###autoload
-(defun supersonic-seek-forward ()
-  "Seek 30 seconds forward."
-  (interactive)
-  (supersonic-playback-seek 30))
+(defun supersonic-seek-forward (&optional seconds)
+  "Seek forward by SECONDS, `supersonic-seek-step' by default.
+Interactively SECONDS is the numeric prefix argument."
+  (interactive "P")
+  (supersonic-playback-seek (supersonic-playback--seek-step seconds)))
 
 ;;;###autoload
-(defun supersonic-seek-back ()
-  "Seek 30 seconds back."
-  (interactive)
-  (supersonic-playback-seek -30))
+(defun supersonic-seek-back (&optional seconds)
+  "Seek back by SECONDS, `supersonic-seek-step' by default.
+Interactively SECONDS is the numeric prefix argument."
+  (interactive "P")
+  (supersonic-playback-seek (- (supersonic-playback--seek-step seconds))))
 
 (provide 'supersonic-playback)
 ;;; supersonic-playback.el ends here

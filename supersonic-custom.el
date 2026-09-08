@@ -65,6 +65,13 @@ build request URLs.  May be given without a scheme (\"http://\" or
   :type 'integer
   :group 'supersonic)
 
+(defcustom supersonic-seek-step 10
+  "Seconds `supersonic-seek-forward' and `supersonic-seek-back' jump by.
+Either command also takes a numeric prefix argument, which overrides
+this for that one seek."
+  :type 'number
+  :group 'supersonic)
+
 (defcustom supersonic-cache-path (expand-file-name "supersonic-cache" user-emacs-directory)
   "Path to store cached cover art and waveform peak/RMS envelopes.
 Shared by both `supersonic-art-cache-file' and

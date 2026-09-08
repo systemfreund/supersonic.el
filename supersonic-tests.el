@@ -161,8 +161,8 @@ the active backend registered, passing their arguments through."
         (toggle-play)
         (next)
         (prev)
-        (seek . 30)
-        (seek . -30)
+        (seek . 10)
+        (seek . -10)
         (seek-fraction . 0.5))
       (nreverse calls)))))
 
@@ -393,7 +393,24 @@ The menu now stays open on its own via the suffixes' `:transient t'."
       (supersonic-seek-forward)
       (supersonic-seek-back)
       (should-not opened-transient)
-      (should (equal '(("seek" "-30" "relative") ("seek" "30" "relative")) commands)))))
+      (should (equal '(("seek" "-10" "relative") ("seek" "10" "relative")) commands)))))
+
+(ert-deftest supersonic-tests-seek-step-is-customizable ()
+  "The seek commands jump by `supersonic-seek-step', and a numeric prefix
+argument overrides it for one seek -- in the command's own direction,
+so a negative prefix does not turn a forward seek backwards."
+  (let ((commands nil))
+    (cl-letf (((symbol-function 'supersonic-mpv-command) (lambda (&rest args) (push args commands))))
+      (let ((supersonic-seek-step 5))
+        (supersonic-seek-forward)
+        (supersonic-seek-back))
+      (supersonic-seek-forward 45)
+      (supersonic-seek-back '-)
+      (should (equal '(("seek" "5" "relative")
+                       ("seek" "-5" "relative")
+                       ("seek" "45" "relative")
+                       ("seek" "-1" "relative"))
+                     (nreverse commands))))))
 
 (ert-deftest supersonic-tests-transient-stays-open-while-seeking ()
   "The seek suffixes are marked `:transient t', so the menu survives them
