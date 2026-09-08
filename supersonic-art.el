@@ -26,13 +26,8 @@
 ;;; Code:
 (require 'url)
 (require 'aio)
+(require 'supersonic-custom)
 (require 'supersonic-api)
-
-;; fix byte-compiler complaints
-(defvar supersonic-enable-art)
-(defvar supersonic-cache-path)
-(defvar supersonic-list-art-size)
-(defvar supersonic-art-fetch-concurrency)
 (defvar url-http-end-of-headers)
 
 (defun supersonic-art-available-p ()

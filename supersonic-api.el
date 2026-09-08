@@ -29,15 +29,13 @@
 (require 'json)
 (require 'url)
 (require 'aio)
-
-;; fix byte-compiler complaints
-(defvar supersonic-host)
+(require 'supersonic-custom)
 
 (defun supersonic-auth ()
   "Return the auth-source entry for the current `supersonic-host'.
 Calls `auth-source-search' fresh every time rather than memoizing the
 result ourselves -- `auth-source-search' already caches internally
-(see `auth-source-do-cache'), but that cache is invalidated by
+\(see `auth-source-do-cache'), but that cache is invalidated by
 `auth-source-forget-all-cached' and expires on its own, so deferring
 to it means both a `supersonic-host' change and a corrected
 authinfo entry (after forgetting the cache) take effect on the next
@@ -46,9 +44,21 @@ session."
   (car (auth-source-search :host supersonic-host)))
 
 (defun supersonic-alist->query (al)
-  "Convert an alist -- AL to a set of url query parameters."
+  "Convert AL, an alist of string keys to string values, to a query string.
+Returns \"\" for an empty AL, so `supersonic-build-url' never appends a
+dangling \"?\".
+
+Values are percent-encoded here rather than at each call site.  Subsonic
+ids are opaque server-generated strings and some servers really do emit
+ones containing characters that are reserved in a query (\"&\", \"+\",
+\"=\"), which would otherwise silently split one parameter into two --
+and a search query or podcast feed url has no chance of being clean.
+Keys are left alone: every one of them is a literal spelled out in this
+package.  A nil value still encodes as the empty string, the same as
+the plain `concat' this used to do -- `supersonic-scrobble' can be
+handed an id mpv reported for a track this session never enqueued."
   (if al
-      (concat "?" (mapconcat (lambda (q) (concat (car q) "=" (cdr q))) al "&"))
+      (concat "?" (mapconcat (lambda (q) (concat (car q) "=" (url-hexify-string (or (cdr q) "")))) al "&"))
     ""))
 
 ;; fix byte-compiler complaints

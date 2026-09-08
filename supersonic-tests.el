@@ -138,31 +138,33 @@ tests rely on survives."
   "The generic `supersonic-playback-*' functions call the implementations
 the active backend registered, passing their arguments through."
   (let ((calls nil))
-    (supersonic-tests--with-backend
-     `((start . ,(lambda (ids) (push (cons 'start ids) calls)))
-       (enqueue . ,(lambda (ids) (push (cons 'enqueue ids) calls)))
-       (toggle-play . ,(lambda () (push '(toggle-play) calls)))
-       (next . ,(lambda () (push '(next) calls)))
-       (prev . ,(lambda () (push '(prev) calls)))
-       (seek . ,(lambda (offset) (push (cons 'seek offset) calls)))
-       (seek-fraction . ,(lambda (fraction) (push (cons 'seek-fraction fraction) calls))))
-     (supersonic-playback-start '("a" "b"))
-     (supersonic-playback-enqueue '("c"))
-     (supersonic-toggle-playing)
-     (supersonic-skip-track)
-     (supersonic-prev-track)
-     (supersonic-seek-forward)
-     (supersonic-seek-back)
-     (supersonic-playback-seek-fraction 0.5))
-    (should (equal '((start "a" "b")
-                     (enqueue "c")
-                     (toggle-play)
-                     (next)
-                     (prev)
-                     (seek . 30)
-                     (seek . -30)
-                     (seek-fraction . 0.5))
-                   (nreverse calls)))))
+    (supersonic-tests--with-backend `((start . ,(lambda (ids) (push (cons 'start ids) calls)))
+                                      (enqueue . ,(lambda (ids) (push (cons 'enqueue ids) calls)))
+                                      (toggle-play . ,(lambda () (push '(toggle-play) calls)))
+                                      (next . ,(lambda () (push '(next) calls)))
+                                      (prev . ,(lambda () (push '(prev) calls)))
+                                      (seek . ,(lambda (offset) (push (cons 'seek offset) calls)))
+                                      (seek-fraction
+                                       . ,(lambda (fraction) (push (cons 'seek-fraction fraction) calls))))
+                                    (supersonic-playback-start '("a" "b"))
+                                    (supersonic-playback-enqueue '("c"))
+                                    (supersonic-toggle-playing)
+                                    (supersonic-skip-track)
+                                    (supersonic-prev-track)
+                                    (supersonic-seek-forward)
+                                    (supersonic-seek-back)
+                                    (supersonic-playback-seek-fraction 0.5))
+    (should
+     (equal
+      '((start "a" "b")
+        (enqueue "c")
+        (toggle-play)
+        (next)
+        (prev)
+        (seek . 30)
+        (seek . -30)
+        (seek-fraction . 0.5))
+      (nreverse calls)))))
 
 (ert-deftest supersonic-tests-playback-reports-unusable-backends ()
   "Selecting a backend nothing registered, or asking a backend for an
@@ -171,9 +173,7 @@ are configuration the user can fix, and a backend is explicitly allowed
 to implement only part of `supersonic-playback-operations'."
   (let ((supersonic-playback-backend 'nonexistent))
     (should-error (supersonic-playback-toggle-play) :type 'user-error))
-  (supersonic-tests--with-backend
-   `((start . ,#'ignore))
-   (should-error (supersonic-playback-seek 30) :type 'user-error))
+  (supersonic-tests--with-backend `((start . ,#'ignore)) (should-error (supersonic-playback-seek 30) :type 'user-error))
   (should-error (supersonic-playback-register-backend 'bogus '((rewind . ignore)))))
 
 (ert-deftest supersonic-tests-mpv-is-registered-as-a-backend ()
@@ -633,6 +633,102 @@ once the whole track is done."
              (should (> progress-count 1)))
          (delete-directory supersonic-cache-path t))))))
 
+(ert-deftest supersonic-tests-waveform-ensure-reuses-an-in-flight-job-for-the-same-track ()
+  "Re-asking for a waveform that is already being generated must not
+restart it.  The now-playing buffer re-renders -- and so re-asks -- on
+every pause, resume and `g', plus two or three times over in the first
+second of a fresh mpv start; cancelling and respawning each time meant
+a long track's waveform could never finish.  Only the callbacks are
+replaced: the process object stays the very same one."
+  (supersonic-tests--with-mpv
+   (cl-letf (((symbol-function 'supersonic-build-url)
+              (lambda (_endpoint _extra-query) "av://lavfi:sine=frequency=440:duration=30")))
+     (let ((supersonic-cache-path (make-temp-file "supersonic-tests-wf-cache-" t))
+           (first-result 'pending)
+           (second-result 'pending))
+       (unwind-protect
+           (progn
+             (supersonic-waveform-ensure "long-track" (lambda (e) (setq first-result e)))
+             (should (process-live-p supersonic-waveform--process))
+             (let ((proc supersonic-waveform--process)
+                   (outfile supersonic-waveform--outfile))
+               (supersonic-waveform-ensure "long-track" (lambda (e) (setq second-result e)))
+               (should (eq proc supersonic-waveform--process))
+               (should (equal outfile supersonic-waveform--outfile))
+               (should (process-live-p proc)))
+             ;; The job now reports to the second caller only.
+             (supersonic-waveform-cancel)
+             (should (supersonic-tests--wait-for (lambda () (not (eq second-result 'pending)))))
+             (should (eq first-result 'pending)))
+         (delete-directory supersonic-cache-path t))))))
+
+(ert-deftest supersonic-tests-waveform-ensure-restarts-for-a-different-track ()
+  "A waveform request for a *different* track than the one in flight does
+still cancel and respawn -- the reuse in
+`supersonic-tests-waveform-ensure-reuses-an-in-flight-job-for-the-same-track'
+is keyed on the track id, not on there simply being a job."
+  (supersonic-tests--with-mpv
+   (cl-letf (((symbol-function 'supersonic-build-url)
+              (lambda (_endpoint _extra-query) "av://lavfi:sine=frequency=440:duration=30")))
+     (let ((supersonic-cache-path (make-temp-file "supersonic-tests-wf-cache-" t)))
+       (unwind-protect
+           (progn
+             (supersonic-waveform-ensure "track-a" #'ignore)
+             (let ((proc supersonic-waveform--process))
+               (should (process-live-p proc))
+               (supersonic-waveform-ensure "track-b" #'ignore)
+               (should-not (eq proc supersonic-waveform--process))
+               (should (process-live-p supersonic-waveform--process))))
+         (supersonic-waveform-cancel)
+         (delete-directory supersonic-cache-path t))))))
+
+(ert-deftest supersonic-tests-waveform-transcode-keeps-the-stream-url-out-of-argv ()
+  "The stream URL carries Subsonic's non-expiring \"u\"/\"t\"/\"s\" token-auth
+triple, and a subprocess's argv is readable by every local user via
+`ps' and /proc.  It must reach the transcode over stdin as a one-line
+playlist instead of as a command-line argument."
+  (let ((command nil)
+        (sent nil)
+        (url "https://example.invalid/rest/stream.view?u=bob&t=deadbeef&s=abc123&id=id"))
+    (cl-letf (((symbol-function 'executable-find) (lambda (&rest _) "/usr/bin/mpv"))
+              ((symbol-function 'supersonic-build-url) (lambda (&rest _) url))
+              ((symbol-function 'make-process)
+               (lambda (&rest args)
+                 (setq command (plist-get args :command))
+                 'fake-process))
+              ((symbol-function 'process-send-string) (lambda (_proc s) (push s sent)))
+              ((symbol-function 'process-send-eof) #'ignore))
+      (let ((supersonic-mpv "mpv"))
+        (unwind-protect
+            (progn
+              (supersonic-waveform--start-transcode "id" 10 "cache-file" #'ignore)
+              (should-not (cl-some (lambda (arg) (string-match-p "stream\\.view" arg)) command))
+              (should (member "--playlist=fd://0" command))
+              (should (equal (list (concat url "\n")) sent)))
+          (setq supersonic-waveform--process nil)
+          (supersonic-waveform-cancel))))))
+
+(ert-deftest supersonic-tests-waveform-ensure-regenerates-a-corrupt-cache-entry ()
+  "A cache file that doesn't hold a readable envelope counts as a miss:
+it is deleted and regenerated.  Reporting failure and leaving it in
+place disabled that track's waveform for good, since
+`supersonic-waveform-ensure' only ever looked at whether the file
+existed."
+  (let* ((supersonic-cache-path (make-temp-file "supersonic-tests-wf-cache-" t))
+         (supersonic-waveform-buckets 3)
+         (cache-file (supersonic-waveform-cache-file "id-1" 3))
+         (started nil)
+         (result 'pending))
+    (unwind-protect
+        (cl-letf (((symbol-function 'supersonic-waveform--start-transcode) (lambda (&rest _) (setq started t))))
+          (let ((coding-system-for-write 'no-conversion))
+            (write-region "truncated" nil cache-file nil 'no-message))
+          (supersonic-waveform-ensure "id-1" (lambda (e) (setq result e)))
+          (should started)
+          (should (eq result 'pending))
+          (should-not (file-exists-p cache-file)))
+      (delete-directory supersonic-cache-path t))))
+
 (ert-deftest supersonic-tests-waveform-cancel-kills-in-flight-transcode ()
   "`supersonic-waveform-cancel' kills the transcode process and forgets
 its output file, so a quick track change never leaves either behind."
@@ -729,7 +825,12 @@ itself still succeeds regardless. This bit a real user; guard against
 it coming back."
   (cl-letf (((symbol-function 'executable-find) (lambda (&rest _) "/usr/bin/mpv"))
             ((symbol-function 'supersonic-build-url) (lambda (&rest _) "dummy://url"))
-            ((symbol-function 'make-process) (lambda (&rest _) nil)))
+            ((symbol-function 'make-process) (lambda (&rest _) nil))
+            ;; The stubbed `make-process' hands back no process to feed
+            ;; the stream URL to; only the output file's name is under
+            ;; test here.
+            ((symbol-function 'process-send-string) #'ignore)
+            ((symbol-function 'process-send-eof) #'ignore))
     (let ((supersonic-mpv "mpv"))
       (unwind-protect
           (progn
@@ -1235,6 +1336,238 @@ for the artist-ID branch of `supersonic-albums' (i.e. `supersonic-open-album')."
         (kill-buffer origin)
         (when (get-buffer "*supersonic-artist-albums*")
           (kill-buffer "*supersonic-artist-albums*"))))))
+
+(ert-deftest supersonic-tests-alist-to-query-encodes-values ()
+  "Query parameter values are percent-encoded by `supersonic-alist->query'
+itself.  Subsonic ids are opaque server-generated strings and search
+queries are whatever the user typed, so a raw \"&\" or \"=\" would
+silently split one parameter into two.  A nil value still encodes as
+empty, which is what `supersonic-scrobble' relies on for a track this
+session never enqueued."
+  (should (equal "?id=a%26b%3Dc" (supersonic-alist->query '(("id" . "a&b=c")))))
+  (should (equal "?query=the%20smiths" (supersonic-alist->query '(("query" . "the smiths")))))
+  (should (equal "?id=" (supersonic-alist->query '(("id" . nil))))))
+
+(ert-deftest supersonic-tests-tracklist-id-takes-the-rest-of-the-list ()
+  "`supersonic-get-tracklist-id' returns the entry at point and everything
+after it, in list order, and nil for an id that isn't in the list."
+  (let ((tabulated-list-entries '(("1" ["a"]) ("2" ["b"]) ("3" ["c"]))))
+    (should (equal '("2" "3") (supersonic-get-tracklist-id "2")))
+    (should (equal '("1" "2" "3") (supersonic-get-tracklist-id "1")))
+    (should (equal '("3") (supersonic-get-tracklist-id "3")))
+    (should (equal '() (supersonic-get-tracklist-id "nope")))))
+
+(ert-deftest supersonic-tests-parse-survives-a-missing-duration ()
+  "The Subsonic API marks \"duration\" optional and really does leave it
+out -- a podcast episode that hasn't been downloaded yet has none.
+Formatting happens inside a `mapcar' over the whole response, so a
+`format-seconds' call signalling on nil used to empty the entire list
+buffer over one such row."
+  (let ((tracks
+         '(("subsonic-response" ("album" ("song"
+              (("title" . "No Duration") ("id" . "1"))
+              (("title" . "Timed") ("id" . "2") ("duration" . 65)))))))
+        (episodes
+         '(("subsonic-response" ("podcasts" ("channel" (("episode"
+                (("title" . "Not Downloaded") ("id" . "1") ("status" . "skipped"))
+                (("title" . "Ready") ("id" . "2") ("status" . "completed") ("duration" . 3725)))))))))
+        (supersonic-browse-by-tags t))
+    (let ((rows (supersonic-tracks-parse tracks)))
+      (should (equal "" (aref (nth 1 (nth 0 rows)) 1)))
+      (should (equal "1:05" (aref (nth 1 (nth 1 rows)) 1))))
+    (let ((rows (supersonic-podcast-episodes-parse episodes)))
+      (should (equal "" (aref (nth 1 (nth 0 rows)) 1)))
+      (should (equal "1:02:05" (aref (nth 1 (nth 1 rows)) 1))))))
+
+(ert-deftest supersonic-tests-now-playing-fetch-reports-its-own-errors ()
+  "`supersonic-now-playing-fetch-and-render' returns a promise every
+caller `ignore's, so anything signalled inside it -- a missing
+authinfo entry, most plainly -- used to reject a promise nobody was
+awaiting and vanish, leaving only a buffer that had quietly stopped
+updating.  It reports instead."
+  (let ((buff (get-buffer-create "*supersonic-tests-now-playing*"))
+        (messages nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'supersonic-mpv-live-p) (lambda () t))
+                  ((symbol-function 'supersonic-mpv-get-property)
+                   (lambda (&rest _) (user-error "Failed to load .authinfo")))
+                  ((symbol-function 'message)
+                   (lambda (fmt &rest args)
+                     (push (apply #'format fmt args) messages)
+                     nil)))
+          (with-current-buffer buff
+            (supersonic-now-playing-mode))
+          (ignore (supersonic-now-playing-fetch-and-render buff))
+          (should
+           (supersonic-tests--wait-for
+            (lambda () (cl-some (lambda (m) (string-match-p "Failed to refresh the now-playing buffer" m)) messages)))))
+      (kill-buffer buff))))
+
+(ert-deftest supersonic-tests-now-playing-rerender-keeps-the-waveform ()
+  "A re-render of the track already on show -- a pause, a resume, `g' --
+must not throw away the seekbar it has already analyzed.  Blanking it
+meant every pause toggle looked like a first request for the current
+track's waveform, re-running generation for one already in hand, and
+left a gap where the image had been until something else redrew it."
+  (skip-unless (image-type-available-p 'pbm))
+  (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
+    (let ((supersonic-enable-waveform t)
+          (supersonic-waveform-buckets 4)
+          (buff (get-buffer-create "*supersonic-tests-now-playing*"))
+          (song '(("id" . "track-1") ("title" . "Song") ("duration" . 100))))
+      (unwind-protect
+          (with-current-buffer buff
+            (supersonic-now-playing-mode)
+            (supersonic-now-playing--render buff song nil 10 "track-1")
+            (setq supersonic-now-playing--waveform-requested t)
+            (supersonic-now-playing--show-waveform
+             buff "track-1"
+             (cons (supersonic-tests--bytes '(10 20 30 40)) (supersonic-tests--bytes '(5 10 15 20))))
+            (should (supersonic-tests--waveform-image-shown-p buff))
+            ;; The pause toggle: same track, rendered again.
+            (supersonic-now-playing--render buff song t 11 "track-1")
+            (should supersonic-now-playing--waveform)
+            (should supersonic-now-playing--waveform-requested)
+            (should (supersonic-tests--waveform-image-shown-p buff))
+            ;; A different track still clears it.
+            (supersonic-now-playing--render buff song nil 0 "track-2")
+            (should-not supersonic-now-playing--waveform)
+            (should-not supersonic-now-playing--waveform-requested)
+            (should-not (supersonic-tests--waveform-image-shown-p buff)))
+        (kill-buffer buff)))))
+
+(ert-deftest supersonic-tests-now-playing-recolor-skips-unmoved-buckets ()
+  "The seekbar image only changes when the played/unplayed boundary
+crosses into another bucket -- once every twelve seconds for a
+300-bucket seekbar over an hour-long podcast, against a tick a second.
+`supersonic-now-playing--recolor-waveform' redraws only then."
+  (skip-unless (image-type-available-p 'pbm))
+  (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
+    (let ((supersonic-enable-waveform t)
+          (supersonic-waveform-buckets 4)
+          (redraws 0)
+          (buff (get-buffer-create "*supersonic-tests-now-playing*")))
+      (unwind-protect
+          (with-current-buffer buff
+            (supersonic-now-playing-mode)
+            (supersonic-now-playing--render buff '(("id" . "t") ("duration" . 100)) nil 0 "t")
+            (supersonic-now-playing--show-waveform
+             buff "t"
+             (cons (supersonic-tests--bytes '(10 20 30 40)) (supersonic-tests--bytes '(5 10 15 20))))
+            (cl-letf* ((original (symbol-function 'supersonic-waveform-propertize))
+                       ((symbol-function 'supersonic-waveform-propertize)
+                        (lambda (&rest args)
+                          (cl-incf redraws)
+                          (apply original args))))
+              ;; Four buckets over 100 seconds: 0-24s is all bucket 0.
+              (supersonic-now-playing--recolor-waveform buff 1)
+              (supersonic-now-playing--recolor-waveform buff 20)
+              (should (= 0 redraws))
+              ;; 25s crosses into bucket 1.
+              (supersonic-now-playing--recolor-waveform buff 25)
+              (should (= 1 redraws))
+              (supersonic-now-playing--recolor-waveform buff 30)
+              (should (= 1 redraws))))
+        (kill-buffer buff)))))
+
+(ert-deftest supersonic-tests-mpris-sees-messages-split-across-socket-reads ()
+  "MPRIS observes mpv via `supersonic--mpv-handle-message', which receives
+whole parsed messages, not via the socket filter one level below it.  A
+single read off mpv's IPC socket is not guaranteed to hold whole
+newline-terminated messages -- carrying the trailing partial one over
+is the entire reason that filter exists -- so re-splitting its raw
+chunk dropped whatever event straddled a chunk boundary, leaving
+PlaybackStatus stale on the bus."
+  (skip-unless (and (featurep 'dbusbind) (require 'supersonic-mpris nil t)))
+  (let ((statuses nil)
+        (supersonic-mpv--socket-buffer "")
+        (supersonic-mpris--playback-status "Stopped"))
+    (cl-letf (((symbol-function 'supersonic-mpris--set-player-property)
+               (lambda (property value)
+                 (when (equal property "PlaybackStatus")
+                   (push value statuses))))
+              ((symbol-function 'supersonic-mpris--announce-metadata) #'ignore))
+      (advice-add 'supersonic--mpv-handle-message :after #'supersonic-mpris--handle-message)
+      (unwind-protect
+          (progn
+            ;; One `pause' property-change, delivered in two reads that
+            ;; split it mid-message.
+            (supersonic--mpv-socket-filter nil "{\"event\":\"property-change\",\"name\":\"pau")
+            (should (equal '() statuses))
+            (supersonic--mpv-socket-filter nil "se\",\"data\":true}\n")
+            (should (equal '("Paused") statuses)))
+        (advice-remove 'supersonic--mpv-handle-message #'supersonic-mpris--handle-message)))))
+
+(defun supersonic-tests--package-files ()
+  "Return the package's own source files, absolute, excluding this one."
+  (let ((dir (file-name-directory (locate-library "supersonic"))))
+    (seq-remove (lambda (f) (equal (file-name-nondirectory f) "supersonic-tests.el"))
+                (directory-files dir t "\\`supersonic.*\\.el\\'"))))
+
+(ert-deftest supersonic-tests-user-options-all-live-in-one-file ()
+  "Every `defcustom' in the package belongs to `supersonic-custom.el'.
+Several options are read by more than one file -- `supersonic-cache-path'
+by both caches, `supersonic-mpv' by both the playback backend and the
+waveform transcoder that is otherwise independent of it -- so there is
+no natural owner to move them to.  Keeping them together is what lets
+every other file simply require them, instead of carrying `defvar'
+stubs that keep the byte-compiler quiet while leaving the options
+genuinely void for anyone who requires that file on its own."
+  (dolist (file (supersonic-tests--package-files))
+    (let ((name (file-name-nondirectory file)))
+      (unless (equal name "supersonic-custom.el")
+        (with-temp-buffer
+          (insert-file-contents file)
+          (goto-char (point-min))
+          (should-not
+           (and (re-search-forward "^(defcustom " nil t)
+                (format "%s defines a user option outside supersonic-custom.el" name))))))))
+
+(ert-deftest supersonic-tests-every-file-requires-the-options-file ()
+  "Each file requires `supersonic-custom' rather than assuming a load order.
+`supersonic-mpris.el' is exempt: it requires `supersonic' whole.  See
+`supersonic-tests-user-options-all-live-in-one-file' for why this
+matters -- without it, requiring e.g. just `supersonic-waveform' left
+`supersonic-waveform-buckets' void."
+  (dolist (file (supersonic-tests--package-files))
+    (let ((name (file-name-nondirectory file)))
+      (unless (member name '("supersonic-custom.el" "supersonic-mpris.el"))
+        (with-temp-buffer
+          (insert-file-contents file)
+          (goto-char (point-min))
+          (should (re-search-forward "^(require 'supersonic-custom)$" nil t)))))))
+
+(ert-deftest supersonic-tests-waveform-cache-file-is-per-samplerate ()
+  "The cache key covers `supersonic-waveform-samplerate' as well as the
+bucket count: the rate decides how many PCM samples each bucket's
+peak/RMS is measured over, so an envelope analyzed at another rate is a
+different measurement of the same track rather than a reusable one."
+  (let ((supersonic-cache-path "/tmp/supersonic-tests-waveform-cache"))
+    (should-not
+     (equal (let ((supersonic-waveform-samplerate 3000)) (supersonic-waveform-cache-file "id-1" 300))
+            (let ((supersonic-waveform-samplerate 6000)) (supersonic-waveform-cache-file "id-1" 300))))
+    (should
+     (equal (let ((supersonic-waveform-samplerate 3000)) (supersonic-waveform-cache-file "id-1" 300))
+            (let ((supersonic-waveform-samplerate 3000)) (supersonic-waveform-cache-file "id-1" 300))))))
+
+(ert-deftest supersonic-tests-waveform-transcode-uses-the-configured-samplerate ()
+  "`supersonic-waveform-samplerate' is what mpv is actually asked to
+transcode to, not just part of the cache key."
+  (let ((command nil)
+        (supersonic-waveform-samplerate 2500))
+    (cl-letf (((symbol-function 'executable-find) (lambda (&rest _) "/usr/bin/mpv"))
+              ((symbol-function 'supersonic-build-url) (lambda (&rest _) "dummy://url"))
+              ((symbol-function 'make-process)
+               (lambda (&rest args) (setq command (plist-get args :command)) 'fake-process))
+              ((symbol-function 'process-send-string) #'ignore)
+              ((symbol-function 'process-send-eof) #'ignore))
+      (let ((supersonic-mpv "mpv"))
+        (unwind-protect
+            (progn
+              (supersonic-waveform--start-transcode "id" 10 "cache-file" #'ignore)
+              (should (member "--audio-samplerate=2500" command)))
+          (setq supersonic-waveform--process nil)
+          (supersonic-waveform-cancel))))))
 
 (provide 'supersonic-tests)
 

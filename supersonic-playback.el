@@ -34,9 +34,7 @@
 
 ;;; Code:
 
-;; fix byte-compiler complaints; the defcustom lives in supersonic.el
-;; alongside the package's other user options
-(defvar supersonic-playback-backend)
+(require 'supersonic-custom)
 
 (defconst supersonic-playback-operations '(start enqueue toggle-play next prev seek seek-fraction)
   "The playback operations a backend can implement.

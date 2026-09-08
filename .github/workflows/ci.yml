@@ -9,8 +9,14 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      # Oldest supported first, then newest.  28.1 is the floor
+      # `Package-Requires' declares -- and the only version in this
+      # matrix that still needs `subr-x' required for `string-empty-p',
+      # which moved into the preloaded `simple.el' in 29.
+      fail-fast: false
       matrix:
         emacs-version:
+          - 28.1
           - 31.1
     steps:
       - uses: actions/checkout@v4

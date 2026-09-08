@@ -230,22 +230,27 @@ sending PropertiesChanged itself."
     (setq supersonic-mpris--playback-status status)
     (supersonic-mpris--set-player-property "PlaybackStatus" status)))
 
-(defun supersonic-mpris--socket-filter (_process output)
-  "Watch mpv's own OUTPUT (advice on `supersonic--mpv-socket-filter') for events."
-  (dolist (line (split-string output "\n" t))
-    (let ((parsed
-           (ignore-errors
-             (json-read-from-string line))))
-      (when parsed
-        (let ((event (alist-get 'event parsed)))
-          (cond
-           ((member event '("start-file" "end-file"))
-            (supersonic-mpris--set-track (alist-get 'playlist_entry_id parsed)))
-           ((and (string-equal event "property-change") (string-equal (alist-get 'name parsed) "pause"))
-            (supersonic-mpris--set-playback-status
-             (if (eq (alist-get 'data parsed) t)
-                 "Paused"
-               "Playing")))))))))
+(defun supersonic-mpris--handle-message (parsed)
+  "Watch one PARSED mpv IPC message for track and pause-state changes.
+Advice on `supersonic--mpv-handle-message', which is the point where
+mpv's IPC stream has already been reassembled into whole messages and
+parsed.  Deliberately not on `supersonic--mpv-socket-filter' one level
+below it: a single read off that socket is not guaranteed to contain
+whole, newline-terminated messages -- carrying the trailing partial one
+over until the rest arrives is the entire reason that filter exists --
+so re-splitting its raw chunk here dropped whatever `start-file' or
+`property-change' happened to straddle a chunk boundary, leaving
+PlaybackStatus and Metadata stale on the bus with nothing to correct
+them until the next event."
+  (let ((event (alist-get 'event parsed)))
+    (cond
+     ((member event '("start-file" "end-file"))
+      (supersonic-mpris--set-track (alist-get 'playlist_entry_id parsed)))
+     ((and (string-equal event "property-change") (string-equal (alist-get 'name parsed) "pause"))
+      (supersonic-mpris--set-playback-status
+       (if (eq (alist-get 'data parsed) t)
+           "Paused"
+         "Playing"))))))
 
 (defun supersonic-mpris--after-mpv-start (&rest _)
   "Advice: after `supersonic-mpv-start', observe mpv's pause state."
@@ -293,7 +298,7 @@ must not disturb that."
 (defun supersonic-mpris--play ()
   "Handle the MPRIS Play method."
   (if (supersonic-mpv-live-p)
-      (supersonic-mpv-command "set_property" "pause" :false)
+      (supersonic-mpv-command "set_property" "pause" :json-false)
     (message "supersonic-mpris: nothing to play, start playback from Emacs first")))
 
 (defun supersonic-mpris--pause ()
@@ -347,11 +352,7 @@ Passes DONT-REGISTER-SERVICE so this does not itself put the service
 name on the bus -- see `supersonic-mpris--register' for why that
 matters."
   (push (dbus-register-property
-         :session
-         supersonic-mpris--bus-name
-         supersonic-mpris--path
-         interface
-         property
+         :session supersonic-mpris--bus-name supersonic-mpris--path interface property
          :read value nil t)
         supersonic-mpris--registrations))
 
@@ -361,7 +362,7 @@ Every method/property below is registered with DONT-REGISTER-SERVICE,
 and the well-known service name is only requested as the very last
 step, once the whole object is built.  Without that, each
 `dbus-register-method'/`dbus-register-property' call implicitly
-(re-)requests the name itself -- a synchronous D-Bus round trip during
+\(re-)requests the name itself -- a synchronous D-Bus round trip during
 which Emacs services other pending D-Bus traffic, including an MPRIS
 client reacting to the resulting NameOwnerChanged by introspecting us
 immediately, while the interface is still half-built.  Clients that
@@ -393,19 +394,11 @@ broken until they are restarted."
   ;; current via `supersonic-mpris--set-player-property'; the Can* flags are
   ;; fixed for the reduced v1 scope (no seeking, no track list).
   (push (dbus-register-property
-         :session
-         supersonic-mpris--bus-name
-         supersonic-mpris--path
-         supersonic-mpris--player-interface
-         "PlaybackStatus"
+         :session supersonic-mpris--bus-name supersonic-mpris--path supersonic-mpris--player-interface "PlaybackStatus"
          :read supersonic-mpris--playback-status nil t)
         supersonic-mpris--registrations)
   (push (dbus-register-property
-         :session
-         supersonic-mpris--bus-name
-         supersonic-mpris--path
-         supersonic-mpris--player-interface
-         "Metadata"
+         :session supersonic-mpris--bus-name supersonic-mpris--path supersonic-mpris--player-interface "Metadata"
          :read (supersonic-mpris--metadata) nil t)
         supersonic-mpris--registrations)
   (dolist (prop '("CanGoNext" "CanGoPrevious" "CanPlay" "CanPause" "CanControl"))
@@ -413,7 +406,7 @@ broken until they are restarted."
   (supersonic-mpris--register-fixed-property supersonic-mpris--player-interface "CanSeek" nil)
   ;; Drive the interface from supersonic.el's own mpv process, without
   ;; supersonic.el needing to know we exist.
-  (advice-add 'supersonic--mpv-socket-filter :after #'supersonic-mpris--socket-filter)
+  (advice-add 'supersonic--mpv-handle-message :after #'supersonic-mpris--handle-message)
   (advice-add 'supersonic-mpv-start :after #'supersonic-mpris--after-mpv-start)
   (advice-add 'supersonic-mpv-enqueue :around #'supersonic-mpris--around-mpv-enqueue)
   (advice-add 'supersonic-mpv-kill :after #'supersonic-mpris--after-mpv-kill)
@@ -426,7 +419,7 @@ broken until they are restarted."
 
 (defun supersonic-mpris--unregister ()
   "Tear down the MPRIS D-Bus service and stop observing supersonic.el."
-  (advice-remove 'supersonic--mpv-socket-filter #'supersonic-mpris--socket-filter)
+  (advice-remove 'supersonic--mpv-handle-message #'supersonic-mpris--handle-message)
   (advice-remove 'supersonic-mpv-start #'supersonic-mpris--after-mpv-start)
   (advice-remove 'supersonic-mpv-enqueue #'supersonic-mpris--around-mpv-enqueue)
   (advice-remove 'supersonic-mpv-kill #'supersonic-mpris--after-mpv-kill)

@@ -40,14 +40,10 @@
 (require 'url)
 (require 'seq)
 (require 'aio)
+(require 'subr-x)
+(require 'supersonic-custom)
 (require 'supersonic-api)
 (require 'supersonic-playback)
-
-;; fix byte-compiler complaints
-(defvar supersonic-mpv)
-(defvar supersonic-default-volume)
-(defvar supersonic-mpv-timeout)
-(defvar supersonic-scrobble-plays)
 
 (defvar supersonic-mpv--process nil)
 (defvar supersonic-mpv--socket nil
@@ -87,16 +83,17 @@ in `supersonic-mpv-ensure-running'; consulted by the now-playing buffer
 so it never has to query mpv for this on every render.")
 
 (defvar supersonic-mpv-track-change-hook nil
-  "Hook run whenever the identity of what mpv is playing may have changed
-(mpv killed/(re)started, the queue replaced/enqueued, or mpv reporting a
-start-file/end-file event).  supersonic.el hangs its queue/now-playing
-buffer refreshes off this from the outside, mirroring how
+  "Hook run whenever the identity of what mpv is playing may have changed.
+That is: mpv killed or (re)started, the queue replaced or enqueued, or
+mpv reporting a start-file/end-file event.  supersonic.el hangs its
+queue/now-playing refreshes off this from the outside, mirroring how
 `supersonic-mpris.el' observes this file via `advice-add' instead of this
 file depending on either of them.")
 
 (defvar supersonic-mpv-playback-state-change-hook nil
-  "Hook run whenever mpv reports its pause state changed, without the
-track identity itself changing.")
+  "Hook run whenever mpv reports its pause state changed.
+Only that: a track identity change of its own runs
+`supersonic-mpv-track-change-hook' instead.")
 
 ;;;###autoload
 (defun supersonic-mpv-kill ()
@@ -129,7 +126,7 @@ Does nothing if mpv is already running, so it is safe to call before
 every play/enqueue action."
   (when (eq system-type 'windows-nt)
     (user-error
-     "supersonic.el talks to mpv over a Unix-domain socket, which native
+     "Supersonic talks to mpv over a Unix-domain socket, which native
 Windows does not support; this is not implemented for windows-nt"))
   (unless (supersonic-mpv-live-p)
     (supersonic-mpv-kill)
@@ -291,7 +288,7 @@ Guards with `process-live-p' immediately beforehand and catches the
 socket, treating either as mpv having gone away: the socket is torn
 down and nil is returned instead of the write being attempted.  This
 narrows, but per #15 cannot fully close, the race against mpv
-(`--idle=once') exiting mid-command -- a raw SIGPIPE landing inside
+\(`--idle=once') exiting mid-command -- a raw SIGPIPE landing inside
 the write itself is a signal, not a Lisp error, and kills Emacs before
 `condition-case' ever sees it."
   (and (process-live-p supersonic-mpv--socket)

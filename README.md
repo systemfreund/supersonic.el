@@ -65,7 +65,12 @@ Enabling `supersonic-enable-waveform` adds a clickable waveform seekbar
 below the transport buttons, click anywhere on it to seek there. 
 `supersonic-waveform-buckets` sets both its resolution and how
 finely the track is analyzed; `supersonic-waveform-width`/
-`-height` set its display size.
+`-height` set its display size. `supersonic-waveform-samplerate` sets
+how much audio detail the analysis looks at, and so what it costs in
+time and memory. Envelopes are cached on disk under
+`supersonic-cache-path`, keyed on the bucket count and the sample rate,
+so changing either costs a one-off re-analysis rather than mixing
+measurements.
 
 ## Cover art
 

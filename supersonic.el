@@ -4,7 +4,7 @@
 ;; URL: https://github.com/systemfreund/supersonic.el
 ;; Version: 0.2.0
 ;; Keywords: multimedia
-;; Package-Requires: ((emacs "27.1") (transient "0.2") (aio "1.0"))
+;; Package-Requires: ((emacs "28.1") (transient "0.2") (aio "1.0"))
 
 ;; This program is free software: you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -34,140 +34,14 @@
 (require 'url)
 (require 'seq)
 (require 'aio)
+;; `prop-match-beginning'/`prop-match-end' are plain struct accessors
+;; from this file, not autoloads, so requiring it is not optional even
+;; though `text-property-search-forward' itself is autoloaded.
+(require 'text-property-search)
 
 (require 'transient)
 
-(defgroup supersonic nil
-  "Customization group for mpv."
-  :prefix "supersonic-"
-  :group 'external)
-
-(defcustom supersonic-host ""
-  "URL of the supersonic service, e.g. \"http://host:4533\".
-Must match the \"machine\" field of the corresponding authinfo
-entry verbatim; that entry's host is what is actually used to
-build request URLs.  May be given without a scheme (\"http://\" or
-\"https://\"), in which case \"https://\" is assumed."
-  :type 'string
-  :group 'supersonic)
-
-(defcustom supersonic-mpv (executable-find "mpv")
-  "Path to the mpv executable."
-  :type 'string
-  :group 'supersonic)
-
-(defcustom supersonic-default-volume 100
-  "Default  volume for mpv to use."
-  :type 'integer
-  :group 'supersonic)
-
-(defcustom supersonic-cache-path (expand-file-name "supersonic-cache" user-emacs-directory)
-  "Path to store cached cover art and waveform peak/RMS envelopes.
-Shared by both `supersonic-art-cache-file' and
-`supersonic-waveform-cache-file', which prefix their file names
-distinctly enough (\"art-\"/\"waveform-\") that the two never collide,
-even though both are keyed on a Subsonic id that could otherwise
-coincide (e.g. a track and its own cover art id)."
-  :type 'string
-  :group 'supersonic)
-
-(defcustom supersonic-enable-art nil
-  "Enable displaying album art in supported frames.
-Also a statement about the frame itself, since supersonic only draws
-art it can draw -- see `supersonic-art-available-p'."
-  :type 'boolean
-  :group 'supersonic)
-
-(defcustom supersonic-list-art-size 100
-  "Height in pixels of the cover art in the album and podcast lists.
-The art is also downloaded at this size, so raising it costs a
-re-download of anything already cached at the old size."
-  :type 'integer
-  :group 'supersonic)
-
-(defcustom supersonic-now-playing-art-size 300
-  "Height in pixels of the cover art in the now-playing buffer.
-The art is also downloaded at this size, so raising it costs a
-re-download of anything already cached at the old size."
-  :type 'integer
-  :group 'supersonic)
-
-(defcustom supersonic-art-fetch-concurrency 6
-  "How many cover art downloads may be in flight at the same time.
-A list buffer asks for every row's art at once; without a cap that
-opens one connection per row, so a 50 album list hits the server with
-50 simultaneous requests and leaves 50 idle keep-alive connections in
-`url-http-open-connections' afterwards.  Six is what browsers and
-`url-queue-parallel-processes' settle on per host."
-  :type 'integer
-  :group 'supersonic)
-
-(defcustom supersonic-enable-waveform nil
-  "Enable a clickable waveform seekbar in the now-playing buffer.
-Requires a graphic frame and the `pbm' image type (see
-`supersonic-waveform-available-p'), the same restriction
-`supersonic-enable-art' has.  Generating a waveform means transcoding
-the whole track through a disposable mpv process, so the first time a
-track is shown its seekbar appears a beat after the rest of the
-buffer; it is cached on disk afterwards (see `supersonic-cache-path')."
-  :type 'boolean
-  :group 'supersonic)
-
-(defcustom supersonic-waveform-buckets 300
-  "Number of peak/RMS samples computed across a track.
-Also the horizontal resolution of the rendered seekbar.  The cache is
-keyed on this value (see `supersonic-waveform-cache-file'), so raising
-it costs a re-analysis of anything already cached, not just a redraw."
-  :type 'integer
-  :group 'supersonic)
-
-(defcustom supersonic-waveform-width 500
-  "Width in pixels of the rendered waveform seekbar."
-  :type 'integer
-  :group 'supersonic)
-
-(defcustom supersonic-waveform-height 48
-  "Height in pixels of the rendered waveform seekbar."
-  :type 'integer
-  :group 'supersonic)
-
-(defcustom supersonic-now-playing-interval 1
-  "Seconds between playback position updates in the now-playing buffer.
-Each update is a single query to the local mpv socket, and only runs
-while that buffer is both open and on display."
-  :type 'number
-  :group 'supersonic)
-
-(defcustom supersonic-album-list-count 50
-  "Number of albums to display in random/newest albums etc."
-  :type 'integer
-  :group 'supersonic)
-
-(defcustom supersonic-browse-by-tags t
-  "Browse by folder or by idv3 tags."
-  :type 'boolean
-  :group 'supersonic)
-
-(defcustom supersonic-scrobble-plays nil
-  "Request that the supersonic server scrobble played tracks."
-  :type 'boolean
-  :group 'supersonic)
-
-(defcustom supersonic-playback-backend 'mpv
-  "Which playback backend plays what supersonic.el is asked to play.
-The symbol a backend registered itself under via
-`supersonic-playback-register-backend'; every play, enqueue and
-transport command dispatches to it.  Only `mpv' is built in, and
-selecting a backend whose file has not been loaded is reported when a
-playback command is next used."
-  :type '(choice (const :tag "Local mpv process" mpv) (symbol :tag "Other registered backend"))
-  :group 'supersonic)
-
-(defcustom supersonic-mpv-timeout 0.5
-  "How long to wait when starting or killing the mpv process."
-  :type 'float
-  :group 'supersonic)
-
+(require 'supersonic-custom)
 (require 'supersonic-api)
 (require 'supersonic-art)
 (require 'supersonic-playback)
@@ -268,12 +142,15 @@ aborting the whole render."
 (defvar supersonic-queue-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "g") #'supersonic-queue-refresh)
-    map))
+    map)
+  "Keymap for `supersonic-queue-mode'.")
 
 (define-derived-mode
  supersonic-queue-mode
  tabulated-list-mode
  "Supersonic Queue"
+ "Major mode for the play queue opened by `supersonic-show-queue'.
+Mirrors mpv's own playlist, refreshed whenever it may have changed."
  (setq tabulated-list-format [("" 2 nil) ("Title" 40 t) ("Artist" 25 t) ("Album" 25 t)])
  (setq tabulated-list-padding 2)
  (tabulated-list-init-header))
@@ -312,15 +189,35 @@ Set by `supersonic-now-playing--render'; consulted by
 has already moved on to a different track (a full-track transcode can
 take a few seconds, plenty of time for that to happen).")
 
+(defvar-local supersonic-now-playing--position nil
+  "Playback position in seconds as of the now-playing buffer's last update.
+Written by `supersonic-now-playing--render' and by every
+`supersonic-now-playing--tick', so that whatever needs the current
+position can read it here rather than close over one captured earlier.
+`supersonic-now-playing--show-waveform' is the reason it exists: a
+cold-cache waveform arrives a transcode later than the render that
+asked for it, and drawing that first seekbar against the position from
+back then put the played/unplayed split seconds behind where playback
+actually was until the next tick corrected it.")
+
 (defvar-local supersonic-now-playing--waveform nil
   "(TRACK-ID . ENVELOPE) for the waveform seekbar currently shown, or nil.
 ENVELOPE lets `supersonic-now-playing--tick' recolor the seekbar's
 played/unplayed split every second without asking
 `supersonic-waveform-ensure' again.")
 
+(defvar-local supersonic-now-playing--waveform-bucket nil
+  "Index of the first unplayed bucket in the seekbar as last drawn, or nil.
+The seekbar is a bucketed image, so the position ticking on does not
+change it at all until the played/unplayed boundary actually crosses
+into the next bucket -- once every twelve seconds for a 300-bucket
+seekbar over an hour-long podcast, against a tick a second.  Comparing
+against this is how `supersonic-now-playing--recolor-waveform' skips
+the redraws in between.")
+
 (defvar-local supersonic-now-playing--waveform-requested nil
-  "Non-nil once a waveform fetch has actually been kicked off for the
-current track, successful or not.
+  "Non-nil once a waveform fetch has been kicked off for the current track.
+Set whether or not that fetch went on to succeed.
 `supersonic-now-playing--maybe-fetch-waveform' skips generating a
 waveform for a buffer nobody is looking at -- real CPU and network
 work otherwise wasted on nothing -- so this is what
@@ -363,18 +260,18 @@ again (see `supersonic-now-playing--waveform-requested')."
      (t
       (supersonic-mpv-command-with-callback
        (lambda (response)
-         (let ((position (alist-get 'data response)))
-           (supersonic-now-playing--update-field
-            buff
-            'duration
-            (supersonic-now-playing--position position (buffer-local-value 'supersonic-now-playing--duration buff)))
-           (supersonic-now-playing--recolor-waveform buff position)
-           (unless (buffer-local-value 'supersonic-now-playing--waveform-requested buff)
-             (supersonic-now-playing--maybe-fetch-waveform
+         (when (buffer-live-p buff)
+           (let ((position (alist-get 'data response)))
+             (with-current-buffer buff
+               (setq supersonic-now-playing--position position))
+             (supersonic-now-playing--update-field
               buff
-              (buffer-local-value 'supersonic-now-playing--track-id buff)
-              position
-              (buffer-local-value 'supersonic-now-playing--duration buff)))))
+              'duration
+              (supersonic-now-playing--position position (buffer-local-value 'supersonic-now-playing--duration buff)))
+             (supersonic-now-playing--recolor-waveform buff position)
+             (unless (buffer-local-value 'supersonic-now-playing--waveform-requested buff)
+               (supersonic-now-playing--maybe-fetch-waveform
+                buff (buffer-local-value 'supersonic-now-playing--track-id buff))))))
        "get_property" "time-pos")))))
 
 (defun supersonic-now-playing-maybe-refresh ()
@@ -415,30 +312,59 @@ of the buffer each time."
         (goto-char (point-min))
         (let ((match (text-property-search-forward 'supersonic-now-playing-field field t)))
           (when match
-            (let ((inhibit-read-only t))
+            (let ((inhibit-read-only t)
+                  (stale (get-text-property (prop-match-beginning match) 'display)))
               (delete-region (prop-match-beginning match) (prop-match-end match))
+              ;; Each seekbar redraw is a `create-image' over freshly
+              ;; generated pixel data, so it gets its own entry in Emacs's
+              ;; image cache -- and entries linger there for
+              ;; `image-cache-eviction-delay' (300 seconds by default)
+              ;; whether or not anything still displays them.  Unflushed,
+              ;; a few minutes of playback keeps a few hundred decoded
+              ;; 500x48 pixmaps alive for one seekbar.  Errors ignored
+              ;; because `image-flush' insists on a real window-system
+              ;; frame ("Window system frame should be used" anywhere
+              ;; else), and a cache entry that outlives its display is
+              ;; worth strictly less than the render it would abort.
+              (when (eq (car-safe stale) 'image)
+                (ignore-errors
+                  (image-flush stale)))
               (goto-char (prop-match-beginning match))
               (insert (propertize value 'supersonic-now-playing-field field)))))))))
 
 (defun supersonic-now-playing--progress-ratio (position duration)
-  "Return POSITION/DURATION clamped to 0..1, or 0 if either is unavailable."
+  "Return POSITION/DURATION clamped to 0..1, or 0 if either is unavailable.
+POSITION is coerced to a float first: mpv reports \"time-pos\" as one,
+but a duration straight out of a Subsonic response is a whole number
+of seconds, and two integers would divide down to a ratio of 0 for
+everything short of the very last second of the track."
   (if (and position duration (> duration 0))
-      (max 0.0 (min 1.0 (/ position duration)))
+      (max 0.0 (min 1.0 (/ (float position) duration)))
     0.0))
+
+(defun supersonic-now-playing--progress-bucket (envelope progress)
+  "Return the index of ENVELOPE's first unplayed bucket at PROGRESS (0..1).
+This is the only thing about the rendered seekbar that PROGRESS
+changes, and what `supersonic-now-playing--waveform-bucket' records."
+  (floor (* progress (length (car envelope)))))
 
 (defun supersonic-now-playing--recolor-waveform (buff position)
   "Redraw BUFF's waveform seekbar with POSITION as the new played/unplayed split.
 No-op unless a waveform is already showing for BUFF's current track --
 there's nothing to recolor before `supersonic-waveform-ensure''s
-callback has delivered the first envelope."
+callback has delivered the first envelope -- and no-op too while the
+split still falls within the bucket it was last drawn in, which is
+most ticks (see `supersonic-now-playing--progress-bucket')."
   (when (buffer-live-p buff)
     (with-current-buffer buff
       (when supersonic-now-playing--waveform
-        (supersonic-now-playing--update-field
-         buff 'waveform
-         (supersonic-waveform-propertize
-          (cdr supersonic-now-playing--waveform)
-          (supersonic-now-playing--progress-ratio position supersonic-now-playing--duration)))))))
+        (let* ((envelope (cdr supersonic-now-playing--waveform))
+               (progress (supersonic-now-playing--progress-ratio position supersonic-now-playing--duration))
+               (bucket (supersonic-now-playing--progress-bucket envelope progress)))
+          (unless (eql bucket supersonic-now-playing--waveform-bucket)
+            (setq supersonic-now-playing--waveform-bucket bucket)
+            (supersonic-now-playing--update-field
+             buff 'waveform (supersonic-waveform-propertize envelope progress))))))))
 
 (defun supersonic-now-playing--insert-button (label command)
   "Insert a button reading LABEL that runs COMMAND when activated."
@@ -500,17 +426,29 @@ failed metadata lookup has no \"id\" field of its own to read it back
 from) -- see `supersonic-now-playing--track-id'."
   (when (buffer-live-p buff)
     (with-current-buffer buff
-      (let ((inhibit-read-only t)
-            (art (and song (supersonic-now-playing--art song)))
-            (duration (and song (assoc-default "duration" song)))
-            (size (and song (assoc-default "size" song))))
+      (let* ((inhibit-read-only t)
+             (art (and song (supersonic-now-playing--art song)))
+             (duration (and song (assoc-default "duration" song)))
+             (size (and song (assoc-default "size" song)))
+             ;; Re-rendering the track already on show is the common case,
+             ;; not the exception: a pause, a resume, `g', and two or three
+             ;; renders inside the first second of a fresh mpv start all
+             ;; land here.  Whatever waveform state such a render finds is
+             ;; still about the very track it is re-rendering, so it has to
+             ;; survive -- blanking it unconditionally meant every one of
+             ;; those looked like a first request for a waveform nobody had
+             ;; ever asked for, and re-ran generation accordingly.
+             (same-track (and track-id (equal track-id supersonic-now-playing--track-id))))
         (setq supersonic-now-playing--duration duration)
+        (setq supersonic-now-playing--position position)
         (setq supersonic-now-playing--track-id track-id)
-        ;; Whatever waveform was cached here belonged to the previous
-        ;; track (or there wasn't one); `supersonic-now-playing--maybe-fetch-waveform'
-        ;; repopulates it for the new one once it's ready.
-        (setq supersonic-now-playing--waveform nil)
-        (setq supersonic-now-playing--waveform-requested nil)
+        (unless same-track
+          ;; Whatever waveform was cached here belonged to the previous
+          ;; track (or there wasn't one); `supersonic-now-playing--maybe-fetch-waveform'
+          ;; repopulates it for the new one once it's ready.
+          (setq supersonic-now-playing--waveform nil)
+          (setq supersonic-now-playing--waveform-bucket nil)
+          (setq supersonic-now-playing--waveform-requested nil))
         (if song
             (supersonic-now-playing--start-timer)
           (supersonic-now-playing--stop-timer))
@@ -541,6 +479,9 @@ from) -- see `supersonic-now-playing--track-id'."
             (insert "  ")
             (supersonic-now-playing--insert-button "▶▶" #'supersonic-seek-forward)
             (insert "\n\n")
+            ;; Just the tagged placeholder here; whether there is an
+            ;; image to put in it is settled at the end of this function,
+            ;; via `supersonic-now-playing--show-waveform'.
             (when (supersonic-waveform-available-p)
               (insert (propertize " " 'supersonic-now-playing-field 'waveform) "\n\n"))
             (supersonic-now-playing--insert-field "Title" (assoc-default "title" song))
@@ -550,43 +491,65 @@ from) -- see `supersonic-now-playing--track-id'."
                                                   'duration)
             (supersonic-now-playing--insert-field "Format" (supersonic-now-playing--format song))
             (supersonic-now-playing--insert-field "Size" (and size (format "%.2f MB" (/ size 1048576.0))))))
-        (goto-char (point-min))))))
+        (goto-char (point-min))
+        ;; `erase-buffer' above took the seekbar image with it.  If this
+        ;; was a re-render of a track whose envelope is already in hand,
+        ;; put it straight back instead of leaving a gap there until the
+        ;; next tick or progress report fills it in again.
+        (when supersonic-now-playing--waveform
+          (supersonic-now-playing--show-waveform buff track-id (cdr supersonic-now-playing--waveform)))))))
 
 (aio-defun
  supersonic-now-playing-fetch-and-render (buff)
  "Query mpv for the track it is currently on and render it into BUFF.
 Tolerates a failing metadata lookup the way `supersonic-queue-parse'
 does: rather than blanking a view that refreshes on every track change,
-it falls back to showing the bare track id."
- (if (supersonic-mpv-live-p)
-     (let* ((playlist (aio-await (supersonic-mpv-get-property "playlist")))
-            (entry (seq-find (lambda (item) (alist-get 'current item)) playlist))
-            (track-id (and entry (gethash (alist-get 'id entry) supersonic--playlist))))
-       (if track-id
-           (let* ((outcome
-                   (aio-await
-                    (aio-catch (supersonic-get-json (supersonic-build-url "/getSong.view" `(("id" . ,track-id)))))))
-                  (song
-                   (if (eq (car outcome) :success)
-                       (supersonic-recursive-assoc (cdr outcome) '("subsonic-response" "song"))
-                     `(("title" . ,track-id)))))
-             (when (and (supersonic-art-available-p) (assoc-default "coverArt" song))
-               (aio-await
-                (aio-catch (supersonic--fetch-art (assoc-default "coverArt" song) supersonic-now-playing-art-size))))
-             ;; Asked for last, so the position is as fresh as possible: the
-             ;; art fetch above can take a while on a cold cache.
-             (let ((position (aio-await (supersonic-mpv-get-property "time-pos"))))
-               (supersonic-now-playing--render buff song supersonic--paused position track-id)
-               (supersonic-now-playing--maybe-fetch-waveform buff track-id position (assoc-default "duration" song))))
-         (supersonic-now-playing--render buff nil nil nil nil)))
-   (supersonic-now-playing--render buff nil nil nil nil)))
+it falls back to showing the bare track id.
 
-(defun supersonic-now-playing--show-waveform (buff track-id envelope position duration)
+Wrapped in `supersonic--with-async-error-handling' because no caller
+awaits the promise this returns -- they all `ignore' it, this being a
+render nothing waits on.  Anything signalled in here (a missing
+authinfo entry, so no URL to build; a render bug) would otherwise
+reject a promise nobody is listening to and disappear without a trace,
+leaving nothing behind but a buffer that quietly stopped updating."
+ (supersonic--with-async-error-handling
+  buff "refresh the now-playing buffer"
+  (if (supersonic-mpv-live-p)
+      (let* ((playlist (aio-await (supersonic-mpv-get-property "playlist")))
+             (entry (seq-find (lambda (item) (alist-get 'current item)) playlist))
+             (track-id (and entry (gethash (alist-get 'id entry) supersonic--playlist))))
+        (if track-id
+            (let* ((outcome
+                    (aio-await
+                     (aio-catch (supersonic-get-json (supersonic-build-url "/getSong.view" `(("id" . ,track-id)))))))
+                   (song
+                    (if (eq (car outcome) :success)
+                        (supersonic-recursive-assoc (cdr outcome) '("subsonic-response" "song"))
+                      `(("title" . ,track-id)))))
+              (when (and (supersonic-art-available-p) (assoc-default "coverArt" song))
+                (aio-await
+                 (aio-catch (supersonic--fetch-art (assoc-default "coverArt" song) supersonic-now-playing-art-size))))
+              ;; Asked for last, so the position is as fresh as possible: the
+              ;; art fetch above can take a while on a cold cache.
+              (let ((position (aio-await (supersonic-mpv-get-property "time-pos"))))
+                (supersonic-now-playing--render buff song supersonic--paused position track-id)
+                (supersonic-now-playing--maybe-fetch-waveform buff track-id)))
+          (supersonic-now-playing--render buff nil nil nil nil)))
+    (supersonic-now-playing--render buff nil nil nil nil))))
+
+(defun supersonic-now-playing--show-waveform (buff track-id envelope)
   "Patch BUFF's waveform field to display ENVELOPE for TRACK-ID, if still current.
-Shared by `supersonic-waveform-ensure''s final callback and its
-progress callback -- see `supersonic-now-playing--maybe-fetch-waveform'
--- so the seekbar fills in gradually as buckets finish analyzing
-instead of only popping in once the whole track is done."
+Shared by `supersonic-waveform-ensure''s final callback, its progress
+callback -- see `supersonic-now-playing--maybe-fetch-waveform', so the
+seekbar fills in gradually as buckets finish analyzing instead of only
+popping in once the whole track is done -- and
+`supersonic-now-playing--render' putting an already-analyzed seekbar
+back after an `erase-buffer'.
+
+Takes the played/unplayed split from `supersonic-now-playing--position'
+rather than from an argument: on a cold cache this runs a whole
+transcode after the render that asked for it, by which point any
+position that render could have passed along is stale."
   (when (and envelope (buffer-live-p buff))
     (with-current-buffer buff
       ;; The buffer may have moved on to a different track by the time a
@@ -594,29 +557,35 @@ instead of only popping in once the whole track is done."
       ;; of showing another track's waveform under this one.
       (when (equal track-id supersonic-now-playing--track-id)
         (setq supersonic-now-playing--waveform (cons track-id envelope))
-        (supersonic-now-playing--update-field
-         buff 'waveform
-         (supersonic-waveform-propertize envelope (supersonic-now-playing--progress-ratio position duration)))))))
+        (let ((progress
+               (supersonic-now-playing--progress-ratio
+                supersonic-now-playing--position supersonic-now-playing--duration)))
+          (setq supersonic-now-playing--waveform-bucket (supersonic-now-playing--progress-bucket envelope progress))
+          (supersonic-now-playing--update-field buff 'waveform (supersonic-waveform-propertize envelope progress)))))))
 
-(defun supersonic-now-playing--maybe-fetch-waveform (buff track-id position duration)
-  "Kick off waveform generation for TRACK-ID and patch it into BUFF as it
-becomes available.  No-op unless `supersonic-waveform-available-p' and
-BUFF is actually on display -- a full-track transcode is real CPU and
-network work, not worth spending on a buffer nobody is looking at (see
+(defun supersonic-now-playing--maybe-fetch-waveform (buff track-id)
+  "Kick off waveform generation for TRACK-ID and patch it into BUFF.
+No-op unless `supersonic-waveform-available-p' and BUFF is actually on
+display -- a full-track transcode is real CPU and network work, not
+worth spending on a buffer nobody is looking at (see
 `supersonic-now-playing--tick' for how a buffer that becomes visible
 again still gets one).  Fires and forgets rather than being awaited by
 the caller, so a cold-cache waveform never delays the rest of the
-buffer from appearing; POSITION/DURATION only matter for coloring the
-seekbar's played/unplayed split.  The seekbar fills in progressively,
-bucket by bucket, rather than only appearing once the whole track has
-been analyzed -- see `supersonic-waveform-ensure''s PROGRESS-CALLBACK."
-  (when (and (supersonic-waveform-available-p) (buffer-live-p buff) (get-buffer-window buff t))
+buffer from appearing.  The seekbar fills in progressively, bucket by
+bucket, rather than only appearing once the whole track has been
+analyzed -- see `supersonic-waveform-ensure''s PROGRESS-CALLBACK.
+
+Safe to call repeatedly for the track already being generated, which
+is what every re-render does: `supersonic-waveform-ensure' recognizes
+that as the job it is already running and just re-points it (see
+`supersonic-waveform--job')."
+  (when (and (supersonic-waveform-available-p) track-id (buffer-live-p buff) (get-buffer-window buff t))
     (with-current-buffer buff
       (setq supersonic-now-playing--waveform-requested t))
     (supersonic-waveform-ensure
      track-id
-     (lambda (envelope) (supersonic-now-playing--show-waveform buff track-id envelope position duration))
-     (lambda (envelope) (supersonic-now-playing--show-waveform buff track-id envelope position duration)))))
+     (lambda (envelope) (supersonic-now-playing--show-waveform buff track-id envelope))
+     (lambda (envelope) (supersonic-now-playing--show-waveform buff track-id envelope)))))
 
 (defun supersonic-now-playing-refresh ()
   "Refresh the now-playing buffer from mpv's current state."
@@ -631,7 +600,8 @@ been analyzed -- see `supersonic-waveform-ensure''s PROGRESS-CALLBACK."
     (define-key map (kbd "p") #'supersonic-prev-track)
     (define-key map (kbd "f") #'supersonic-seek-forward)
     (define-key map (kbd "b") #'supersonic-seek-back)
-    map))
+    map)
+  "Keymap for `supersonic-now-playing-mode'.")
 
 (define-derived-mode
  supersonic-now-playing-mode
@@ -652,6 +622,18 @@ play queue buffer keeps itself current."
         (supersonic-now-playing-mode)))
     (ignore (supersonic-now-playing-fetch-and-render buff))
     (pop-to-buffer-same-window buff)))
+
+(defun supersonic--format-duration (format seconds)
+  "Format SECONDS with `format-seconds' FORMAT, or \"\" if there is no duration.
+The Subsonic API marks a song's/episode's \"duration\" optional and
+really does leave it out -- a podcast episode that hasn't been
+downloaded yet typically has none.  `format-seconds' signals a
+`wrong-type-argument' on nil, and since these are formatted inside a
+`mapcar' over a whole response, one such row used to take every row of
+the list buffer down with it."
+  (if seconds
+      (format-seconds format seconds)
+    ""))
 
 (defun supersonic-get-id-as-string (data)
   "Return DATA's \"id\" field as a string, converting from a number if necessary."
@@ -712,7 +694,8 @@ play queue buffer keeps itself current."
 (defvar supersonic-search-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET") #'supersonic-open-search-result)
-    map))
+    map)
+  "Keymap for `supersonic-search-mode'.")
 
 ;;;###autoload
 (defun supersonic-search ()
@@ -720,13 +703,15 @@ play queue buffer keeps itself current."
   (interactive)
   (let ((new-buff (get-buffer-create "*supersonic-search*")))
     (supersonic--init-list-buffer new-buff #'supersonic-search-mode "Searching...")
-    (ignore (supersonic-search-refresh (url-hexify-string (read-string "Query: ")) new-buff))
+    (ignore (supersonic-search-refresh (read-string "Query: ") new-buff))
     (pop-to-buffer-same-window new-buff)))
 
 (define-derived-mode
  supersonic-search-mode
  tabulated-list-mode
  "Supersonic search mode"
+ "Major mode for the result list opened by `supersonic-search'.
+Each row is an artist, album or song; opening one dispatches on which."
  ;;  type: artist|album|track
  (setq tabulated-list-format [("Type" 10 t) ("Name" 30 t)])
  (setq tabulated-list-padding 2)
@@ -738,16 +723,11 @@ play queue buffer keeps itself current."
 ;;;
 
 (defun supersonic-get-tracklist-id (id)
-  "Get a tracklist for a given ID."
-  (reverse
-   (seq-reduce
-    (lambda (accu current)
-      (if (equal (car current) id)
-          (list (car current))
-        (if (null accu)
-            '()
-          (cons (car current) accu))))
-    tabulated-list-entries '())))
+  "Return the ids of the tracks from ID to the end of the current list.
+Plays/enqueues \"this one and everything after it\", which is what both
+`supersonic-play-tracks' and `supersonic-enqueue-tracks' mean by the
+entry at point.  An ID that isn't in the list at all yields nil."
+  (mapcar #'car (seq-drop-while (lambda (entry) (not (equal (car entry) id))) tabulated-list-entries)))
 
 (defun supersonic--tracks-extract-path ()
   "Return the json path to a track list, per current `supersonic-browse-by-tags'.
@@ -771,7 +751,7 @@ the response at the wrong key."
                 (supersonic-get-id-as-string track)
                 (vector
                  (assoc-default "title" track)
-                 (format-seconds "%m:%.2s" duration)
+                 (supersonic--format-duration "%m:%.2s" duration)
                  (format "%d" (or (assoc-default "track" track) 0))))))
            tracks)))
     result))
@@ -816,7 +796,8 @@ the response at the wrong key."
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET") #'supersonic-play-tracks)
     (define-key map (kbd "a") #'supersonic-enqueue-tracks)
-    map))
+    map)
+  "Keymap for `supersonic-tracks-mode'.")
 
 (defun supersonic-tracks (id)
   "Create a buffer with a list of tracks from ID."
@@ -829,6 +810,7 @@ the response at the wrong key."
  supersonic-tracks-mode
  tabulated-list-mode
  "Supersonic Tracks"
+ "Major mode for the track list of one album, opened by `supersonic-tracks'."
  (setq tabulated-list-format [("Title" 30 t) ("Duration" 10 t) ("Track" 10 t)])
  (setq tabulated-list-padding 2)
  (tabulated-list-init-header))
@@ -906,13 +888,15 @@ the response at the wrong key."
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET") #'supersonic-open-tracks)
     (define-key map (kbd "a") #'supersonic-enqueue-album)
-    map))
+    map)
+  "Keymap for `supersonic-album-mode'.")
 
 (defvar supersonic-album-type-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET") #'supersonic-open-tracks)
     (define-key map (kbd "a") #'supersonic-enqueue-album)
-    map))
+    map)
+  "Keymap for `supersonic-album-type-mode'.")
 
 ;;;###autoload
 (defun supersonic-recent-albums ()
@@ -950,6 +934,7 @@ the response at the wrong key."
  supersonic-album-type-mode
  tabulated-list-mode
  "Supersonic Album List"
+ "Major mode for a list of albums across artists (newest, random, ...)."
  (setq tabulated-list-format [("Albums" 30 t) ("Artists" 30 t) ("Art" 30 nil)])
  (setq tabulated-list-padding 2)
  (tabulated-list-init-header))
@@ -958,6 +943,7 @@ the response at the wrong key."
  supersonic-album-mode
  tabulated-list-mode
  "Supersonic Albums"
+ "Major mode for the album list of one artist, opened by `supersonic-albums'."
  (setq tabulated-list-format [("Year" 5 t) ("Albums" 40 t) ("Art" 30 nil)])
  (setq tabulated-list-padding 2)
  (tabulated-list-init-header))
@@ -1000,7 +986,8 @@ the response at the wrong key."
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET") #'supersonic-open-album)
     (define-key map (kbd "g") #'supersonic-artists-revert)
-    map))
+    map)
+  "Keymap for `supersonic-artist-mode'.")
 
 ;;;###autoload
 (defun supersonic-artists ()
@@ -1015,6 +1002,7 @@ the response at the wrong key."
  supersonic-artist-mode
  tabulated-list-mode
  "Supersonic Artists"
+ "Major mode for the artist list opened by `supersonic-artists'."
  (setq tabulated-list-format [("Artist" 30 t)])
  (setq tabulated-list-padding 2)
  (tabulated-list-init-header))
@@ -1055,8 +1043,7 @@ the response at the wrong key."
  (supersonic--with-async-error-handling
   nil "add podcast"
   (aio-await
-   (supersonic-get-json
-    (supersonic-build-url "/createPodcastChannel.view" `(("url" . ,(url-hexify-string (read-string "feed url: ")))))))
+   (supersonic-get-json (supersonic-build-url "/createPodcastChannel.view" `(("url" . ,(read-string "feed url: "))))))
   (message "Podcast added")))
 
 (transient-define-prefix
@@ -1070,7 +1057,8 @@ the response at the wrong key."
     (define-key map (kbd "RET") #'supersonic-open-podcast-episodes)
     (define-key map (kbd "?") #'supersonic-podcast-help)
     (define-key map (kbd "a") #'supersonic-add-podcast)
-    map))
+    map)
+  "Keymap for `supersonic-podcast-mode'.")
 
 ;;;###autoload
 (defun supersonic-podcasts ()
@@ -1085,6 +1073,7 @@ the response at the wrong key."
  supersonic-podcast-mode
  tabulated-list-mode
  "Supersonic Podcasts"
+ "Major mode for the podcast channel list opened by `supersonic-podcasts'."
  (setq tabulated-list-format [("Podcasts" 30 t) ("Art" 20 nil)])
  (setq tabulated-list-padding 2)
  (tabulated-list-init-header))
@@ -1104,7 +1093,7 @@ the response at the wrong key."
               (supersonic-get-id-as-string episode)
               (vector
                (assoc-default "title" episode)
-               (format-seconds "%h:%.2m:%.2s" (assoc-default "duration" episode))
+               (supersonic--format-duration "%h:%.2m:%.2s" (assoc-default "duration" episode))
                (assoc-default "status" episode))))
            episodes)))
     result))
@@ -1147,7 +1136,8 @@ the response at the wrong key."
     (define-key map (kbd "?") #'supersonic-podcast-episode-help)
     (define-key map (kbd "RET") #'supersonic-play-podcast)
     (define-key map (kbd "d") #'supersonic-download-podcast-episode)
-    map))
+    map)
+  "Keymap for `supersonic-podcast-episodes-mode'.")
 
 (defun supersonic-podcast-episodes (id)
   "Open a buffer with a list of podcast episodes from podcast ID."
@@ -1160,6 +1150,8 @@ the response at the wrong key."
  supersonic-podcast-episodes-mode
  tabulated-list-mode
  "Supersonic Podcast Episodes"
+ "Major mode for one podcast channel's episodes.
+Opened by `supersonic-podcast-episodes'."
  (setq tabulated-list-format [("Title" 50 t) ("Duration" 10 t) ("Status" 24 t)])
  (setq tabulated-list-padding 2)
  (tabulated-list-init-header))
@@ -1182,6 +1174,16 @@ the response at the wrong key."
    ("b" "Previous track" supersonic-prev-track)
    ("F" "Seek forward" supersonic-seek-forward :transient t)
    ("B" "Seek back" supersonic-seek-back :transient t)]])
+
+(defun supersonic-unload-function ()
+  "Undo the `supersonic-mpv.el' hook entries this file adds at load time.
+Called by `unload-feature', which would otherwise leave those hooks
+holding references to functions that no longer exist.  Returns nil so
+`unload-feature' still goes on to remove the definitions itself."
+  (remove-hook 'supersonic-mpv-track-change-hook #'supersonic-queue-maybe-refresh)
+  (remove-hook 'supersonic-mpv-track-change-hook #'supersonic-now-playing-maybe-refresh)
+  (remove-hook 'supersonic-mpv-playback-state-change-hook #'supersonic-now-playing-maybe-refresh)
+  nil)
 
 (provide 'supersonic)
 
