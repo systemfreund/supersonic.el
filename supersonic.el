@@ -282,12 +282,13 @@ whenever mpv reports that playback was paused or resumed."
     (when buff
       (supersonic-now-playing-fetch-and-render buff))))
 
-;; Wired up from the outside rather than supersonic-mpv.el calling these
-;; directly, so that file stays independent of this one's buffers -- see
-;; `supersonic-mpv-track-change-hook'/`supersonic-mpv-playback-state-change-hook'.
-(add-hook 'supersonic-mpv-track-change-hook #'supersonic-queue-maybe-refresh)
-(add-hook 'supersonic-mpv-track-change-hook #'supersonic-now-playing-maybe-refresh)
-(add-hook 'supersonic-mpv-playback-state-change-hook #'supersonic-now-playing-maybe-refresh)
+;; Wired up from the outside rather than the backend calling these
+;; directly, so the backends stay independent of this one's buffers --
+;; see `supersonic-playback-track-change-hook'/
+;; `supersonic-playback-state-change-hook'.
+(add-hook 'supersonic-playback-track-change-hook #'supersonic-queue-maybe-refresh)
+(add-hook 'supersonic-playback-track-change-hook #'supersonic-now-playing-maybe-refresh)
+(add-hook 'supersonic-playback-state-change-hook #'supersonic-now-playing-maybe-refresh)
 
 (defun supersonic-now-playing--insert-field (label value &optional field)
   "Insert one \"LABEL: VALUE\" metadata row, skipping it if VALUE is nil.
@@ -1176,13 +1177,13 @@ Opened by `supersonic-podcast-episodes'."
    ("B" "Seek back" supersonic-seek-back :transient t)]])
 
 (defun supersonic-unload-function ()
-  "Undo the `supersonic-mpv.el' hook entries this file adds at load time.
+  "Undo the `supersonic-playback.el' hook entries this file adds at load time.
 Called by `unload-feature', which would otherwise leave those hooks
 holding references to functions that no longer exist.  Returns nil so
 `unload-feature' still goes on to remove the definitions itself."
-  (remove-hook 'supersonic-mpv-track-change-hook #'supersonic-queue-maybe-refresh)
-  (remove-hook 'supersonic-mpv-track-change-hook #'supersonic-now-playing-maybe-refresh)
-  (remove-hook 'supersonic-mpv-playback-state-change-hook #'supersonic-now-playing-maybe-refresh)
+  (remove-hook 'supersonic-playback-track-change-hook #'supersonic-queue-maybe-refresh)
+  (remove-hook 'supersonic-playback-track-change-hook #'supersonic-now-playing-maybe-refresh)
+  (remove-hook 'supersonic-playback-state-change-hook #'supersonic-now-playing-maybe-refresh)
   nil)
 
 (provide 'supersonic)

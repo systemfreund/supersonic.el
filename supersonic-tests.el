@@ -197,6 +197,110 @@ them."
       (supersonic-prev-track))
     (should (equal '(("cycle" "pause") ("playlist-next") ("playlist-prev")) (nreverse commands)))))
 
+(defun supersonic-tests--resolve (promise &optional timeout)
+  "Return PROMISE's resolved value, failing the test if it never resolves.
+`aio-wait-for' blocks forever on a promise nothing will ever resolve,
+which is precisely the failure mode some of these tests guard against,
+so they must not wait on one bare.  TIMEOUT defaults to two seconds."
+  (with-timeout ((or timeout 2) (ert-fail "The promise was never resolved"))
+    (aio-wait-for promise)))
+
+(ert-deftest supersonic-tests-playback-status-dispatches-one-key-at-a-time ()
+  "`supersonic-playback-status' asks the active backend for the one key
+it was called with -- not for a snapshot of everything -- and hands
+back what the backend resolved."
+  (let ((asked nil))
+    (supersonic-tests--with-backend
+     `((live-p . ,(lambda () t))
+       (status . ,(lambda (key)
+                    (push key asked)
+                    (let ((promise (aio-promise)))
+                      (aio-resolve promise (lambda () (alist-get key '((track-id . "id-7") (position . 12.5)))))
+                      promise))))
+     (should (equal "id-7" (supersonic-tests--resolve (supersonic-playback-status 'track-id))))
+     (should (equal 12.5 (supersonic-tests--resolve (supersonic-playback-status 'position))))
+     (should (equal '(track-id position) (nreverse asked))))))
+
+(ert-deftest supersonic-tests-playback-status-is-nil-when-nothing-is-live ()
+  "With no live backend `supersonic-playback-status' resolves to nil
+instead of leaving the caller waiting on a reply that can never come --
+the whole point being that consumers need no liveness guard of their
+own before asking.  The backend is not consulted at all."
+  (let ((consulted nil))
+    (supersonic-tests--with-backend
+     `((live-p . ,(lambda () nil))
+       (status . ,(lambda (_key) (setq consulted t) (aio-promise))))
+     (should-not (supersonic-tests--resolve (supersonic-playback-status 'position)))
+     (should-not consulted))))
+
+(ert-deftest supersonic-tests-playback-status-rejects-unknown-keys ()
+  "A key outside `supersonic-playback-status-keys' is a programming
+error, caught here rather than passed down for each backend to shrug
+at differently."
+  (supersonic-tests--with-backend
+   `((live-p . ,(lambda () t)) (status . ,(lambda (_key) (aio-promise))))
+   (should-error (supersonic-tests--resolve (supersonic-playback-status 'volume)))))
+
+(ert-deftest supersonic-tests-playback-live-p-dispatches-synchronously ()
+  "`supersonic-playback-live-p' is a plain predicate, not a promise:
+liveness is a locally known fact for every backend, and its callers use
+it as a guard."
+  (supersonic-tests--with-backend `((live-p . ,(lambda () 'yes))) (should (eq 'yes (supersonic-playback-live-p))))
+  (supersonic-tests--with-backend `((live-p . ,(lambda () nil))) (should-not (supersonic-playback-live-p))))
+
+(ert-deftest supersonic-tests-mpv-status-answers-the-facade-keys ()
+  "mpv answers all three status keys in the facade's own vocabulary: a
+supersonic track id rather than an mpv playlist entry id, a position in
+seconds, and its pause state."
+  (supersonic-tests--with-mpv
+   (supersonic-mpv-start (list "av://lavfi:sine=frequency=440:duration=10"))
+   (should (supersonic-tests--wait-for (lambda () (= 1 (hash-table-count supersonic--playlist)))))
+   (should (equal "av://lavfi:sine=frequency=440:duration=10"
+                  (supersonic-tests--resolve (supersonic-playback-status 'track-id))))
+   ;; mpv reports `time-pos' as unavailable until it has actually started
+   ;; decoding, which is a moment after the `loadfile' that populated
+   ;; `supersonic--playlist' above -- so wait for a position rather than
+   ;; expecting one to exist the instant the queue does.
+   (should
+    (supersonic-tests--wait-for (lambda () (numberp (supersonic-tests--resolve (supersonic-playback-status 'position))))))
+   (should-not (supersonic-tests--resolve (supersonic-playback-status 'paused)))
+   (supersonic-toggle-playing)
+   (should (supersonic-tests--wait-for (lambda () (eq supersonic--paused t))))
+   (should (supersonic-tests--resolve (supersonic-playback-status 'paused)))))
+
+(ert-deftest supersonic-tests-get-property-resolves-nil-when-unsendable ()
+  "`supersonic-mpv-get-property' used to be documented as hanging forever
+if mpv was not running, since no reply could ever arrive to resolve its
+promise.  It resolves to nil instead, which is what lets
+`supersonic-playback-status' promise its callers an answer either way."
+  (let ((supersonic-mpv--socket nil)
+        (supersonic-mpv--pending-requests (make-hash-table)))
+    (should-not (supersonic-tests--resolve (supersonic-mpv-get-property "time-pos")))
+    ;; The callback must not be left behind waiting for that reply either.
+    (should (= 0 (hash-table-count supersonic-mpv--pending-requests)))))
+
+(ert-deftest supersonic-tests-mpv-runs-the-backend-neutral-hooks ()
+  "mpv signals through the facade's hooks, not hooks of its own: every
+point where what is playing may have changed runs
+`supersonic-playback-track-change-hook', and a bare pause toggle runs
+`supersonic-playback-state-change-hook'."
+  (let ((track-changes 0)
+        (state-changes 0))
+    (let ((supersonic-playback-track-change-hook (list (lambda () (cl-incf track-changes))))
+          (supersonic-playback-state-change-hook (list (lambda () (cl-incf state-changes)))))
+      (supersonic-tests--with-mpv
+       (supersonic-mpv-start (list supersonic-tests--track-1))
+       (should (supersonic-tests--wait-for (lambda () (> track-changes 0))))
+       (let ((before track-changes))
+         (supersonic-mpv-enqueue (list supersonic-tests--track-2))
+         (should (> track-changes before)))
+       (should (= 0 state-changes))
+       (supersonic-toggle-playing)
+       (should (supersonic-tests--wait-for (lambda () (> state-changes 0))))
+       (let ((before track-changes))
+         (supersonic-mpv-kill)
+         (should (> track-changes before)))))))
+
 (ert-deftest supersonic-tests-queue-parse-marks-current-track ()
   "`supersonic-queue-parse' marks whichever entry mpv reports as current."
   (supersonic-tests--with-mpv

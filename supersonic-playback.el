@@ -26,6 +26,14 @@
 ;; `supersonic-playback-*' functions here dispatch to whichever backend
 ;; `supersonic-playback-backend' currently selects.
 ;;
+;; Traffic runs the other way too: a backend says *that* something about
+;; playback may have changed by running the two hooks defined here, and
+;; whoever is interested pulls what it needs back through
+;; `supersonic-playback-status'.  Signal on the hook, pull on the
+;; accessor -- no payload is carried, so a consumer never has to care
+;; which backend woke it, and a backend never has to know who is
+;; listening.
+;;
 ;; This file therefore knows nothing about mpv, HTTP streams, or the
 ;; Subsonic API: it only knows the operation names.  The dependency runs
 ;; the other way round, each backend requiring this file and registering
@@ -34,18 +42,41 @@
 
 ;;; Code:
 
+(require 'aio)
+
 (require 'supersonic-custom)
 
-(defconst supersonic-playback-operations '(start enqueue toggle-play next prev seek seek-fraction)
+(defconst supersonic-playback-operations '(start enqueue toggle-play next prev seek seek-fraction live-p status)
   "The playback operations a backend can implement.
 `start' and `enqueue' each take a list of supersonic track ids; `seek'
 takes an offset in seconds, which may be negative; `seek-fraction'
 takes a position in the current track as a fraction between 0.0 and
-1.0; the rest take no arguments.  A backend need not implement all of
+1.0; `status' takes one of `supersonic-playback-status-keys'; the rest
+take no arguments.  A backend need not implement all of
 these -- an operation its player has no equivalent for is simply left
 out of the alist passed to `supersonic-playback-register-backend', and
 calling the corresponding `supersonic-playback-*' function then reports
 that rather than failing silently.")
+
+(defconst supersonic-playback-status-keys '(track-id position paused)
+  "The pieces of current playback state `supersonic-playback-status' answers.
+`track-id' is the supersonic id of whatever is playing, `position' its
+playback position in seconds, and `paused' non-nil if playback is
+paused.  Deliberately the facade's own vocabulary rather than any
+backend's property names, so that a consumer asking what is playing
+never has to know how the active backend keeps track of it.")
+
+(defvar supersonic-playback-track-change-hook nil
+  "Hook run whenever the identity of what is playing may have changed.
+Run by whichever backend is active, with no payload: it says only that
+something may be different now, and a consumer pulls what it actually
+needs via `supersonic-playback-status'.  Buffers hang their refreshes
+off this from the outside, so no backend ever has to know they exist.")
+
+(defvar supersonic-playback-state-change-hook nil
+  "Hook run whenever playback was paused or resumed.
+Only that: a change in the identity of what is playing runs
+`supersonic-playback-track-change-hook' instead.")
 
 (defvar supersonic-playback--backends (make-hash-table :test #'eq)
   "Map of backend name (a symbol) to that backend's operation alist.
@@ -121,6 +152,36 @@ two differently: mpv seeks by percentage natively, whereas a backend
 that can only seek to a number of seconds has to multiply by the
 running track's duration, which it knows and its callers do not."
   (supersonic-playback--call 'seek-fraction fraction))
+
+(defun supersonic-playback-live-p ()
+  "Return non-nil if the active backend currently has playback to report on.
+Synchronous, unlike `supersonic-playback-status', because for every
+backend this is a locally known fact and never a round-trip: mpv knows
+whether its process is running, and a polling backend knows whether its
+last poll got an answer.  Callers use it as a plain guard -- whether to
+render anything, whether to keep a timer ticking -- where waiting on a
+promise would buy nothing."
+  (supersonic-playback--call 'live-p))
+
+(aio-defun
+ supersonic-playback-status (key)
+ "Return a promise resolving to the active backend's current KEY.
+KEY is one of `supersonic-playback-status-keys'.  Resolves to nil when
+nothing is playing, rather than leaving the caller waiting on a promise
+that can never be resolved, so a caller needs no liveness guard of its
+own before asking.
+
+Answers one key per call rather than a whole snapshot of state: the
+callers that want several values want them at different moments (the
+now-playing render deliberately asks for the position last, once its
+cover-art fetch is done, so that it is as fresh as possible), and the
+one that ticks every second wants only the position.  A backend that
+holds all of its state in one polled snapshot answers every key from it
+without issuing anything."
+ (unless (memq key supersonic-playback-status-keys)
+   (error "Unknown playback status key `%s'" key))
+ (when (supersonic-playback-live-p)
+   (aio-await (supersonic-playback--call 'status key))))
 
 ;;;###autoload
 (defun supersonic-toggle-playing ()

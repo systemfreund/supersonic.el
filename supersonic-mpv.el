@@ -28,8 +28,9 @@
 ;; This file knows nothing about the Subsonic list/now-playing buffers
 ;; that supersonic.el renders -- it only knows *that* the identity of
 ;; what mpv is playing, or its pause state, may have changed, and says
-;; so via `supersonic-mpv-track-change-hook' /
-;; `supersonic-mpv-playback-state-change-hook' rather than calling into
+;; so by running the backend-neutral
+;; `supersonic-playback-track-change-hook' /
+;; `supersonic-playback-state-change-hook' rather than calling into
 ;; supersonic.el directly.  supersonic.el hangs its buffer refreshes off
 ;; those hooks from the outside, the same way `supersonic-mpris.el'
 ;; observes and drives this file purely via `advice-add' rather than
@@ -82,19 +83,6 @@ Kept in sync via an `observe_property' registered once per mpv process
 in `supersonic-mpv-ensure-running'; consulted by the now-playing buffer
 so it never has to query mpv for this on every render.")
 
-(defvar supersonic-mpv-track-change-hook nil
-  "Hook run whenever the identity of what mpv is playing may have changed.
-That is: mpv killed or (re)started, the queue replaced or enqueued, or
-mpv reporting a start-file/end-file event.  supersonic.el hangs its
-queue/now-playing refreshes off this from the outside, mirroring how
-`supersonic-mpris.el' observes this file via `advice-add' instead of this
-file depending on either of them.")
-
-(defvar supersonic-mpv-playback-state-change-hook nil
-  "Hook run whenever mpv reports its pause state changed.
-Only that: a track identity change of its own runs
-`supersonic-mpv-track-change-hook' instead.")
-
 ;;;###autoload
 (defun supersonic-mpv-kill ()
   "Kill the mpv process."
@@ -114,7 +102,7 @@ Only that: a track identity change of its own runs
   (setq supersonic-mpv--request-counter 0)
   (clrhash supersonic-mpv--pending-requests)
   (setq supersonic--paused nil)
-  (run-hooks 'supersonic-mpv-track-change-hook))
+  (run-hooks 'supersonic-playback-track-change-hook))
 
 (defun supersonic-mpv-live-p ()
   "Return non-nil if inferior mpv is running."
@@ -206,7 +194,7 @@ to start playing now."
   (dolist (id (cdr ids))
     (supersonic--mpv-load-track id "append"))
   (supersonic-mpv-command "set_property" "pause" :json-false)
-  (run-hooks 'supersonic-mpv-track-change-hook))
+  (run-hooks 'supersonic-playback-track-change-hook))
 
 ;;;###autoload
 (defun supersonic-mpv-enqueue (ids)
@@ -216,7 +204,7 @@ already playing undisturbed and simply queues IDS after it."
   (supersonic-mpv-ensure-running)
   (dolist (id ids)
     (supersonic--mpv-load-track id "append-play"))
-  (run-hooks 'supersonic-mpv-track-change-hook))
+  (run-hooks 'supersonic-playback-track-change-hook))
 
 (defun supersonic--mpv-handle-message (parsed-response)
   "Handle PARSED-RESPONSE, one message parsed from mpv's IPC socket."
@@ -229,13 +217,13 @@ already playing undisturbed and simply queues IDS after it."
      (t
       (let ((event (alist-get 'event parsed-response)))
         (when (member event '("start-file" "end-file"))
-          (run-hooks 'supersonic-mpv-track-change-hook))
+          (run-hooks 'supersonic-playback-track-change-hook))
         ;; mpv reports booleans as JSON true/false, which `json-read'
         ;; turns into t and `:json-false' -- the latter being non-nil in
         ;; Lisp, so this has to compare against t explicitly.
         (when (and (string-equal event "property-change") (string-equal (alist-get 'name parsed-response) "pause"))
           (setq supersonic--paused (eq (alist-get 'data parsed-response) t))
-          (run-hooks 'supersonic-mpv-playback-state-change-hook))
+          (run-hooks 'supersonic-playback-state-change-hook))
         (when supersonic-scrobble-plays
           (cond
            ((string-equal event "end-file")
@@ -318,28 +306,38 @@ difference instead of assuming the command went through."
 Unlike `supersonic-mpv-command', this expects an actual answer: the
 command is tagged with a fresh request_id, and CALLBACK is invoked
 with the full parsed JSON reply once `supersonic--mpv-socket-filter'
-sees a response carrying that same request_id."
+sees a response carrying that same request_id.
+
+Returns non-nil if the command was sent, nil if there was no live
+connection to send it on -- in which case CALLBACK is dropped rather
+than left in `supersonic-mpv--pending-requests' waiting for a reply
+that can never arrive, and the caller can tell that no answer is
+coming instead of waiting for one forever."
   (let ((request-id (1+ supersonic-mpv--request-counter)))
     (puthash request-id callback supersonic-mpv--pending-requests)
     (if (supersonic-mpv--send
          (concat (json-encode (list (cons 'command (apply #'vector args)) (cons 'request_id request-id))) "\n"))
-        (setq supersonic-mpv--request-counter request-id)
+        (progn
+          (setq supersonic-mpv--request-counter request-id)
+          t)
       (remhash request-id supersonic-mpv--pending-requests)
-      (message "MPV not running"))))
+      (message "MPV not running")
+      nil)))
 
 (aio-defun
  supersonic-mpv-get-property (name)
  "Return a promise resolving to mpv's current value of property NAME.
 The `aio' counterpart of `supersonic-mpv-command-with-callback', for
 callers that want to keep reading mpv state in a straight line instead
-of nesting callbacks.  Only call this with mpv running: without a live
-IPC connection no reply can ever arrive, and the promise stays
-unresolved forever."
+of nesting callbacks.  Resolves to nil if the request could not be sent
+at all, so that a caller awaiting this never ends up waiting on a reply
+that by then can never arrive."
  (let ((promise (aio-promise)))
-   (supersonic-mpv-command-with-callback (lambda (response)
-                                           (aio-resolve promise (lambda () (alist-get 'data response))))
-                                         "get_property" name)
-   (aio-await promise)))
+   (if (supersonic-mpv-command-with-callback
+        (lambda (response) (aio-resolve promise (lambda () (alist-get 'data response))))
+        "get_property" name)
+       (aio-await promise)
+     nil)))
 
 (defun supersonic-mpv-toggle-play ()
   "Toggle playing/paused state in mpv."
@@ -361,6 +359,24 @@ unresolved forever."
   "Seek mpv to FRACTION (0.0 to 1.0) of the way through the current track."
   (supersonic-mpv-command "seek" (number-to-string (* fraction 100)) "absolute-percent"))
 
+(aio-defun
+ supersonic-mpv-status (key)
+ "Return a promise resolving to mpv's current value for status KEY.
+The mpv side of `supersonic-playback-status'.  `paused' is answered
+from `supersonic--paused', which mpv keeps up to date on its own via
+the `observe_property' registered in `supersonic-mpv-ensure-running',
+so it costs no round-trip; the other keys are read off mpv as it is
+only mpv that knows them.  `track-id' is where mpv's own idea of what
+is playing gets translated back into a supersonic id, by resolving the
+current playlist entry through `supersonic--playlist'."
+ (pcase key
+   ('paused supersonic--paused)
+   ('position (aio-await (supersonic-mpv-get-property "time-pos")))
+   ('track-id
+    (let* ((playlist (aio-await (supersonic-mpv-get-property "playlist")))
+           (entry (seq-find (lambda (item) (alist-get 'current item)) playlist)))
+      (and entry (gethash (alist-get 'id entry) supersonic--playlist))))))
+
 ;; Announce mpv to the playback facade as we are loaded, so that the
 ;; generic `supersonic-playback-*' functions resolve to the wrappers
 ;; above (and to the queueing entry points further up) as soon as this
@@ -376,7 +392,9 @@ unresolved forever."
    (next . supersonic-mpv-next)
    (prev . supersonic-mpv-prev)
    (seek . supersonic-mpv-seek)
-   (seek-fraction . supersonic-mpv-seek-fraction)))
+   (seek-fraction . supersonic-mpv-seek-fraction)
+   (live-p . supersonic-mpv-live-p)
+   (status . supersonic-mpv-status)))
 
 (provide 'supersonic-mpv)
 ;;; supersonic-mpv.el ends here
