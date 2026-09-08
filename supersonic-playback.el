@@ -46,17 +46,19 @@
 
 (require 'supersonic-custom)
 
-(defconst supersonic-playback-operations '(start enqueue toggle-play next prev seek seek-fraction live-p status)
+(defconst supersonic-playback-operations '(start enqueue toggle-play next prev seek seek-fraction live-p status queue)
   "The playback operations a backend can implement.
 `start' and `enqueue' each take a list of supersonic track ids; `seek'
 takes an offset in seconds, which may be negative; `seek-fraction'
 takes a position in the current track as a fraction between 0.0 and
-1.0; `status' takes one of `supersonic-playback-status-keys'; the rest
-take no arguments.  A backend need not implement all of
-these -- an operation its player has no equivalent for is simply left
-out of the alist passed to `supersonic-playback-register-backend', and
-calling the corresponding `supersonic-playback-*' function then reports
-that rather than failing silently.")
+1.0; `status' takes one of `supersonic-playback-status-keys'; `queue'
+and the rest take no arguments.  `status' and `queue' each return a
+promise, the same as their `supersonic-playback-*' counterparts below.
+A backend need not implement all of these -- an operation its player
+has no equivalent for is simply left out of the alist passed to
+`supersonic-playback-register-backend', and calling the corresponding
+`supersonic-playback-*' function then reports that rather than failing
+silently.")
 
 (defconst supersonic-playback-status-keys '(track-id position paused)
   "The pieces of current playback state `supersonic-playback-status' answers.
@@ -201,6 +203,17 @@ without issuing anything."
    (error "Unknown playback status key `%s'" key))
  (when (supersonic-playback-live-p)
    (aio-await (supersonic-playback--call 'status key))))
+
+(aio-defun
+ supersonic-playback-queue ()
+ "Return a promise resolving to the active backend's current play queue.
+Each entry is a plist with `:track-id', a supersonic track id, and
+`:current', non-nil for whichever entry is currently playing.  Resolves
+to nil when nothing is live, the same way `supersonic-playback-status'
+does, so a caller needs no liveness guard of its own before asking --
+an empty queue and no backend to ask look the same from here."
+ (when (supersonic-playback-live-p)
+   (aio-await (supersonic-playback--call 'queue))))
 
 ;;;###autoload
 (defun supersonic-toggle-playing ()

@@ -61,47 +61,49 @@
     (and buff (buffer-live-p buff) buff)))
 
 (defun supersonic-queue-maybe-refresh ()
-  "Refresh the play queue buffer from mpv's playlist, if it is open.
+  "Refresh the play queue buffer from the active backend's play queue,
+if it is open.
 Called whenever the queue is likely to have changed: after
-starting/enqueueing tracks and whenever mpv reports a track
-starting or ending."
+starting/enqueueing tracks and whenever the active backend reports a
+track starting or ending."
   (let ((buff (supersonic-queue-buffer)))
     (when buff
       (supersonic-queue-fetch-and-render buff))))
 
 (aio-defun
- supersonic-queue-parse (playlist)
- "Turn mpv's PLAYLIST (from a \"get_property playlist\" reply) into
+ supersonic-queue-parse (entries)
+ "Turn ENTRIES, as resolved by `supersonic-playback-queue', into
 tabulated-list entries.
 Fetches each entry's song metadata concurrently (fired up front, below,
 before anything is awaited) and tolerates individual lookup failures
 via `aio-catch', falling back to the \"?\" placeholder row instead of
 aborting the whole render."
  (let* ((pending
-         (mapcar
-          (lambda (entry)
-            (let* ((mpv-id (alist-get 'id entry))
-                   (track-id (gethash mpv-id supersonic--playlist)))
+         (seq-map-indexed
+          (lambda (entry index)
+            (let ((track-id (plist-get entry :track-id)))
               (list
-               entry mpv-id track-id
+               index track-id (plist-get entry :current)
                (and track-id
                     (aio-catch (supersonic-get-json (supersonic-build-url "/getSong.view" `(("id" . ,track-id)))))))))
-          playlist)))
+          entries)))
    ;; A plain `mapcar' lambda would call `aio-await' through an ordinary `funcall', outside of this function's own
    ;; generator machinery, which `generator.el' cannot transform -- so this collects results via a `dolist', which
    ;; (like `while') stays inline and awaits correctly.
    (let (rows)
      (dolist (item pending)
-       (pcase-let ((`(,entry ,mpv-id ,track-id ,promise) item))
+       (pcase-let ((`(,index ,track-id ,current ,promise) item))
          (let* ((outcome (and promise (aio-await promise)))
                 (song
                  (and outcome
                       (eq (car outcome) :success)
                       (supersonic-recursive-assoc (cdr outcome) '("subsonic-response" "song")))))
            (push (list
-                  (or track-id (format "%s" mpv-id))
+                  ;; A missing track id would only happen if a backend handed back an entry it could not resolve;
+                  ;; fall back to the entry's position so the row still gets a usable, if display-only, id.
+                  (or track-id (number-to-string index))
                   (vector
-                   (if (alist-get 'current entry)
+                   (if current
                        "▶"
                      "")
                    (if song
@@ -116,26 +118,19 @@ aborting the whole render."
                  rows))))
      (nreverse rows))))
 
-(defun supersonic-queue-fetch-and-render (buff)
-  "Query mpv for its current playlist and render it into BUFF."
-  (if (supersonic-mpv-live-p)
-      (supersonic-mpv-command-with-callback
-       (aio-lambda
-        (response)
-        (when (buffer-live-p buff)
-          (let ((entries (aio-await (supersonic-queue-parse (alist-get 'data response)))))
-            (when (buffer-live-p buff)
-              (with-current-buffer buff
-                (setq tabulated-list-entries entries)
-                (tabulated-list-print t))))))
-       "get_property" "playlist")
-    (when (buffer-live-p buff)
-      (with-current-buffer buff
-        (setq tabulated-list-entries nil)
-        (tabulated-list-print t)))))
+(aio-defun
+ supersonic-queue-fetch-and-render
+ (buff)
+ "Query the active playback backend for its play queue and render it into BUFF."
+ (when (buffer-live-p buff)
+   (let ((entries (aio-await (supersonic-queue-parse (aio-await (supersonic-playback-queue))))))
+     (when (buffer-live-p buff)
+       (with-current-buffer buff
+         (setq tabulated-list-entries entries)
+         (tabulated-list-print t))))))
 
 (defun supersonic-queue-refresh ()
-  "Refresh the play queue buffer from mpv's current playlist."
+  "Refresh the play queue buffer from the active backend's current play queue."
   (interactive)
   (supersonic-queue-fetch-and-render (current-buffer)))
 
@@ -150,14 +145,14 @@ aborting the whole render."
  tabulated-list-mode
  "Supersonic Queue"
  "Major mode for the play queue opened by `supersonic-show-queue'.
-Mirrors mpv's own playlist, refreshed whenever it may have changed."
+Mirrors the active backend's play queue, refreshed whenever it may have changed."
  (setq tabulated-list-format [("" 2 nil) ("Title" 40 t) ("Artist" 25 t) ("Album" 25 t)])
  (setq tabulated-list-padding 2)
  (tabulated-list-init-header))
 
 ;;;###autoload
 (defun supersonic-show-queue ()
-  "Open a buffer showing mpv's current play queue."
+  "Open a buffer showing the active backend's current play queue."
   (interactive)
   (let ((buff (get-buffer-create supersonic-queue-buffer-name)))
     (with-current-buffer buff

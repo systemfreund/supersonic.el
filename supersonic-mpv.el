@@ -366,22 +366,35 @@ that by then can never arrive."
   (supersonic-mpv-command "seek" (number-to-string (* fraction 100)) "absolute-percent"))
 
 (aio-defun
+ supersonic-mpv-queue ()
+ "Return a promise resolving to mpv's playlist as generic queue entries.
+The mpv side of `supersonic-playback-queue'.  Fetches mpv's raw
+\"playlist\" property via `supersonic-mpv-get-property' and translates
+each entry's private mpv playlist id back to a supersonic track id
+through `supersonic--playlist', the same table
+`supersonic--mpv-load-track' populates as tracks are loaded."
+ (mapcar
+  (lambda (item)
+    (list :track-id (gethash (alist-get 'id item) supersonic--playlist) :current (and (alist-get 'current item) t)))
+  (aio-await (supersonic-mpv-get-property "playlist"))))
+
+(aio-defun
  supersonic-mpv-status (key)
  "Return a promise resolving to mpv's current value for status KEY.
 The mpv side of `supersonic-playback-status'.  `paused' is answered
 from `supersonic--paused', which mpv keeps up to date on its own via
 the `observe_property' registered in `supersonic-mpv-ensure-running',
-so it costs no round-trip; the other keys are read off mpv as it is
-only mpv that knows them.  `track-id' is where mpv's own idea of what
-is playing gets translated back into a supersonic id, by resolving the
-current playlist entry through `supersonic--playlist'."
+so it costs no round-trip; `position' is read off mpv as it is only
+mpv that knows it.  `track-id' reuses `supersonic-mpv-queue' -- which
+already fetches the playlist and resolves each entry's mpv id back to
+a supersonic track id -- and simply picks out whichever entry it marks
+current."
  (pcase key
    ('paused supersonic--paused)
    ('position (aio-await (supersonic-mpv-get-property "time-pos")))
    ('track-id
-    (let* ((playlist (aio-await (supersonic-mpv-get-property "playlist")))
-           (entry (seq-find (lambda (item) (alist-get 'current item)) playlist)))
-      (and entry (gethash (alist-get 'id entry) supersonic--playlist))))))
+    (let ((entry (seq-find (lambda (e) (plist-get e :current)) (aio-await (supersonic-mpv-queue)))))
+      (and entry (plist-get entry :track-id))))))
 
 ;; Announce mpv to the playback facade as we are loaded, so that the
 ;; generic `supersonic-playback-*' functions resolve to the wrappers
@@ -400,7 +413,8 @@ current playlist entry through `supersonic--playlist'."
    (seek . supersonic-mpv-seek)
    (seek-fraction . supersonic-mpv-seek-fraction)
    (live-p . supersonic-mpv-live-p)
-   (status . supersonic-mpv-status)))
+   (status . supersonic-mpv-status)
+   (queue . supersonic-mpv-queue)))
 
 (provide 'supersonic-mpv)
 ;;; supersonic-mpv.el ends here
