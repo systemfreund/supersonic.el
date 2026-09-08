@@ -124,6 +124,79 @@ rather than leaving it pointing at a dead process."
      (should (eq result 'pending))
      (should (= 0 (hash-table-count supersonic-mpv--pending-requests))))))
 
+(defmacro supersonic-tests--with-backend (operations &rest body)
+  "Run BODY with a throwaway `test' playback backend implementing OPERATIONS.
+`supersonic-playback-backend' selects it for the duration, and the
+registry is restored afterwards so the real `mpv' registration other
+tests rely on survives."
+  `(let ((supersonic-playback-backend 'test)
+         (supersonic-playback--backends (copy-hash-table supersonic-playback--backends)))
+     (supersonic-playback-register-backend 'test ,operations)
+     ,@body))
+
+(ert-deftest supersonic-tests-playback-dispatches-to-active-backend ()
+  "The generic `supersonic-playback-*' functions call the implementations
+the active backend registered, passing their arguments through."
+  (let ((calls nil))
+    (supersonic-tests--with-backend
+     `((start . ,(lambda (ids) (push (cons 'start ids) calls)))
+       (enqueue . ,(lambda (ids) (push (cons 'enqueue ids) calls)))
+       (toggle-play . ,(lambda () (push '(toggle-play) calls)))
+       (next . ,(lambda () (push '(next) calls)))
+       (prev . ,(lambda () (push '(prev) calls)))
+       (seek . ,(lambda (offset) (push (cons 'seek offset) calls)))
+       (seek-fraction . ,(lambda (fraction) (push (cons 'seek-fraction fraction) calls))))
+     (supersonic-playback-start '("a" "b"))
+     (supersonic-playback-enqueue '("c"))
+     (supersonic-toggle-playing)
+     (supersonic-skip-track)
+     (supersonic-prev-track)
+     (supersonic-seek-forward)
+     (supersonic-seek-back)
+     (supersonic-playback-seek-fraction 0.5))
+    (should (equal '((start "a" "b")
+                     (enqueue "c")
+                     (toggle-play)
+                     (next)
+                     (prev)
+                     (seek . 30)
+                     (seek . -30)
+                     (seek-fraction . 0.5))
+                   (nreverse calls)))))
+
+(ert-deftest supersonic-tests-playback-reports-unusable-backends ()
+  "Selecting a backend nothing registered, or asking a backend for an
+operation it left out, is a `user-error' rather than a backtrace: both
+are configuration the user can fix, and a backend is explicitly allowed
+to implement only part of `supersonic-playback-operations'."
+  (let ((supersonic-playback-backend 'nonexistent))
+    (should-error (supersonic-playback-toggle-play) :type 'user-error))
+  (supersonic-tests--with-backend
+   `((start . ,#'ignore))
+   (should-error (supersonic-playback-seek 30) :type 'user-error))
+  (should-error (supersonic-playback-register-backend 'bogus '((rewind . ignore)))))
+
+(ert-deftest supersonic-tests-mpv-is-registered-as-a-backend ()
+  "Loading `supersonic-mpv' registers mpv under the name
+`supersonic-playback-backend' defaults to, implementing every operation
+the facade knows about, so a stock configuration plays through it."
+  (should (eq 'mpv (default-value 'supersonic-playback-backend)))
+  (let ((operations (gethash 'mpv supersonic-playback--backends)))
+    (should operations)
+    (dolist (operation supersonic-playback-operations)
+      (should (functionp (alist-get operation operations))))))
+
+(ert-deftest supersonic-tests-transport-commands-reach-mpv ()
+  "With mpv the active backend, the transport commands end up as the mpv
+IPC commands they always were -- the facade only changes who dispatches
+them."
+  (let ((commands nil))
+    (cl-letf (((symbol-function 'supersonic-mpv-command) (lambda (&rest args) (push args commands))))
+      (supersonic-toggle-playing)
+      (supersonic-skip-track)
+      (supersonic-prev-track))
+    (should (equal '(("cycle" "pause") ("playlist-next") ("playlist-prev")) (nreverse commands)))))
+
 (ert-deftest supersonic-tests-queue-parse-marks-current-track ()
   "`supersonic-queue-parse' marks whichever entry mpv reports as current."
   (supersonic-tests--with-mpv

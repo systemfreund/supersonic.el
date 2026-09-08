@@ -21,8 +21,9 @@
 
 ;; mpv process/IPC layer for supersonic.el: starting and talking to an
 ;; idle mpv instance over its JSON IPC socket, dispatching replies and
-;; events, and the handful of playback commands that are thin wrappers
-;; around it.
+;; events, and the handful of playback operations that are thin wrappers
+;; around it, which it registers with the backend facade in
+;; `supersonic-playback.el' under the name `mpv'.
 ;;
 ;; This file knows nothing about the Subsonic list/now-playing buffers
 ;; that supersonic.el renders -- it only knows *that* the identity of
@@ -40,6 +41,7 @@
 (require 'seq)
 (require 'aio)
 (require 'supersonic-api)
+(require 'supersonic-playback)
 
 ;; fix byte-compiler complaints
 (defvar supersonic-mpv)
@@ -342,35 +344,42 @@ unresolved forever."
                                          "get_property" name)
    (aio-await promise)))
 
-;;;###autoload
-(defun supersonic-toggle-playing ()
+(defun supersonic-mpv-toggle-play ()
   "Toggle playing/paused state in mpv."
-  (interactive)
   (supersonic-mpv-command "cycle" "pause"))
 
-;;;###autoload
-(defun supersonic-skip-track ()
+(defun supersonic-mpv-next ()
   "Skip to the next track in mpv."
-  (interactive)
   (supersonic-mpv-command "playlist-next"))
 
-;;;###autoload
-(defun supersonic-prev-track ()
+(defun supersonic-mpv-prev ()
   "Go to the previous track in mpv."
-  (interactive)
   (supersonic-mpv-command "playlist-prev"))
 
-;;;###autoload
-(defun supersonic-seek-forward ()
-  "Seek 30 seconds forward in mpv."
-  (interactive)
-  (supersonic-mpv-command "seek" "30" "relative"))
+(defun supersonic-mpv-seek (offset)
+  "Seek OFFSET seconds relative to mpv's current position."
+  (supersonic-mpv-command "seek" (number-to-string offset) "relative"))
 
-;;;###autoload
-(defun supersonic-seek-back ()
-  "Seek 30 seconds back in mpv."
-  (interactive)
-  (supersonic-mpv-command "seek" "-30" "relative"))
+(defun supersonic-mpv-seek-fraction (fraction)
+  "Seek mpv to FRACTION (0.0 to 1.0) of the way through the current track."
+  (supersonic-mpv-command "seek" (number-to-string (* fraction 100)) "absolute-percent"))
+
+;; Announce mpv to the playback facade as we are loaded, so that the
+;; generic `supersonic-playback-*' functions resolve to the wrappers
+;; above (and to the queueing entry points further up) as soon as this
+;; file is on the feature list -- see `supersonic-playback.el'.
+;; Registered as symbols rather than function values, so that dispatch
+;; goes through each symbol's function cell and `supersonic-mpris.el''s
+;; `advice-add' on `supersonic-mpv-start'/`-enqueue' still runs.
+(supersonic-playback-register-backend
+ 'mpv
+ '((start . supersonic-mpv-start)
+   (enqueue . supersonic-mpv-enqueue)
+   (toggle-play . supersonic-mpv-toggle-play)
+   (next . supersonic-mpv-next)
+   (prev . supersonic-mpv-prev)
+   (seek . supersonic-mpv-seek)
+   (seek-fraction . supersonic-mpv-seek-fraction)))
 
 (provide 'supersonic-mpv)
 ;;; supersonic-mpv.el ends here
