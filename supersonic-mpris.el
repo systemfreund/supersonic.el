@@ -23,9 +23,13 @@
 ;; and tools such as playerctl can see and control playback over D-Bus.
 ;;
 ;; This file is deliberately one-directional: supersonic.el has no
-;; knowledge of it.  It observes and drives supersonic.el purely from the
-;; outside, via `advice-add' on its public/internal entry points, so it
-;; can be dropped in or removed without touching supersonic.el at all.
+;; knowledge of it.  It observes and drives playback purely through the
+;; backend-agnostic facade in `supersonic-playback.el' -- subscribing to
+;; `supersonic-playback-track-change-hook'/`supersonic-playback-state-change-hook'
+;; and pulling whatever changed back through `supersonic-playback-status',
+;; and issuing control through `supersonic-playback-toggle-play'/`-next'/
+;; `-prev' -- so it behaves the same regardless of which backend is
+;; active, and neither side has to know the other exists.
 ;;
 ;; Enable it explicitly, it is never loaded or activated as a side
 ;; effect of requiring `supersonic':
@@ -40,18 +44,18 @@
 ;;; Code:
 
 (require 'dbus)
-(require 'supersonic)
 (require 'aio)
-
-;; fix byte-compiler complaints, as supersonic.el does for the same variable
-(defvar url-http-end-of-headers)
+(require 'supersonic-custom)
+(require 'supersonic-api)
+(require 'supersonic-playback)
+(require 'supersonic-mpv)
 
 (defgroup supersonic-mpris nil
   "MPRIS (D-Bus) remote control support for supersonic.el."
   :prefix "supersonic-mpris-"
   :group 'supersonic)
 
-(defconst supersonic-mpris--bus-name "org.mpris.MediaPlayer2.supersonic"
+(defconst supersonic-mpris--bus-name "org.mpris.MediaPlayer2.supersonicel"
   "The well-known D-Bus name we register on the session bus.")
 
 (defconst supersonic-mpris--path "/org/mpris/MediaPlayer2"
@@ -132,17 +136,10 @@ ourselves.")
 (defvar supersonic-mpris--playback-status "Stopped"
   "Current MPRIS PlaybackStatus: \"Playing\", \"Paused\" or \"Stopped\".")
 
-(defvar supersonic-mpris--track-index nil
-  "1-based index (mpv's playlist_entry_id) of the current track, or nil.")
-
-(defvar supersonic-mpris--pause-observed nil
-  "Non-nil once `observe_property' has been registered on the running mpv.
-`supersonic-mpv-start' (\"Replace\") may now run against an mpv instance
-that is already alive rather than a freshly spawned one, so this guards
-against re-registering the same observer id on every Replace, which
-would otherwise fire duplicate PropertiesChanged signals per pause
-toggle.  Reset by `supersonic-mpris--after-mpv-kill' whenever mpv actually
-goes away.")
+(defvar supersonic-mpris--track-id nil
+  "Supersonic id of the current track, in the facade's own vocabulary, or nil.
+Set from `supersonic-playback-status', never from a backend's private
+notion of a track -- see `supersonic-mpris--sync'.")
 
 (defvar supersonic-mpris--track-song nil
   "Parsed \"song\" alist (as returned by getSong.view) for the current track.")
@@ -150,10 +147,6 @@ goes away.")
 ;;;
 ;;; Metadata dict construction
 ;;;
-
-(defun supersonic-mpris--current-track-id ()
-  "Return the supersonic id of the current track, or nil."
-  (and supersonic-mpris--track-index (gethash supersonic-mpris--track-index supersonic--playlist)))
 
 (defun supersonic-mpris--track-object-path (id)
   "Build a valid D-Bus object path for track ID."
@@ -163,8 +156,7 @@ goes away.")
 
 (defun supersonic-mpris--metadata ()
   "Build the MPRIS Metadata dict-entry list (\"a{sv}\") for the current track."
-  (let* ((id (supersonic-mpris--current-track-id))
-         (song supersonic-mpris--track-song)
+  (let* ((song supersonic-mpris--track-song)
          (title (and song (assoc-default "title" song)))
          (album (and song (assoc-default "album" song)))
          (artist (and song (assoc-default "artist" song)))
@@ -174,7 +166,10 @@ goes away.")
      (delq
       nil
       (list
-       (list :dict-entry "mpris:trackid" (list :variant :object-path (supersonic-mpris--track-object-path id)))
+       (list
+        :dict-entry
+        "mpris:trackid"
+        (list :variant :object-path (supersonic-mpris--track-object-path supersonic-mpris--track-id)))
        (when title
          (list :dict-entry "xesam:title" (list :variant title)))
        (when album
@@ -198,7 +193,7 @@ sending PropertiesChanged itself."
   (supersonic-mpris--set-player-property "Metadata" (supersonic-mpris--metadata)))
 
 ;;;
-;;; Reacting to supersonic.el's mpv process, without supersonic.el knowing
+;;; Reacting to the playback facade, without either side knowing about the other
 ;;;
 
 (aio-defun
@@ -207,22 +202,11 @@ sending PropertiesChanged itself."
      (let* ((data (aio-await (supersonic-get-json (supersonic-build-url "/getSong.view" `(("id" . ,id))))))
             (song (supersonic-recursive-assoc data '("subsonic-response" "song"))))
        ;; Ignore replies for a track we have since moved on from.
-       (when (equal id (supersonic-mpris--current-track-id))
+       (when (equal id supersonic-mpris--track-id)
          (setq supersonic-mpris--track-song song)
          (supersonic-mpris--announce-metadata)))
    (error
     (message "supersonic-mpris: failed to fetch metadata for %s: %s" id err))))
-
-(defun supersonic-mpris--set-track (index)
-  "Record INDEX (mpv's 1-based playlist_entry_id) as the current track."
-  (setq supersonic-mpris--track-index index)
-  (setq supersonic-mpris--track-song nil)
-  (supersonic-mpris--announce-metadata)
-  (let ((id (supersonic-mpris--current-track-id)))
-    (when id
-      ;; Defer off the process filter so a slow HTTP request never blocks
-      ;; the mpv IPC socket.
-      (run-at-time 0 nil #'supersonic-mpris--fetch-song id))))
 
 (defun supersonic-mpris--set-playback-status (status)
   "Record STATUS (\"Playing\", \"Paused\" or \"Stopped\") and announce it."
@@ -230,102 +214,98 @@ sending PropertiesChanged itself."
     (setq supersonic-mpris--playback-status status)
     (supersonic-mpris--set-player-property "PlaybackStatus" status)))
 
-(defun supersonic-mpris--handle-message (parsed)
-  "Watch one PARSED mpv IPC message for track and pause-state changes.
-Advice on `supersonic--mpv-handle-message', which is the point where
-mpv's IPC stream has already been reassembled into whole messages and
-parsed.  Deliberately not on `supersonic--mpv-socket-filter' one level
-below it: a single read off that socket is not guaranteed to contain
-whole, newline-terminated messages -- carrying the trailing partial one
-over until the rest arrives is the entire reason that filter exists --
-so re-splitting its raw chunk here dropped whatever `start-file' or
-`property-change' happened to straddle a chunk boundary, leaving
-PlaybackStatus and Metadata stale on the bus with nothing to correct
-them until the next event."
-  (let ((event (alist-get 'event parsed)))
-    (cond
-     ((member event '("start-file" "end-file"))
-      (supersonic-mpris--set-track (alist-get 'playlist_entry_id parsed)))
-     ((and (string-equal event "property-change") (string-equal (alist-get 'name parsed) "pause"))
-      (supersonic-mpris--set-playback-status
-       (if (eq (alist-get 'data parsed) t)
-           "Paused"
-         "Playing"))))))
-
-(defun supersonic-mpris--after-mpv-start (&rest _)
-  "Advice: after `supersonic-mpv-start', observe mpv's pause state."
-  (setq supersonic-mpris--track-index nil)
-  (unless supersonic-mpris--pause-observed
-    (supersonic-mpv-command "observe_property" 1 "pause")
-    (setq supersonic-mpris--pause-observed t))
-  (supersonic-mpris--set-playback-status "Playing"))
-
-(defun supersonic-mpris--around-mpv-enqueue (orig-fn &rest args)
-  "Advice: run `supersonic-mpv-enqueue' via ORIG-FN with ARGS.
-`supersonic-mpv-enqueue' can, like `supersonic-mpv-start', be the first
-action that brings mpv up from a dead/idle state (if mpv was not
-already running, its \"append-play\" load starts playback right away).
-Only in that case do we need to react the same way we do after
-`supersonic-mpv-start'; if mpv was already alive, playback was either
-already running or intentionally paused, and enqueuing more tracks
-must not disturb that."
-  (let ((was-live (supersonic-mpv-live-p)))
-    (prog1 (apply orig-fn args)
-      (unless was-live
-        (supersonic-mpris--after-mpv-start)))))
-
-(defun supersonic-mpris--after-mpv-kill (&rest _)
-  "Advice: after `supersonic-mpv-kill', reflect the stopped state."
-  (setq supersonic-mpris--track-index nil)
-  (setq supersonic-mpris--track-song nil)
-  (setq supersonic-mpris--pause-observed nil)
-  (supersonic-mpris--set-playback-status "Stopped")
-  (supersonic-mpris--announce-metadata))
+(aio-defun
+ supersonic-mpris--sync ()
+ "Pull the active backend's current track and play state and announce them.
+Hung off both `supersonic-playback-track-change-hook' and
+`supersonic-playback-state-change-hook' -- neither carries a payload,
+only the fact that something may be different now, so this simply asks
+the facade what is true right now (via `supersonic-playback-live-p' and
+`supersonic-playback-status') and pushes whatever changed out over
+D-Bus.  One handler for both hooks rather than one apiece: a track
+change can flip Playing/Paused just as well as a bare pause toggle can
+\(mpv unpauses itself as it loads a fresh queue\), so either hook firing
+has to be able to update either half of what MPRIS reports."
+ (if (supersonic-playback-live-p)
+     (let* ((id-promise (supersonic-playback-status 'track-id))
+            (paused-promise (supersonic-playback-status 'paused))
+            (id (aio-await id-promise))
+            (paused (aio-await paused-promise)))
+       (supersonic-mpris--set-playback-status
+        (if paused
+            "Paused"
+          "Playing"))
+       (unless (equal id supersonic-mpris--track-id)
+         (setq supersonic-mpris--track-id id)
+         (setq supersonic-mpris--track-song nil)
+         (supersonic-mpris--announce-metadata)
+         (when id
+           ;; Defer off whatever called us -- for the mpv backend, its own
+           ;; IPC process filter -- so a slow HTTP request never blocks it.
+           (run-at-time 0 nil #'supersonic-mpris--fetch-song id))))
+   (supersonic-mpris--set-playback-status "Stopped")
+   (when supersonic-mpris--track-id
+     (setq supersonic-mpris--track-id nil)
+     (setq supersonic-mpris--track-song nil)
+     (supersonic-mpris--announce-metadata))))
 
 ;;;
 ;;; org.mpris.MediaPlayer2 (root interface)
 ;;;
 
 (defun supersonic-mpris--quit ()
-  "Handle the MPRIS Quit method: stop mpv, never Emacs."
-  (when (supersonic-mpv-live-p)
+  "Handle the MPRIS Quit method: stop playback, never Emacs.
+Calls `supersonic-mpv-kill' directly rather than through the facade:
+killing the player outright has no equivalent among
+`supersonic-playback-operations' yet, so this -- together with
+`supersonic-mpris--stop' -- is the one place MPRIS still has to reach
+past it."
+  (when (supersonic-playback-live-p)
     (supersonic-mpv-kill)))
 
 ;;;
 ;;; org.mpris.MediaPlayer2.Player
 ;;;
 
-(defun supersonic-mpris--play ()
-  "Handle the MPRIS Play method."
-  (if (supersonic-mpv-live-p)
-      (supersonic-mpv-command "set_property" "pause" :json-false)
-    (message "supersonic-mpris: nothing to play, start playback from Emacs first")))
+(aio-defun
+ supersonic-mpris--play ()
+ "Handle the MPRIS Play method.
+Play always means \"resume\", never \"toggle\", but the facade only
+exposes `supersonic-playback-toggle-play' -- so this asks whether
+playback is actually paused first and toggles only then, rather than
+toggling unconditionally and flipping already-playing audio into
+paused."
+ (if (supersonic-playback-live-p)
+     (when (aio-await (supersonic-playback-status 'paused))
+       (supersonic-playback-toggle-play))
+   (message "supersonic-mpris: nothing to play, start playback from Emacs first")))
 
-(defun supersonic-mpris--pause ()
-  "Handle the MPRIS Pause method."
-  (when (supersonic-mpv-live-p)
-    (supersonic-mpv-command "set_property" "pause" t)))
+(aio-defun
+ supersonic-mpris--pause () "Handle the MPRIS Pause method.  The mirror image of `supersonic-mpris--play'."
+ (when (supersonic-playback-live-p)
+   (unless (aio-await (supersonic-playback-status 'paused))
+     (supersonic-playback-toggle-play))))
 
 (defun supersonic-mpris--play-pause ()
   "Handle the MPRIS PlayPause method."
-  (if (supersonic-mpv-live-p)
-      (supersonic-toggle-playing)
+  (if (supersonic-playback-live-p)
+      (supersonic-playback-toggle-play)
     (message "supersonic-mpris: nothing to play, start playback from Emacs first")))
 
 (defun supersonic-mpris--stop ()
-  "Handle the MPRIS Stop method."
-  (when (supersonic-mpv-live-p)
+  "Handle the MPRIS Stop method.  See `supersonic-mpris--quit'."
+  (when (supersonic-playback-live-p)
     (supersonic-mpv-kill)))
 
 (defun supersonic-mpris--next ()
   "Handle the MPRIS Next method."
-  (when (supersonic-mpv-live-p)
-    (supersonic-skip-track)))
+  (when (supersonic-playback-live-p)
+    (supersonic-playback-next)))
 
 (defun supersonic-mpris--previous ()
   "Handle the MPRIS Previous method."
-  (when (supersonic-mpv-live-p)
-    (supersonic-prev-track)))
+  (when (supersonic-playback-live-p)
+    (supersonic-playback-prev)))
 
 ;;;
 ;;; Registration
@@ -404,12 +384,10 @@ broken until they are restarted."
   (dolist (prop '("CanGoNext" "CanGoPrevious" "CanPlay" "CanPause" "CanControl"))
     (supersonic-mpris--register-fixed-property supersonic-mpris--player-interface prop t))
   (supersonic-mpris--register-fixed-property supersonic-mpris--player-interface "CanSeek" nil)
-  ;; Drive the interface from supersonic.el's own mpv process, without
-  ;; supersonic.el needing to know we exist.
-  (advice-add 'supersonic--mpv-handle-message :after #'supersonic-mpris--handle-message)
-  (advice-add 'supersonic-mpv-start :after #'supersonic-mpris--after-mpv-start)
-  (advice-add 'supersonic-mpv-enqueue :around #'supersonic-mpris--around-mpv-enqueue)
-  (advice-add 'supersonic-mpv-kill :after #'supersonic-mpris--after-mpv-kill)
+  ;; Drive the interface from the playback facade, without either side
+  ;; needing to know we exist.
+  (add-hook 'supersonic-playback-track-change-hook #'supersonic-mpris--sync)
+  (add-hook 'supersonic-playback-state-change-hook #'supersonic-mpris--sync)
   ;; Only now, with every method/property handler wired up locally, put the
   ;; well-known name on the bus -- see the docstring above for why this has
   ;; to be last.
@@ -418,25 +396,23 @@ broken until they are restarted."
     (user-error "Could not acquire %s (already running elsewhere?)" supersonic-mpris--bus-name)))
 
 (defun supersonic-mpris--unregister ()
-  "Tear down the MPRIS D-Bus service and stop observing supersonic.el."
-  (advice-remove 'supersonic--mpv-handle-message #'supersonic-mpris--handle-message)
-  (advice-remove 'supersonic-mpv-start #'supersonic-mpris--after-mpv-start)
-  (advice-remove 'supersonic-mpv-enqueue #'supersonic-mpris--around-mpv-enqueue)
-  (advice-remove 'supersonic-mpv-kill #'supersonic-mpris--after-mpv-kill)
+  "Tear down the MPRIS D-Bus service and stop observing the playback facade."
+  (remove-hook 'supersonic-playback-track-change-hook #'supersonic-mpris--sync)
+  (remove-hook 'supersonic-playback-state-change-hook #'supersonic-mpris--sync)
   (dolist (registration supersonic-mpris--registrations)
     (dbus-unregister-object registration))
   (setq supersonic-mpris--registrations nil)
   (dbus-unregister-service :session supersonic-mpris--bus-name)
   (setq supersonic-mpris--playback-status "Stopped")
-  (setq supersonic-mpris--track-index nil)
+  (setq supersonic-mpris--track-id nil)
   (setq supersonic-mpris--track-song nil))
 
 ;;;###autoload
 (define-minor-mode supersonic-mpris-mode
-  "Expose supersonic.el's mpv playback as an MPRIS player over D-Bus.
+  "Expose supersonic.el's playback as an MPRIS player over D-Bus.
 
 Once enabled, desktop environments and tools such as playerctl can see
-supersonic.el under the name `org.mpris.MediaPlayer2.supersonic' on the
+supersonic.el under the name `org.mpris.MediaPlayer2.supersonicel' on the
 session bus, and use it to Play/Pause/Stop/Next/Previous and read
 Metadata (title/artist/album/length).  Seeking, volume, shuffle and
 loop control are intentionally out of scope.

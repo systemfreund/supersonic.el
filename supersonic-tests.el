@@ -1675,33 +1675,138 @@ crosses into another bucket -- once every twelve seconds for a
               (should (= 1 redraws))))
         (kill-buffer buff)))))
 
-(ert-deftest supersonic-tests-mpris-sees-messages-split-across-socket-reads ()
-  "MPRIS observes mpv via `supersonic--mpv-handle-message', which receives
-whole parsed messages, not via the socket filter one level below it.  A
-single read off mpv's IPC socket is not guaranteed to hold whole
-newline-terminated messages -- carrying the trailing partial one over
-is the entire reason that filter exists -- so re-splitting its raw
-chunk dropped whatever event straddled a chunk boundary, leaving
-PlaybackStatus stale on the bus."
+(ert-deftest supersonic-tests-mpris-sync-announces-live-status-and-metadata ()
+  "`supersonic-mpris--sync' pulls the active backend's track id and pause
+state through the generic facade -- `supersonic-playback-live-p' and
+`supersonic-playback-status', never anything backend-specific -- and
+announces them over D-Bus: PlaybackStatus right away, Metadata once the
+song lookup a new track id kicks off has landed."
   (skip-unless (and (featurep 'dbusbind) (require 'supersonic-mpris nil t)))
   (let ((statuses nil)
-        (supersonic-mpv--socket-buffer "")
-        (supersonic-mpris--playback-status "Stopped"))
+        (supersonic-mpris--playback-status "Stopped")
+        (supersonic-mpris--track-id nil)
+        (supersonic-mpris--track-song nil))
     (cl-letf (((symbol-function 'supersonic-mpris--set-player-property)
                (lambda (property value)
                  (when (equal property "PlaybackStatus")
                    (push value statuses))))
-              ((symbol-function 'supersonic-mpris--announce-metadata) #'ignore))
-      (advice-add 'supersonic--mpv-handle-message :after #'supersonic-mpris--handle-message)
-      (unwind-protect
-          (progn
-            ;; One `pause' property-change, delivered in two reads that
-            ;; split it mid-message.
-            (supersonic--mpv-socket-filter nil "{\"event\":\"property-change\",\"name\":\"pau")
-            (should (equal '() statuses))
-            (supersonic--mpv-socket-filter nil "se\",\"data\":true}\n")
-            (should (equal '("Paused") statuses)))
-        (advice-remove 'supersonic--mpv-handle-message #'supersonic-mpris--handle-message)))))
+              ((symbol-function 'supersonic-build-url) (lambda (_endpoint _extra-query) "dummy://url"))
+              ((symbol-function 'supersonic-get-json)
+               (aio-lambda (_url) '(("subsonic-response" ("song" ("title" . "A Song")))))))
+      (supersonic-tests--with-backend `((live-p . ,(lambda () t))
+                                        (status
+                                         .
+                                         ,(lambda (key)
+                                            (let ((promise (aio-promise)))
+                                              (aio-resolve
+                                               promise
+                                               (lambda () (alist-get key '((track-id . "id-1") (paused . nil)))))
+                                              promise))))
+                                      (supersonic-tests--resolve (supersonic-mpris--sync))
+                                      (should (equal '("Playing") statuses))
+                                      (should (equal "id-1" supersonic-mpris--track-id))
+                                      (should (supersonic-tests--wait-for (lambda () supersonic-mpris--track-song)))
+                                      (should (equal "A Song" (assoc-default "title" supersonic-mpris--track-song)))))))
+
+(ert-deftest supersonic-tests-mpris-sync-reports-stopped-when-not-live ()
+  "`supersonic-mpris--sync' announces \"Stopped\" and clears Metadata once
+the active backend has nothing live, without consulting `status' at
+all -- the same guard `supersonic-playback-status' applies itself."
+  (skip-unless (and (featurep 'dbusbind) (require 'supersonic-mpris nil t)))
+  (let ((statuses nil)
+        (metadata-announcements 0)
+        (consulted nil)
+        (supersonic-mpris--playback-status "Playing")
+        (supersonic-mpris--track-id "id-1")
+        (supersonic-mpris--track-song '(("title" . "A Song"))))
+    (cl-letf (((symbol-function 'supersonic-mpris--set-player-property)
+               (lambda (property value)
+                 (when (equal property "PlaybackStatus")
+                   (push value statuses))
+                 (when (equal property "Metadata")
+                   (cl-incf metadata-announcements))
+                 value)))
+      (supersonic-tests--with-backend `((live-p . ,(lambda () nil))
+                                        (status
+                                         .
+                                         ,(lambda (_key)
+                                            (setq consulted t)
+                                            (aio-promise))))
+                                      (supersonic-tests--resolve (supersonic-mpris--sync))
+                                      (should (equal '("Stopped") statuses))
+                                      (should-not supersonic-mpris--track-id)
+                                      (should-not supersonic-mpris--track-song)
+                                      (should (= 1 metadata-announcements))
+                                      (should-not consulted)))))
+
+(ert-deftest supersonic-tests-mpris-play-toggles-only-when-paused ()
+  "The MPRIS Play method means \"resume\", never \"toggle\": the facade has
+no direct resume of its own, only `supersonic-playback-toggle-play', so
+`supersonic-mpris--play' asks whether playback is actually paused first
+and toggles only then -- toggling unconditionally would instead flip
+already-playing audio into paused."
+  (skip-unless (and (featurep 'dbusbind) (require 'supersonic-mpris nil t)))
+  (let ((toggles 0)
+        (paused t))
+    (supersonic-tests--with-backend `((live-p . ,(lambda () t))
+                                      (toggle-play . ,(lambda () (cl-incf toggles)))
+                                      (status
+                                       .
+                                       ,(lambda (_key)
+                                          (let ((promise (aio-promise)))
+                                            (aio-resolve promise (lambda () paused))
+                                            promise))))
+                                    (supersonic-tests--resolve (supersonic-mpris--play))
+                                    (should (= 1 toggles))
+                                    (setq paused nil)
+                                    (supersonic-tests--resolve (supersonic-mpris--play))
+                                    (should (= 1 toggles)))))
+
+(ert-deftest supersonic-tests-mpris-pause-toggles-only-when-playing ()
+  "The mirror image of `supersonic-mpris--play': Pause only toggles when
+playback is not already paused."
+  (skip-unless (and (featurep 'dbusbind) (require 'supersonic-mpris nil t)))
+  (let ((toggles 0)
+        (paused nil))
+    (supersonic-tests--with-backend `((live-p . ,(lambda () t))
+                                      (toggle-play . ,(lambda () (cl-incf toggles)))
+                                      (status
+                                       .
+                                       ,(lambda (_key)
+                                          (let ((promise (aio-promise)))
+                                            (aio-resolve promise (lambda () paused))
+                                            promise))))
+                                    (supersonic-tests--resolve (supersonic-mpris--pause))
+                                    (should (= 1 toggles))
+                                    (setq paused t)
+                                    (supersonic-tests--resolve (supersonic-mpris--pause))
+                                    (should (= 1 toggles)))))
+
+(ert-deftest supersonic-tests-mpris-controls-are-noops-when-nothing-is-live ()
+  "Every MPRIS Player control call is a no-op against the facade -- and
+never reaches `supersonic-mpv-kill' either -- when nothing is live, the
+same guard each of `supersonic-mpris--play'/`-pause'/`-play-pause'/
+`-stop'/`-next'/`-previous'/`-quit' applies before touching anything."
+  (skip-unless (and (featurep 'dbusbind) (require 'supersonic-mpris nil t)))
+  (let ((calls 0))
+    (supersonic-tests--with-backend `((live-p . ,(lambda () nil))
+                                      (toggle-play . ,(lambda () (cl-incf calls)))
+                                      (next . ,(lambda () (cl-incf calls)))
+                                      (prev . ,(lambda () (cl-incf calls)))
+                                      (status
+                                       .
+                                       ,(lambda (_key)
+                                          (cl-incf calls)
+                                          (aio-promise))))
+                                    (cl-letf (((symbol-function 'supersonic-mpv-kill) (lambda () (cl-incf calls))))
+                                      (supersonic-tests--resolve (supersonic-mpris--play))
+                                      (supersonic-tests--resolve (supersonic-mpris--pause))
+                                      (supersonic-mpris--play-pause)
+                                      (supersonic-mpris--stop)
+                                      (supersonic-mpris--next)
+                                      (supersonic-mpris--previous)
+                                      (supersonic-mpris--quit)
+                                      (should (= 0 calls))))))
 
 (defun supersonic-tests--package-files ()
   "Return the package's own source files, absolute, excluding this one."
@@ -1731,13 +1836,12 @@ genuinely void for anyone who requires that file on its own."
 
 (ert-deftest supersonic-tests-every-file-requires-the-options-file ()
   "Each file requires `supersonic-custom' rather than assuming a load order.
-`supersonic-mpris.el' is exempt: it requires `supersonic' whole.  See
-`supersonic-tests-user-options-all-live-in-one-file' for why this
+See `supersonic-tests-user-options-all-live-in-one-file' for why this
 matters -- without it, requiring e.g. just `supersonic-waveform' left
 `supersonic-waveform-buckets' void."
   (dolist (file (supersonic-tests--package-files))
     (let ((name (file-name-nondirectory file)))
-      (unless (member name '("supersonic-custom.el" "supersonic-mpris.el"))
+      (unless (equal name "supersonic-custom.el")
         (with-temp-buffer
           (insert-file-contents file)
           (goto-char (point-min))
