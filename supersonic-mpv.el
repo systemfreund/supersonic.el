@@ -233,7 +233,7 @@ already playing undisturbed and simply queues IDS after it."
         (when (and (string-equal event "property-change") (string-equal (alist-get 'name parsed-response) "pause"))
           (setq supersonic--paused (eq (alist-get 'data parsed-response) t))
           (run-hooks 'supersonic-playback-state-change-hook))
-        (when supersonic-scrobble-plays
+        (when supersonic-enable-scrobbling
           (cond
            ((string-equal event "end-file")
             (supersonic-scrobble (gethash (alist-get 'playlist_entry_id parsed-response) supersonic--playlist)))

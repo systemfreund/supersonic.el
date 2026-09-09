@@ -26,7 +26,7 @@ Example use-package config:
   :bind (("C-c m" . supersonic))
   :custom
   (supersonic-host "https://mysubsonicserver:4355") ;; For authentication see section below
-  (supersonic-scrobble-plays t)
+  (supersonic-enable-scrobbling t)
   (supersonic-enable-art t)
   (supersonic-enable-waveform t))
 ```

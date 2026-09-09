@@ -168,7 +168,7 @@ something new to show this often even between polls."
   :type 'boolean
   :group 'supersonic)
 
-(defcustom supersonic-scrobble-plays nil
+(defcustom supersonic-enable-scrobbling nil
   "Request that the supersonic server scrobble played tracks."
   :type 'boolean
   :group 'supersonic)

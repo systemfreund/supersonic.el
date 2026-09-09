@@ -195,7 +195,7 @@ there was one (nothing to submit the very first time a track starts,
 with no prior poll to have seen it in), and CURRENT-TRACK is only
 announced as now-playing when there is one (nothing to announce once
 the jukebox runs out of queue). `supersonic-scrobble' itself gates on
-`supersonic-scrobble-plays', so this needs no gate of its own."
+`supersonic-enable-scrobbling', so this needs no gate of its own."
   (when previous-track
     (supersonic-scrobble previous-track))
   (when current-track

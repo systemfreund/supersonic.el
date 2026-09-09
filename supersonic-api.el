@@ -146,7 +146,7 @@ Generic Subsonic plumbing rather than mpv- or jukebox-specific: both
 `supersonic-mpv.el' and `supersonic-jukebox.el' call this once they've
 worked out, from their own start/end-of-track signal, which id just
 started or finished."
-  (when supersonic-scrobble-plays
+  (when supersonic-enable-scrobbling
     (url-retrieve
      (supersonic-build-url
       "/scrobble.view"

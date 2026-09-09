@@ -1136,7 +1136,7 @@ through this predicate."
 callback.  Nothing reads that reply, and nothing else cleans it up, so
 without this every scrobbled track would leave a ` *http host:port*'
 buffer behind for the rest of the session."
-  (let ((supersonic-scrobble-plays t)
+  (let ((supersonic-enable-scrobbling t)
         (response nil))
     (cl-letf (((symbol-function 'supersonic-build-url) (lambda (_endpoint _extra-query) "dummy://url"))
               ((symbol-function 'url-retrieve)
@@ -2108,12 +2108,12 @@ unchanged, scrobbles nothing."
        (supersonic-tests--resolve (supersonic-jukebox--poll))
        (should-not scrobbles)))))
 
-(ert-deftest supersonic-tests-jukebox-scrobble-respects-scrobble-plays-flag ()
+(ert-deftest supersonic-tests-jukebox-scrobble-respects-enable-scrobbling-flag ()
   "Same as mpv, a track change on the jukebox only reaches the network
-when `supersonic-scrobble-plays' is set -- `supersonic-scrobble' itself
+when `supersonic-enable-scrobbling' is set -- `supersonic-scrobble' itself
 gates on it, so this backend needs no gate of its own."
   (supersonic-tests--with-jukebox
-   (let ((supersonic-scrobble-plays nil)
+   (let ((supersonic-enable-scrobbling nil)
          (requests 0))
      (cl-letf (((symbol-function 'url-retrieve) (lambda (&rest _) (cl-incf requests))))
        ;; Disabled: the very first track change reaches nothing.
@@ -2124,7 +2124,7 @@ gates on it, so this backend needs no gate of its own."
        ;; Enabled: a later track change does reach `url-retrieve', once
        ;; per scrobbled id -- proving the 0 above was the flag's doing
        ;; and not, say, a wiring mistake that never scrobbles at all.
-       (setq supersonic-scrobble-plays t)
+       (setq supersonic-enable-scrobbling t)
        (setq supersonic-tests--jukebox-playlist
              `(("currentIndex" . 1) ("playing" . t) ("position" . 0) ("entry" . ((("id" . "a")) (("id" . "b"))))))
        (supersonic-tests--resolve (supersonic-jukebox--poll))
