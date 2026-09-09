@@ -96,6 +96,28 @@ explicitly:
   (supersonic-mpris-mode t))
 ```
 
+## Jukebox playback
+
+`supersonic-jukebox.el` plays back through the Subsonic server's own
+remote jukebox (the `jukeboxControl` endpoint) instead of a local mpv
+process, so tracks play out of the server's own speakers. It is not
+loaded or activated automatically, and supersonic.el has no dependency
+on it. Enable it explicitly and select it as the active backend:
+
+```
+(use-package supersonic
+  :custom
+  (supersonic-playback-backend 'jukebox)
+  :config
+  (require 'supersonic-jukebox))
+```
+
+The Subsonic API has no push mechanism for jukebox state, so this
+backend polls the server every `supersonic-jukebox-poll-interval`
+seconds (a few, by default) for as long as `jukebox` stays the active
+backend. `prev`, `seek` and seeking by fraction are not implemented by
+this backend.
+
 ## Authentication
 
 Add a `~/.authinfo.gpg` or `~/.authinfo` file with the following contents

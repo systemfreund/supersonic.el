@@ -144,8 +144,17 @@ it costs a re-analysis of anything already cached, not just a redraw."
 
 (defcustom supersonic-now-playing-interval 1
   "Seconds between playback position updates in the now-playing buffer.
-Each update is a single query to the local mpv socket, and only runs
-while that buffer is both open and on display."
+Each update is a single query to the active backend via
+`supersonic-playback-status', and only runs while that buffer is both
+open and on display.
+
+Left at its own pace even under the `jukebox' backend, whose own poll
+timer (`supersonic-jukebox-poll-interval') only refreshes its cached
+position every few seconds: the two intervals are independent, and
+that backend interpolates the position it answers with forward from
+the wall clock time elapsed since its last poll (see
+`supersonic-jukebox--interpolated-position'), so it still has
+something new to show this often even between polls."
   :type 'number
   :group 'supersonic)
 
@@ -176,6 +185,19 @@ playback command is next used."
 
 (defcustom supersonic-mpv-timeout 0.5
   "Seconds to wait when starting or killing the mpv process."
+  :type 'number
+  :group 'supersonic)
+
+(defcustom supersonic-jukebox-poll-interval 3
+  "Seconds between jukeboxControl polls while `jukebox' is the active backend.
+The Subsonic API has no push mechanism for jukebox state, so
+`supersonic-jukebox.el' polls `action=get' on this interval instead,
+caching the result and firing the generalized playback hooks whenever
+the cached snapshot changes; the jukebox backend's status accessor and
+queue listing both answer from that cache rather than issuing a fresh
+request of their own. Lower values notice a track change or a pause
+toggled from another client sooner, at the cost of one request to the
+server per interval."
   :type 'number
   :group 'supersonic)
 
