@@ -140,6 +140,31 @@ EXTRA-QUERY is used for any extra query parameters"
        "Failed to load .authinfo, please provide auth configuration for
 supersonic, and ensure supersonic-host is set correctly"))))
 
+(defun supersonic-scrobble (id &optional now-playing)
+  "Scrobble ID and optionally use a NOW-PLAYING request.
+Generic Subsonic plumbing rather than mpv- or jukebox-specific: both
+`supersonic-mpv.el' and `supersonic-jukebox.el' call this once they've
+worked out, from their own start/end-of-track signal, which id just
+started or finished."
+  (when supersonic-scrobble-plays
+    (url-retrieve
+     (supersonic-build-url
+      "/scrobble.view"
+      `(("id" . ,id)
+        ;; send a submission by default
+        ("submission" .
+         ,(if now-playing
+              "false"
+            "true"))))
+     ;; Nothing here reads the reply, but `url-retrieve' still hands
+     ;; the callback a response buffer and then forgets about it --
+     ;; without this every scrobble leaves one ` *http host:port*'
+     ;; buffer behind for the rest of the session.  Killing it from
+     ;; inside the callback is safe: url-http has already handed the
+     ;; connection back to its keep-alive pool before calling us (see
+     ;; `url-http-activate-callback').
+     (lambda (_status) (kill-buffer (current-buffer))))))
+
 (defun supersonic--report-async-error (description err)
   "Tell the user that DESCRIPTION failed with ERR via the echo area.
 DESCRIPTION is a short present-tense phrase, e.g. \"fetch tracks\"."

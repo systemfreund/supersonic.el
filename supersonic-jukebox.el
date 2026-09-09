@@ -59,6 +59,13 @@
 ;; support: the action is sent and whatever error the server returns is
 ;; surfaced, the same way `supersonic-mpv-command' does for "mpv not
 ;; running".
+;;
+;; No Subsonic server scrobbles jukebox playback on its own, so this
+;; file has to do what `supersonic-mpv.el' does off mpv's own
+;; start-file/end-file events, but off a poll tick instead: whenever a
+;; poll's current track id differs from the previous poll's, the
+;; previous id is scrobbled as a submission and the new one as
+;; now-playing -- see `supersonic-jukebox--scrobble-track-change'.
 
 ;;; Code:
 (require 'seq)
@@ -177,6 +184,23 @@ by network latency and the jukebox's own position granularity."
         (+ position (- (float-time) (plist-get snapshot :polled-at)))
       position)))
 
+(defun supersonic-jukebox--scrobble-track-change (previous-track current-track)
+  "Scrobble PREVIOUS-TRACK and CURRENT-TRACK across a detected track change.
+No push/event mechanism means this file, unlike `supersonic-mpv.el',
+never sees an exact end-of-track moment -- so the previous poll's track
+id stands in for \"the track that just finished\" and the current
+poll's for \"the track that just started\", the same way mpv's own
+end-file/start-file pair does it. PREVIOUS-TRACK is only submitted when
+there was one (nothing to submit the very first time a track starts,
+with no prior poll to have seen it in), and CURRENT-TRACK is only
+announced as now-playing when there is one (nothing to announce once
+the jukebox runs out of queue). `supersonic-scrobble' itself gates on
+`supersonic-scrobble-plays', so this needs no gate of its own."
+  (when previous-track
+    (supersonic-scrobble previous-track))
+  (when current-track
+    (supersonic-scrobble current-track t)))
+
 (defun supersonic-jukebox--announce-changes (previous current)
   "Run the facade's hooks for whatever changed between PREVIOUS and CURRENT.
 Track-change when the identity of the playing entry moved -- including
@@ -185,11 +209,19 @@ live or not-live counts as a track change -- state-change when only
 play/pause did. Never fires the position-change hook: that one is for
 the sudden jump a seek makes, and this file does not implement seeking
 \(see #9\); a position simply creeping on between polls needs no signal
-of its own, the same as it needs none from mpv."
-  (if (not (equal (supersonic-jukebox--current-track previous) (supersonic-jukebox--current-track current)))
-      (run-hooks 'supersonic-playback-track-change-hook)
-    (unless (eq (plist-get previous :playing) (plist-get current :playing))
-      (run-hooks 'supersonic-playback-state-change-hook))))
+of its own, the same as it needs none from mpv.
+
+A track change is also what scrobbling keys off of -- see
+`supersonic-jukebox--scrobble-track-change' -- since a poll tick is all
+this backend ever gets to notice one."
+  (let ((previous-track (supersonic-jukebox--current-track previous))
+        (current-track (supersonic-jukebox--current-track current)))
+    (if (not (equal previous-track current-track))
+        (progn
+          (supersonic-jukebox--scrobble-track-change previous-track current-track)
+          (run-hooks 'supersonic-playback-track-change-hook))
+      (unless (eq (plist-get previous :playing) (plist-get current :playing))
+        (run-hooks 'supersonic-playback-state-change-hook)))))
 
 (aio-defun
  supersonic-jukebox--poll ()

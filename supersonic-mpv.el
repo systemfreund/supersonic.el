@@ -257,27 +257,6 @@ any trailing partial message is carried over in
     (dolist (parsed-response (mapcar #'json-read-from-string (seq-remove #'string-empty-p (butlast lines))))
       (supersonic--mpv-handle-message parsed-response))))
 
-(defun supersonic-scrobble (id &optional now-playing)
-  "Scrobble ID and optionally use a NOW-PLAYING request."
-  (when supersonic-scrobble-plays
-    (url-retrieve
-     (supersonic-build-url
-      "/scrobble.view"
-      `(("id" . ,id)
-        ;; send a submission by default
-        ("submission" .
-         ,(if now-playing
-              "false"
-            "true"))))
-     ;; Nothing here reads the reply, but `url-retrieve' still hands
-     ;; the callback a response buffer and then forgets about it --
-     ;; without this every scrobble leaves one ` *http host:port*'
-     ;; buffer behind for the rest of the session.  Killing it from
-     ;; inside the callback is safe: url-http has already handed the
-     ;; connection back to its keep-alive pool before calling us (see
-     ;; `url-http-activate-callback').
-     (lambda (_status) (kill-buffer (current-buffer))))))
-
 (defun supersonic-mpv--send (string)
   "Write STRING to the mpv IPC socket, returning non-nil on success.
 Guards with `process-live-p' immediately beforehand and catches the

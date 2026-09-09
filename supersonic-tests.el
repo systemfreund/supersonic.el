@@ -2060,6 +2060,76 @@ finds nothing new."
      (should (= 1 track-changes))
      (should (= 1 state-changes)))))
 
+(ert-deftest supersonic-tests-jukebox-poll-scrobbles-old-and-new-track-on-change ()
+  "A poll that finds the current track id changed scrobbles the previous
+track as a submission and the new one as now-playing, the same as
+mpv's end-file/start-file pair does -- see
+`supersonic-jukebox--scrobble-track-change'.  The very first poll ever
+has no previous track to submit, and a poll that finds nothing new
+scrobbles nothing at all."
+  (supersonic-tests--with-jukebox
+   (let ((scrobbles nil))
+     (cl-letf (((symbol-function 'supersonic-scrobble)
+                (lambda (id &optional now-playing) (push (cons id now-playing) scrobbles))))
+       ;; First poll ever: nothing to submit yet, only the new track announced.
+       (setq supersonic-tests--jukebox-playlist
+             `(("currentIndex" . 0) ("playing" . t) ("position" . 0) ("entry" . ((("id" . "a")) (("id" . "b"))))))
+       (supersonic-tests--resolve (supersonic-jukebox--poll))
+       (should (equal '(("a" . t)) (reverse scrobbles)))
+       ;; Same current track ("a"), just a longer playlist: no scrobble.
+       (setq scrobbles nil)
+       (supersonic-tests--resolve (supersonic-jukebox--poll))
+       (should-not scrobbles)
+       ;; Track changes from "a" to "b": submit "a", announce "b".
+       (setq supersonic-tests--jukebox-playlist
+             `(("currentIndex" . 1) ("playing" . t) ("position" . 0) ("entry" . ((("id" . "a")) (("id" . "b"))))))
+       (supersonic-tests--resolve (supersonic-jukebox--poll))
+       (should (equal '(("a" . nil) ("b" . t)) (reverse scrobbles)))
+       ;; Queue runs out: submit "b", nothing to announce.
+       (setq scrobbles nil)
+       (setq supersonic-tests--jukebox-playlist
+             `(("currentIndex" . -1) ("playing" . :json-false) ("position" . 0) ("entry" . nil)))
+       (supersonic-tests--resolve (supersonic-jukebox--poll))
+       (should (equal '(("b" . nil)) (reverse scrobbles)))))))
+
+(ert-deftest supersonic-tests-jukebox-poll-does-not-scrobble-on-state-change-alone ()
+  "A poll that only sees play/pause flip, with the current track
+unchanged, scrobbles nothing."
+  (supersonic-tests--with-jukebox
+   (let ((scrobbles nil))
+     (cl-letf (((symbol-function 'supersonic-scrobble)
+                (lambda (id &optional now-playing) (push (cons id now-playing) scrobbles))))
+       (setq supersonic-tests--jukebox-playlist
+             `(("currentIndex" . 0) ("playing" . t) ("position" . 0) ("entry" . ((("id" . "a"))))))
+       (supersonic-tests--resolve (supersonic-jukebox--poll))
+       (setq scrobbles nil)
+       (setq supersonic-tests--jukebox-playlist
+             `(("currentIndex" . 0) ("playing" . :json-false) ("position" . 0) ("entry" . ((("id" . "a"))))))
+       (supersonic-tests--resolve (supersonic-jukebox--poll))
+       (should-not scrobbles)))))
+
+(ert-deftest supersonic-tests-jukebox-scrobble-respects-scrobble-plays-flag ()
+  "Same as mpv, a track change on the jukebox only reaches the network
+when `supersonic-scrobble-plays' is set -- `supersonic-scrobble' itself
+gates on it, so this backend needs no gate of its own."
+  (supersonic-tests--with-jukebox
+   (let ((supersonic-scrobble-plays nil)
+         (requests 0))
+     (cl-letf (((symbol-function 'url-retrieve) (lambda (&rest _) (cl-incf requests))))
+       ;; Disabled: the very first track change reaches nothing.
+       (setq supersonic-tests--jukebox-playlist
+             `(("currentIndex" . 0) ("playing" . t) ("position" . 0) ("entry" . ((("id" . "a")) (("id" . "b"))))))
+       (supersonic-tests--resolve (supersonic-jukebox--poll))
+       (should (= 0 requests))
+       ;; Enabled: a later track change does reach `url-retrieve', once
+       ;; per scrobbled id -- proving the 0 above was the flag's doing
+       ;; and not, say, a wiring mistake that never scrobbles at all.
+       (setq supersonic-scrobble-plays t)
+       (setq supersonic-tests--jukebox-playlist
+             `(("currentIndex" . 1) ("playing" . t) ("position" . 0) ("entry" . ((("id" . "a")) (("id" . "b"))))))
+       (supersonic-tests--resolve (supersonic-jukebox--poll))
+       (should (= 2 requests))))))
+
 (ert-deftest supersonic-tests-jukebox-poll-reports-failure-once ()
   "A failing poll marks the backend not live, but reports the failure to
 the user -- and runs the track-change hook, so a stale snapshot stops
