@@ -381,8 +381,15 @@ most ticks (see `supersonic-now-playing--progress-bucket')."
              buff 'waveform (supersonic-waveform-propertize envelope progress))))))))
 
 (defun supersonic-now-playing--insert-button (label command)
-  "Insert a button reading LABEL that runs COMMAND when activated."
-  (insert-text-button label 'action (lambda (_button) (call-interactively command)) 'follow-link t))
+  "Insert a boxed button reading LABEL that runs COMMAND when activated.
+Padded with a space on each side and given `supersonic-now-playing-button'
+so it reads as its own pushable control -- the way ready-player boxes
+its transport row -- rather than as underlined link text."
+  (insert-text-button
+   (format " %s " label)
+   'face 'supersonic-now-playing-button
+   'action (lambda (_button) (call-interactively command))
+   'follow-link t))
 
 (defun supersonic-now-playing--format-time (seconds longest)
   "Format SECONDS as a clock string no longer than it has to be.
@@ -483,8 +490,8 @@ from) -- see `supersonic-now-playing--track-id'."
             (insert "  ")
             (supersonic-now-playing--insert-button
              (if paused
-                 " ▶ "
-               " ⏸ ")
+                 "▶"
+               "⏸")
              #'supersonic-toggle-playing)
             (insert "  ")
             (supersonic-now-playing--insert-button "▶▶|" #'supersonic-skip-track)
