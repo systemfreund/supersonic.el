@@ -63,23 +63,13 @@ Keys in that buffer: `SPC` play/pause, `n`/`p` next/previous track,
 
 Enabling `supersonic-enable-waveform` adds a clickable waveform seekbar
 below the transport buttons, click anywhere on it to seek there. 
-`supersonic-waveform-buckets` sets both its resolution and how
-finely the track is analyzed; `supersonic-waveform-width`/
-`-height` set its display size. `supersonic-waveform-samplerate` sets
-how much audio detail the analysis looks at, and so what it costs in
-time and memory. Envelopes are cached on disk under
-`supersonic-cache-path`, keyed on the bucket count and the sample rate,
-so changing either costs a one-off re-analysis rather than mixing
-measurements.
+`supersonic-waveform-width`/`-height` set its display size. 
 
 ## Cover art
 
 Cover art needs `supersonic-enable-art` to be enabled, and a graphical 
-frame to draw it in. Its size is set 
-per view: `supersonic-list-art-size`  for the album and podcast lists, 
-`supersonic-now-playing-art-size` here. Each is both the display height 
-in pixels and the size requested from the server, and the cache keeps 
-one file per size, so raising either one costs a single re-download.
+frame to draw it in. Its size is set per view: `supersonic-list-art-size` 
+for the album and podcast lists, `supersonic-now-playing-art-size` here. 
 
 ## MPRIS
 
@@ -99,10 +89,10 @@ explicitly:
 ## Jukebox playback
 
 `supersonic-jukebox.el` plays back through the Subsonic server's own
-remote jukebox (the `jukeboxControl` endpoint) instead of a local mpv
-process, so tracks play out of the server's own speakers. It is not
-loaded or activated automatically, and supersonic.el has no dependency
-on it. Enable it explicitly and select it as the active backend:
+remote jukebox instead of a local mpv process, so tracks play out of 
+the server's own speakers. It is not loaded or activated automatically, 
+and supersonic.el has no dependency on it. Enable it explicitly and 
+select it as the active backend:
 
 ```
 (use-package supersonic
@@ -111,12 +101,6 @@ on it. Enable it explicitly and select it as the active backend:
   :config
   (require 'supersonic-jukebox))
 ```
-
-The Subsonic API has no push mechanism for jukebox state, so this
-backend polls the server every `supersonic-jukebox-poll-interval`
-seconds (a few, by default) for as long as `jukebox` stays the active
-backend. `prev`, `seek` and seeking by fraction are not implemented by
-this backend.
 
 ## Authentication
 
