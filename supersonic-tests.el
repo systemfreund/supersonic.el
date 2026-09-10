@@ -1964,13 +1964,13 @@ In call order."
 (ert-deftest supersonic-tests-jukebox-is-registered-as-a-backend ()
   "Loading `supersonic-jukebox' registers `jukebox' under that name,
 implementing every operation the ticket asks for -- start, enqueue,
-toggle-play, next, plus the liveness/status/queue plumbing every
-backend needs -- even though it leaves `prev'/`stop'/`seek'/
-`seek-fraction' out, which `supersonic-playback-operations' allows any
+toggle-play, next, prev, seek, seek-fraction, plus the
+liveness/status/queue plumbing every backend needs -- even though it
+leaves `stop' out, which `supersonic-playback-operations' allows any
 backend to do."
   (let ((operations (gethash 'jukebox supersonic-playback--backends)))
     (should operations)
-    (dolist (operation '(start enqueue toggle-play next live-p status queue))
+    (dolist (operation '(start enqueue toggle-play next prev seek seek-fraction live-p status queue))
       (should (functionp (alist-get operation operations))))))
 
 (ert-deftest supersonic-tests-jukebox-poll-caches-status-and-queue ()
@@ -2250,6 +2250,110 @@ plus one, read from the cache rather than a fresh request."
    (should (equal '("skip" "get") (supersonic-tests--jukebox-request-actions)))
    (let ((skip-request (car (reverse supersonic-tests--jukebox-requests))))
      (should (equal "2" (alist-get "index" skip-request nil nil #'equal))))))
+
+(ert-deftest supersonic-tests-jukebox-prev-skips-to-the-preceding-index ()
+  "`supersonic-jukebox-prev' sends `skip' with the cached current index
+minus one, read from the cache rather than a fresh request -- the
+jukeboxControl mirror of `supersonic-jukebox-next', since jukeboxControl
+has no dedicated \"previous track\" action of its own."
+  (supersonic-tests--with-jukebox
+   (setq supersonic-tests--jukebox-playlist
+         `(("currentIndex" . 2)
+           ("playing" . t)
+           ("position" . 0)
+           ("entry" . ((("id" . "a")) (("id" . "b")) (("id" . "c"))))))
+   (supersonic-tests--resolve (supersonic-jukebox--poll))
+   (setq supersonic-tests--jukebox-requests nil)
+   (supersonic-tests--resolve (supersonic-jukebox--prev))
+   (should (equal '("skip" "get") (supersonic-tests--jukebox-request-actions)))
+   (let ((skip-request (car (reverse supersonic-tests--jukebox-requests))))
+     (should (equal "1" (alist-get "index" skip-request nil nil #'equal))))))
+
+(ert-deftest supersonic-tests-jukebox-seek-adds-offset-to-interpolated-position ()
+  "`supersonic-jukebox-seek' sends `skip' back to the current index with
+an absolute `offset' -- the interpolated current position plus the
+requested relative offset, since `skip' has no relative seek of its
+own -- and fires the position-change hook once the poll it triggers
+lands."
+  (supersonic-tests--with-jukebox
+   (let ((supersonic-playback-position-change-hook nil)
+         (position-changes 0))
+     (add-hook 'supersonic-playback-position-change-hook (lambda () (cl-incf position-changes)))
+     (setq supersonic-tests--jukebox-playlist
+           `(("currentIndex" . 1)
+             ("playing" . t)
+             ("position" . 10)
+             ("entry" . ((("id" . "a")) (("id" . "b") ("duration" . 60))))))
+     (supersonic-tests--resolve (supersonic-jukebox--poll))
+     (supersonic-tests--jukebox-advance-clock 2)
+     (setq supersonic-tests--jukebox-requests nil)
+     (supersonic-tests--resolve (supersonic-jukebox--seek 5))
+     (should (equal '("skip" "get") (supersonic-tests--jukebox-request-actions)))
+     (let ((skip-request (car (reverse supersonic-tests--jukebox-requests))))
+       (should (equal "1" (alist-get "index" skip-request nil nil #'equal)))
+       ;; 10s cached position, interpolated 2s further, plus the 5s
+       ;; relative seek requested.
+       (should (equal "17" (alist-get "offset" skip-request nil nil #'equal))))
+     (should (= 1 position-changes)))))
+
+(ert-deftest supersonic-tests-jukebox-seek-does-not-go-below-zero ()
+  "A backward seek past the start of the track clamps to an `offset' of 0
+rather than sending `skip' a negative one."
+  (supersonic-tests--with-jukebox
+   (setq supersonic-tests--jukebox-playlist
+         `(("currentIndex" . 0) ("playing" . t) ("position" . 3) ("entry" . ((("id" . "a") ("duration" . 60))))))
+   (supersonic-tests--resolve (supersonic-jukebox--poll))
+   (setq supersonic-tests--jukebox-requests nil)
+   (supersonic-tests--resolve (supersonic-jukebox--seek -10))
+   (let ((skip-request (car (reverse supersonic-tests--jukebox-requests))))
+     (should (equal "0" (alist-get "offset" skip-request nil nil #'equal))))))
+
+(ert-deftest supersonic-tests-jukebox-seek-fraction-multiplies-by-duration ()
+  "`supersonic-jukebox-seek-fraction' sends `skip' with an `offset' that is
+the current track's cached `:duration' multiplied by the requested
+fraction, since `skip' wants a position in seconds and the waveform
+seekbar only knows a position as a fraction of the image it was
+clicked in."
+  (supersonic-tests--with-jukebox
+   (let ((supersonic-playback-position-change-hook nil)
+         (position-changes 0))
+     (add-hook 'supersonic-playback-position-change-hook (lambda () (cl-incf position-changes)))
+     (setq supersonic-tests--jukebox-playlist
+           `(("currentIndex" . 0) ("playing" . t) ("position" . 0) ("entry" . ((("id" . "a") ("duration" . 200))))))
+     (supersonic-tests--resolve (supersonic-jukebox--poll))
+     (setq supersonic-tests--jukebox-requests nil)
+     (supersonic-tests--resolve (supersonic-jukebox--seek-fraction 0.25))
+     (let ((skip-request (car (reverse supersonic-tests--jukebox-requests))))
+       (should (equal "0" (alist-get "index" skip-request nil nil #'equal)))
+       (should (equal "50" (alist-get "offset" skip-request nil nil #'equal))))
+     (should (= 1 position-changes)))))
+
+(ert-deftest supersonic-tests-jukebox-seek-fraction-falls-back-to-zero-without-a-duration ()
+  "A missing `duration' on the current track's entry -- the Subsonic API
+marks it optional -- seeks to an `offset' of 0 rather than erroring on
+the arithmetic."
+  (supersonic-tests--with-jukebox
+   (setq supersonic-tests--jukebox-playlist
+         `(("currentIndex" . 0) ("playing" . t) ("position" . 0) ("entry" . ((("id" . "a"))))))
+   (supersonic-tests--resolve (supersonic-jukebox--poll))
+   (setq supersonic-tests--jukebox-requests nil)
+   (supersonic-tests--resolve (supersonic-jukebox--seek-fraction 0.5))
+   (let ((skip-request (car (reverse supersonic-tests--jukebox-requests))))
+     (should (equal "0" (alist-get "offset" skip-request nil nil #'equal))))))
+
+(ert-deftest supersonic-tests-jukebox-seek-surfaces-a-server-error ()
+  "A server that rejects `skip''s `offset' parameter -- e.g. Ampache -- has
+its error surfaced rather than failing silently, the same as any other
+jukebox action's."
+  (supersonic-tests--with-jukebox
+   (setq supersonic-tests--jukebox-playlist
+         `(("currentIndex" . 0) ("playing" . t) ("position" . 0) ("entry" . ((("id" . "a") ("duration" . 60))))))
+   (supersonic-tests--resolve (supersonic-jukebox--poll))
+   (let ((reports 0))
+     (cl-letf (((symbol-function 'supersonic-get-json) (aio-lambda (_url) (error "Offset is not supported")))
+               ((symbol-function 'supersonic--report-async-error) (lambda (&rest _) (cl-incf reports))))
+       (supersonic-tests--resolve (supersonic-jukebox--seek 5))
+       (should (= 1 reports))))))
 
 (ert-deftest supersonic-tests-jukebox-polls-only-while-active ()
   "The poll timer starts as `supersonic-playback-backend' becomes

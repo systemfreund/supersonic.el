@@ -58,7 +58,18 @@
 ;; No capability pre-checking is done for actions some servers may not
 ;; support: the action is sent and whatever error the server returns is
 ;; surfaced, the same way `supersonic-mpv-command' does for "mpv not
-;; running".
+;; running". This matters in particular for seeking (see
+;; `supersonic-jukebox--seek'/`-seek-fraction'): jukeboxControl's `skip'
+;; takes an `offset' parameter some servers accept and others (e.g.
+;; Ampache) reject outright, and such a rejection is left to surface
+;; the same way any other action's would.
+;;
+;; jukeboxControl has no dedicated "previous track" action either, only
+;; `skip' to an arbitrary index -- so `supersonic-jukebox--prev' skips
+;; to the cached snapshot's `:current-index' minus one, and seeking
+;; skips to the current index with an `offset', the position within the
+;; track `skip' wants in place of mpv's relative seconds -- see
+;; `supersonic-jukebox--seek' for the conversion.
 ;;
 ;; No Subsonic server scrobbles jukebox playback on its own, so this
 ;; file has to do what `supersonic-mpv.el' does off mpv's own
@@ -87,10 +98,13 @@ playlist, in order; `:current-index', the 0-based index into `:entries'
 of the playing entry, or -1 for none; `:playing', non-nil if the
 jukebox is actually playing rather than paused; `:position', the
 current track's position in seconds as of `:polled-at', a `float-time'
-timestamp of when this snapshot was taken. `supersonic-jukebox-status',
-`-queue' and `-live-p' all answer from this rather than issuing a
-fresh request -- see `supersonic-jukebox--poll'; `:position' itself is
-interpolated forward from `:polled-at' rather than read verbatim, see
+timestamp of when this snapshot was taken; `:duration', the current
+track's duration in seconds, or nil if there is no current track or the
+server left it out -- see `supersonic-jukebox--seek-fraction', the only
+reader of this field, for why. `supersonic-jukebox-status', `-queue'
+and `-live-p' all answer from this rather than issuing a fresh request
+-- see `supersonic-jukebox--poll'; `:position' itself is interpolated
+forward from `:polled-at' rather than read verbatim, see
 `supersonic-jukebox--interpolated-position'.")
 
 (defvar supersonic-jukebox--live nil
@@ -147,18 +161,26 @@ stored as `:polled-at' -- see `supersonic-jukebox--interpolated-position'.
 attributes it is built from (currentIndex/playing/position) are shared
 with the bare jukeboxStatus other actions return, which this file
 never parses on its own -- see the commentary at the top for why a
-poll always re-fetches the whole playlist instead.
+poll always re-fetches the whole playlist instead. `:duration' is
+pulled from the same `entry' list, off whichever one `currentIndex'
+points at -- a song entry carries its own \"duration\" the same way any
+other Subsonic song listing does -- rather than tracked per-entry,
+since the only use for it is seeking within the track currently
+playing.
 
 `:playing' is compared against `t' explicitly rather than taken as any
 non-nil value, the same as `supersonic--mpv-handle-message' has to for
 mpv's own \"pause\" property: `json-read' turns JSON's false into
 `:json-false', which is itself non-nil in Lisp."
-  (list
-   :entries (mapcar (lambda (entry) (assoc-default "id" entry)) (assoc-default "entry" playlist))
-   :current-index (truncate (or (assoc-default "currentIndex" playlist) -1))
-   :playing (eq (assoc-default "playing" playlist) t)
-   :position (assoc-default "position" playlist)
-   :polled-at polled-at))
+  (let* ((entries (assoc-default "entry" playlist))
+         (current-index (truncate (or (assoc-default "currentIndex" playlist) -1))))
+    (list
+     :entries (mapcar (lambda (entry) (assoc-default "id" entry)) entries)
+     :current-index current-index
+     :playing (eq (assoc-default "playing" playlist) t)
+     :position (assoc-default "position" playlist)
+     :duration (and (>= current-index 0) (assoc-default "duration" (nth current-index entries)))
+     :polled-at polled-at)))
 
 (defun supersonic-jukebox--current-track (snapshot)
   "Return the supersonic track id SNAPSHOT's `:current-index' points at, or nil.
@@ -206,10 +228,13 @@ the jukebox runs out of queue). `supersonic-scrobble' itself gates on
 Track-change when the identity of the playing entry moved -- including
 between nothing and something, the same as any other backend going
 live or not-live counts as a track change -- state-change when only
-play/pause did. Never fires the position-change hook: that one is for
-the sudden jump a seek makes, and this file does not implement seeking
-\(see #9\); a position simply creeping on between polls needs no signal
-of its own, the same as it needs none from mpv.
+play/pause did. Never fires the position-change hook itself: that one
+is for the sudden jump a seek makes, and a poll landing on its own
+schedule has no way to tell a seek someone requested apart from a
+position that simply crept on since the last one -- so
+`supersonic-jukebox--seek' and `-seek-fraction' fire it themselves,
+right after the poll they trigger to pick up where the seek actually
+landed.
 
 A track change is also what scrobbling keys off of -- see
 `supersonic-jukebox--scrobble-track-change' -- since a poll tick is all
@@ -347,6 +372,73 @@ jukebox operation avoids a request just to learn current state."
   "Skip to the next track in the jukebox playlist."
   (ignore (supersonic-jukebox--next)))
 
+(aio-defun
+ supersonic-jukebox--prev ()
+ "Skip the jukebox to the entry before the cached snapshot's current one.
+jukeboxControl has no \"previous track\" action of its own, only `skip'
+to an arbitrary index -- see #9 -- so this is `supersonic-jukebox--next'
+with the cached `:current-index' decremented instead of incremented."
+ (supersonic--with-async-error-handling
+  nil "skip to the previous jukebox track"
+  (let ((index (1- (or (plist-get supersonic-jukebox--snapshot :current-index) -1))))
+    (aio-await (supersonic-jukebox--request "skip" `(("index" . ,(number-to-string index))))))
+  (aio-await (supersonic-jukebox--poll))))
+
+(defun supersonic-jukebox-prev ()
+  "Go to the previous track in the jukebox playlist."
+  (ignore (supersonic-jukebox--prev)))
+
+(aio-defun
+ supersonic-jukebox--seek (offset)
+ "Seek OFFSET seconds relative to the jukebox's current position.
+jukeboxControl's `skip' has no relative seek of its own: its `offset'
+parameter is an absolute position, in seconds, within the song named by
+its `index' parameter -- so this adds OFFSET to the cached snapshot's
+interpolated current position (see
+`supersonic-jukebox--interpolated-position') to get the absolute
+position `skip' wants, clamped to never go below the start of the
+track. Re-skipping the current index rather than a neighbouring one is
+what makes this a seek rather than a track change."
+ (supersonic--with-async-error-handling
+  nil "seek the jukebox"
+  (let* ((index (or (plist-get supersonic-jukebox--snapshot :current-index) -1))
+         (position (or (supersonic-jukebox--interpolated-position supersonic-jukebox--snapshot) 0))
+         (target (max 0 (round (+ position offset)))))
+    (aio-await
+     (supersonic-jukebox--request
+      "skip" `(("index" . ,(number-to-string index)) ("offset" . ,(number-to-string target))))))
+  (aio-await (supersonic-jukebox--poll)) (run-hooks 'supersonic-playback-position-change-hook)))
+
+(defun supersonic-jukebox-seek (offset)
+  "Seek OFFSET seconds relative to the current position on the jukebox."
+  (ignore (supersonic-jukebox--seek offset)))
+
+(aio-defun
+ supersonic-jukebox--seek-fraction (fraction)
+ "Seek the jukebox to FRACTION (0.0 to 1.0) of the way through the current track.
+`skip''s `offset' parameter wants a position in seconds, not a
+fraction, so this multiplies FRACTION by the cached snapshot's
+`:duration' -- see `supersonic-jukebox--parse-snapshot' -- to get it;
+the caller (a click in the waveform seekbar image) has no other way to
+know the track's duration itself. Falls back to an offset of 0 if the
+server left `:duration' out of the current track's entry -- the
+Subsonic API marks a song's \"duration\" optional, see
+`supersonic--format-duration' for the same caveat elsewhere in this
+package -- rather than erroring on the arithmetic."
+ (supersonic--with-async-error-handling
+  nil "seek the jukebox"
+  (let* ((index (or (plist-get supersonic-jukebox--snapshot :current-index) -1))
+         (duration (or (plist-get supersonic-jukebox--snapshot :duration) 0))
+         (target (round (* fraction duration))))
+    (aio-await
+     (supersonic-jukebox--request
+      "skip" `(("index" . ,(number-to-string index)) ("offset" . ,(number-to-string target))))))
+  (aio-await (supersonic-jukebox--poll)) (run-hooks 'supersonic-playback-position-change-hook)))
+
+(defun supersonic-jukebox-seek-fraction (fraction)
+  "Seek to FRACTION (0.0 to 1.0) of the way through the jukebox's current track."
+  (ignore (supersonic-jukebox--seek-fraction fraction)))
+
 ;;;
 ;;; Polling only while `jukebox' is the active backend
 ;;;
@@ -395,15 +487,19 @@ that happen afterwards."
 ;; Announce jukebox to the playback facade as we are loaded, so that the
 ;; generic `supersonic-playback-*' functions resolve to the wrappers
 ;; above as soon as `supersonic-playback-backend' selects `jukebox' --
-;; see `supersonic-playback.el'. `prev', `stop', `seek' and
-;; `seek-fraction' are left out, same as `supersonic-playback-operations'
-;; allows any backend to do; see #9 for `prev'/`seek'/`seek-fraction'.
+;; see `supersonic-playback.el'. `stop' is left out, same as
+;; `supersonic-playback-operations' allows any backend to do:
+;; jukeboxControl has no equivalent of tearing down mpv's local process,
+;; only `stop' the transport action `toggle-play' already uses.
 (supersonic-playback-register-backend
  'jukebox
  '((start . supersonic-jukebox-start)
    (enqueue . supersonic-jukebox-enqueue)
    (toggle-play . supersonic-jukebox-toggle-play)
    (next . supersonic-jukebox-next)
+   (prev . supersonic-jukebox-prev)
+   (seek . supersonic-jukebox-seek)
+   (seek-fraction . supersonic-jukebox-seek-fraction)
    (live-p . supersonic-jukebox-live-p)
    (status . supersonic-jukebox-status)
    (queue . supersonic-jukebox-queue)))
