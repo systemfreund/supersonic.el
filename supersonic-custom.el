@@ -235,14 +235,17 @@ than mixing envelopes measured at different rates."
   :group 'supersonic)
 
 (defface supersonic-now-playing-button
-  '((t :box t))
+  '((t :box t :height 0.85))
   "Face for the transport buttons in the now-playing buffer.
 Deliberately does not inherit the default `button' face: that one in
 turn inherits `link', whose underline and link color read as a
 hyperlink rather than a pushable control.  A plain box around the
 default face is the ready-player look this is going for instead; hover
 feedback still comes for free from `button-type-get's `mouse-face',
-which is unaffected by this face."
+which is unaffected by this face.  `:height' is relative (a float),
+scaling off whatever face this is displayed alongside, e.g. the label's
+`bold' next to the cover art, rather than a fixed point size that would
+stop tracking it."
   :group 'supersonic)
 
 (provide 'supersonic-custom)
