@@ -68,6 +68,23 @@ Enabling `supersonic-enable-waveform` adds a clickable waveform seekbar
 below the transport buttons, click anywhere on it to seek there. 
 `supersonic-waveform-width`/`-height` set its display size. 
 
+By default the now-playing buffer opens in the selected window, replacing
+whatever was there. To keep it pinned in its own window instead, e.g. to
+browse albums or tracks alongside it as in the screenshot above, put it
+in a side window via `display-buffer-alist`:
+
+```elisp
+(add-to-list 'display-buffer-alist
+             `(,supersonic-now-playing-buffer-name
+               (display-buffer-in-side-window)
+               (side . right)
+               (window-width . 0.3)))
+```
+
+`N`/`supersonic-show-now-playing` then always opens that buffer on the
+right, leaving whichever list buffer you had open (artist albums, search
+results, ...) in place on the left.
+
 ## Cover art
 
 Cover art needs `supersonic-enable-art` to be enabled, and a graphical 
