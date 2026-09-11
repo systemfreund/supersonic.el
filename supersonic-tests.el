@@ -1153,6 +1153,18 @@ buffer behind for the rest of the session."
   (with-current-buffer buff
     (string-match-p regexp (buffer-string))))
 
+(defun supersonic-tests--now-playing-label (buff)
+  "Return the text of BUFF's now-playing label next to the cover art.
+Distinct from `supersonic-tests--buffer-matches' because the plain
+\"Artist:\" field further down always shows the artist too -- reading
+this one by its `supersonic-now-playing-field' tag is what lets a test
+tell the label apart from that."
+  (with-current-buffer buff
+    (save-excursion
+      (goto-char (point-min))
+      (let ((match (text-property-search-forward 'supersonic-now-playing-field 'label t)))
+        (and match (buffer-substring-no-properties (prop-match-beginning match) (prop-match-end match)))))))
+
 (ert-deftest supersonic-tests-now-playing-buffer-follows-track-changes ()
   "An open now-playing buffer refreshes itself as mpv advances, with no
 manual refresh."
@@ -1246,7 +1258,9 @@ onwards -- which is all this is about -- is the same either way."
 
 (ert-deftest supersonic-tests-now-playing-buffer-follows-pause-toggle ()
   "An open now-playing buffer reflects pausing and resuming, which mpv
-reports as a property change rather than as a track event."
+reports as a property change rather than as a track event.  Playing has
+no label of its own -- only `(paused)' is ever shown, since that is the
+one state worth calling out."
   (supersonic-tests--with-mpv
    (cl-letf (((symbol-function 'supersonic-get-json)
               (aio-lambda (url) `(("subsonic-response" ("song" ("title" . ,url)))))))
@@ -1258,7 +1272,8 @@ reports as a property change rather than as a track event."
              (supersonic-mpv-start (list supersonic-tests--track-1))
              (should
               (supersonic-tests--wait-for
-               (lambda () (supersonic-tests--buffer-matches buff (regexp-quote "(playing)")))))
+               (lambda () (supersonic-tests--buffer-matches buff (regexp-quote supersonic-tests--track-1)))))
+             (should-not (supersonic-tests--buffer-matches buff (regexp-quote "(paused)")))
              (supersonic-toggle-playing)
              (should
               (supersonic-tests--wait-for
@@ -1266,7 +1281,55 @@ reports as a property change rather than as a track event."
              (supersonic-toggle-playing)
              (should
               (supersonic-tests--wait-for
-               (lambda () (supersonic-tests--buffer-matches buff (regexp-quote "(playing)"))))))
+               (lambda () (not (supersonic-tests--buffer-matches buff (regexp-quote "(paused)")))))))
+         (kill-buffer buff))))))
+
+(ert-deftest supersonic-tests-now-playing-label-cycles-between-title-and-artist ()
+  "With `supersonic-now-playing-cycle-label' enabled, each tick of
+`supersonic-now-playing--label-tick' swaps the label next to the cover
+art between the current track's title and artist, rather than the
+label sitting on the title alone."
+  (supersonic-tests--with-mpv
+   (cl-letf (((symbol-function 'supersonic-get-json)
+              (aio-lambda (url) `(("subsonic-response" ("song" ("title" . ,url) ("artist" . "Some Artist")))))))
+     (let ((buff (get-buffer-create supersonic-now-playing-buffer-name))
+           (supersonic-now-playing-cycle-label t))
+       (unwind-protect
+           (progn
+             (with-current-buffer buff
+               (supersonic-now-playing-mode))
+             (supersonic-mpv-start (list supersonic-tests--track-1))
+             (should
+              (supersonic-tests--wait-for
+               (lambda () (supersonic-tests--buffer-matches buff (regexp-quote supersonic-tests--track-1)))))
+             (should (equal supersonic-tests--track-1 (supersonic-tests--now-playing-label buff)))
+             (supersonic-now-playing--label-tick)
+             (should (equal "Some Artist" (supersonic-tests--now-playing-label buff)))
+             (supersonic-now-playing--label-tick)
+             (should (equal supersonic-tests--track-1 (supersonic-tests--now-playing-label buff))))
+         (supersonic-now-playing--stop-label-timer)
+         (kill-buffer buff))))))
+
+(ert-deftest supersonic-tests-now-playing-label-does-not-cycle-when-disabled ()
+  "With `supersonic-now-playing-cycle-label' at its default of nil,
+rendering never starts the cycling timer -- it stops one if it finds it
+running instead, which also cleans up after the previous test if its
+own timer has not self-cancelled yet -- so the label stays on the
+title and there is no timer left running to swap it later."
+  (supersonic-tests--with-mpv
+   (cl-letf (((symbol-function 'supersonic-get-json)
+              (aio-lambda (url) `(("subsonic-response" ("song" ("title" . ,url) ("artist" . "Some Artist")))))))
+     (let ((buff (get-buffer-create supersonic-now-playing-buffer-name)))
+       (unwind-protect
+           (progn
+             (with-current-buffer buff
+               (supersonic-now-playing-mode))
+             (supersonic-mpv-start (list supersonic-tests--track-1))
+             (should
+              (supersonic-tests--wait-for
+               (lambda () (supersonic-tests--buffer-matches buff (regexp-quote supersonic-tests--track-1)))))
+             (should (equal supersonic-tests--track-1 (supersonic-tests--now-playing-label buff)))
+             (should-not supersonic-now-playing--label-timer))
          (kill-buffer buff))))))
 
 (ert-deftest supersonic-tests-now-playing-falls-back-to-track-id ()

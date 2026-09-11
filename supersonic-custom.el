@@ -158,6 +158,21 @@ something new to show this often even between polls."
   :type 'number
   :group 'supersonic)
 
+(defcustom supersonic-now-playing-cycle-label nil
+  "Cycle the label next to the cover art between title and artist.
+Off by default, in which case the label is always the track's title
+-- see `supersonic-now-playing-cycle-label-interval' for how often it
+alternates once this is on."
+  :type 'boolean
+  :group 'supersonic)
+
+(defcustom supersonic-now-playing-cycle-label-interval 10
+  "Seconds between swaps of the now-playing label between title and artist.
+Only takes effect while `supersonic-now-playing-cycle-label' is
+enabled."
+  :type 'number
+  :group 'supersonic)
+
 (defcustom supersonic-album-list-count 50
   "Number of albums to display in random/newest albums etc."
   :type 'integer

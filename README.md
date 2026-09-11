@@ -68,6 +68,11 @@ Enabling `supersonic-enable-waveform` adds a clickable waveform seekbar
 below the transport buttons, click anywhere on it to seek there. 
 `supersonic-waveform-width`/`-height` set its display size. 
 
+The label next to the cover art shows the track's title by default.
+Enabling `supersonic-now-playing-cycle-label` makes it alternate between
+title and artist instead, every `supersonic-now-playing-cycle-label-interval`
+seconds (10 by default).
+
 By default the now-playing buffer opens in the selected window, replacing
 whatever was there. To keep it pinned in its own window instead, e.g. to
 browse albums or tracks alongside it as in the screenshot above, put it
