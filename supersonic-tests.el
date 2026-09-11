@@ -219,6 +219,7 @@ jukebox told to stop exactly the way stopping it directly always did --
 and only then makes the new backend active, per #11."
   (let ((supersonic-playback-backend 'test-from)
         (supersonic-playback--backends (copy-hash-table supersonic-playback--backends))
+        (supersonic-playback-sync-queue-on-switch nil)
         (stopped nil))
     (supersonic-playback-register-backend 'test-from `((stop . ,(lambda () (push 'from stopped)))))
     (supersonic-playback-register-backend 'test-to `((stop . ,(lambda () (push 'to stopped)))))
@@ -231,6 +232,7 @@ and only then makes the new backend active, per #11."
 nothing to switch away from."
   (let ((supersonic-playback-backend 'test-from)
         (supersonic-playback--backends (copy-hash-table supersonic-playback--backends))
+        (supersonic-playback-sync-queue-on-switch nil)
         (stopped nil))
     (supersonic-playback-register-backend 'test-from `((stop . ,(lambda () (push 'from stopped)))))
     (supersonic-playback-switch-backend 'test-from)
