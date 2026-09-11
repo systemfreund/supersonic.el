@@ -9,6 +9,8 @@ works with any server implementing the Subsonic API, such as
 [Gonic](https://github.com/sentriz/gonic) or [Ampache](https://ampache.org/).
 
 <img width="1924" height="1081" alt="image" src="https://github.com/user-attachments/assets/e7e698ca-6b1f-4505-8452-1118b6a66762" />
+<img width="1920" height="1042" alt="image" src="https://github.com/user-attachments/assets/0bfad485-afe9-4ab8-972a-5ce8d26925ce" />
+
 <img width="2560" height="1440" alt="image" src="https://github.com/user-attachments/assets/5083c2f6-61de-43ee-b403-a0a3e5cb29d5" />
 <img width="859" height="983" alt="image" src="https://github.com/user-attachments/assets/11cc18f2-5581-472a-b648-c2089b54770d" />
 
