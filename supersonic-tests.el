@@ -201,6 +201,50 @@ them."
       (supersonic-prev-track))
     (should (equal '(("cycle" "pause") ("playlist-next") ("playlist-prev")) (nreverse commands)))))
 
+(ert-deftest supersonic-tests-playback-backend-names-lists-registrations ()
+  "`supersonic-playback-backend-names' answers every name registered so
+far -- what the switch command's completion table draws from -- which
+at minimum is `mpv' and `jukebox', both loaded by this test suite."
+  (let ((supersonic-playback--backends (copy-hash-table supersonic-playback--backends)))
+    (supersonic-playback-register-backend 'test-a '((stop . ignore)))
+    (should
+     (equal
+      '("jukebox" "mpv" "test-a")
+      (sort (mapcar #'symbol-name (supersonic-playback-backend-names)) #'string<)))))
+
+(ert-deftest supersonic-tests-switch-backend-stops-the-outgoing-backend ()
+  "Switching backends calls `supersonic-playback-stop' against whichever
+backend was active *before* the switch -- so mpv gets killed / the
+jukebox told to stop exactly the way stopping it directly always did --
+and only then makes the new backend active, per #11."
+  (let ((supersonic-playback-backend 'test-from)
+        (supersonic-playback--backends (copy-hash-table supersonic-playback--backends))
+        (stopped nil))
+    (supersonic-playback-register-backend 'test-from `((stop . ,(lambda () (push 'from stopped)))))
+    (supersonic-playback-register-backend 'test-to `((stop . ,(lambda () (push 'to stopped)))))
+    (supersonic-playback-switch-backend 'test-to)
+    (should (eq 'test-to supersonic-playback-backend))
+    (should (equal '(from) stopped))))
+
+(ert-deftest supersonic-tests-switch-backend-to-the-active-backend-is-a-no-op ()
+  "Re-selecting the backend already active stops nothing -- there is
+nothing to switch away from."
+  (let ((supersonic-playback-backend 'test-from)
+        (supersonic-playback--backends (copy-hash-table supersonic-playback--backends))
+        (stopped nil))
+    (supersonic-playback-register-backend 'test-from `((stop . ,(lambda () (push 'from stopped)))))
+    (supersonic-playback-switch-backend 'test-from)
+    (should (eq 'test-from supersonic-playback-backend))
+    (should-not stopped)))
+
+(ert-deftest supersonic-tests-transient-exposes-switch-backend ()
+  "The `supersonic' transient offers a way to switch playback backends,
+per #11."
+  (should
+   (eq
+    'supersonic-playback-switch-backend
+    (plist-get (cdr (transient-get-suffix 'supersonic "k")) :command))))
+
 (defun supersonic-tests--resolve (promise &optional timeout)
   "Return PROMISE's resolved value, failing the test if it never resolves.
 `aio-wait-for' blocks forever on a promise nothing will ever resolve,

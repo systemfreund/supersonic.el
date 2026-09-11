@@ -128,6 +128,15 @@ rather than a backtrace."
   "Call the active backend's implementation of OPERATION with ARGS."
   (apply (supersonic-playback--implementation operation) args))
 
+(defun supersonic-playback-backend-names ()
+  "Return the names of every backend currently registered.
+That is, everything `supersonic-playback-register-backend' has been
+called for so far -- not necessarily every backend a user could select,
+since a backend not yet loaded has never registered itself."
+  (let (names)
+    (maphash (lambda (name _operations) (push name names)) supersonic-playback--backends)
+    (nreverse names)))
+
 (defun supersonic-playback-start (ids)
   "Replace the play queue with IDS and start playing immediately."
   (supersonic-playback--call 'start ids))
@@ -237,6 +246,30 @@ an empty queue and no backend to ask look the same from here."
   "Go to the previous track."
   (interactive)
   (supersonic-playback-prev))
+
+;;;###autoload
+(defun supersonic-playback-switch-backend (backend)
+  "Make BACKEND the active playback backend.
+Interactively, prompts among the names
+`supersonic-playback-register-backend' has been called for.
+
+Before `supersonic-playback-backend' actually changes, this calls
+`supersonic-playback-stop' against whichever backend is still active --
+which is why the switch has to happen here rather than via a plain
+`setq': mpv's `stop' kills its process, and the jukebox backend's
+`stop' sends the server a `stop' action, so nothing each backend's own
+`stop' mapping already knows how to tear down keeps running
+unsupervised just because Emacs stopped pointing at it.  No queue is
+carried over -- each backend starts from whatever state it is
+independently in."
+  (interactive
+   (list
+    (intern
+     (completing-read
+      "Switch to playback backend: " (mapcar #'symbol-name (supersonic-playback-backend-names)) nil t))))
+  (unless (eq backend supersonic-playback-backend)
+    (supersonic-playback-stop)
+    (setq supersonic-playback-backend backend)))
 
 ;;;###autoload
 (defun supersonic-seek-forward (&optional seconds)

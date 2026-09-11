@@ -1261,7 +1261,8 @@ Opened by `supersonic-podcast-episodes'."
    ("f" "Skip track" supersonic-skip-track)
    ("b" "Previous track" supersonic-prev-track)
    ("F" "Seek forward" supersonic-seek-forward :transient t)
-   ("B" "Seek back" supersonic-seek-back :transient t)]])
+   ("B" "Seek back" supersonic-seek-back :transient t)
+   ("k" "Switch backend" supersonic-playback-switch-backend)]])
 
 (defun supersonic-unload-function ()
   "Undo the `supersonic-playback.el' hook entries this file adds at load time.
