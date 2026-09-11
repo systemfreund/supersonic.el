@@ -548,7 +548,10 @@ from) -- see `supersonic-now-playing--track-id'."
              (propertize (supersonic-now-playing--label-text) 'face 'bold 'supersonic-now-playing-field 'label))
             (when paused
               (insert "  " (propertize "(paused)" 'face 'shadow)))
-            (insert "\n\n")
+            ;; No blank line before the waveform -- it sits right under
+            ;; the label -- but one is still wanted before the buttons
+            ;; when there is no waveform to close that gap instead.
+            (insert (if (supersonic-waveform-available-p) "\n" "\n\n"))
             ;; Just the tagged placeholder here; whether there is an
             ;; image to put in it is settled at the end of this function,
             ;; via `supersonic-now-playing--show-waveform'.
