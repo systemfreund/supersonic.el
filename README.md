@@ -65,7 +65,7 @@ Keys in that buffer: `SPC` play/pause, `n`/`p` next/previous track,
 `f`/`b` seek, `g` refresh manually.
 
 Enabling `supersonic-enable-waveform` adds a clickable waveform seekbar
-above the transport buttons, click anywhere on it to seek there. 
+next to the transport buttons, click anywhere on it to seek there. 
 `supersonic-waveform-width`/`-height` set its display size. 
 
 The label next to the cover art shows the track's title by default.
