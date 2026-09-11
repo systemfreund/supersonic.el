@@ -549,6 +549,11 @@ from) -- see `supersonic-now-playing--track-id'."
             (when paused
               (insert "  " (propertize "(paused)" 'face 'shadow)))
             (insert "\n\n")
+            ;; Just the tagged placeholder here; whether there is an
+            ;; image to put in it is settled at the end of this function,
+            ;; via `supersonic-now-playing--show-waveform'.
+            (when (supersonic-waveform-available-p)
+              (insert (propertize " " 'supersonic-now-playing-field 'waveform) "\n\n"))
             (supersonic-now-playing--insert-button "|◀◀" #'supersonic-prev-track)
             (insert "  ")
             (supersonic-now-playing--insert-button
@@ -563,11 +568,6 @@ from) -- see `supersonic-now-playing--track-id'."
             (insert "  ")
             (supersonic-now-playing--insert-button "▶▶" #'supersonic-seek-forward)
             (insert "\n\n")
-            ;; Just the tagged placeholder here; whether there is an
-            ;; image to put in it is settled at the end of this function,
-            ;; via `supersonic-now-playing--show-waveform'.
-            (when (supersonic-waveform-available-p)
-              (insert (propertize " " 'supersonic-now-playing-field 'waveform) "\n\n"))
             (supersonic-now-playing--insert-field "Title" (assoc-default "title" song))
             (supersonic-now-playing--insert-field "Artist" (assoc-default "artist" song))
             (supersonic-now-playing--insert-field "Album" (assoc-default "album" song))
