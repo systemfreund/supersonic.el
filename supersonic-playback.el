@@ -43,6 +43,7 @@
 ;;; Code:
 
 (require 'aio)
+(require 'seq)
 
 (require 'supersonic-custom)
 
@@ -248,8 +249,9 @@ an empty queue and no backend to ask look the same from here."
   (supersonic-playback-prev))
 
 ;;;###autoload
-(defun supersonic-playback-switch-backend (backend)
-  "Make BACKEND the active playback backend.
+(aio-defun
+ supersonic-playback-switch-backend (backend)
+ "Make BACKEND the active playback backend.
 Interactively, prompts among the names
 `supersonic-playback-register-backend' has been called for.
 
@@ -259,17 +261,44 @@ which is why the switch has to happen here rather than via a plain
 `setq': mpv's `stop' kills its process, and the jukebox backend's
 `stop' sends the server a `stop' action, so nothing each backend's own
 `stop' mapping already knows how to tear down keeps running
-unsupervised just because Emacs stopped pointing at it.  No queue is
-carried over -- each backend starts from whatever state it is
+unsupervised just because Emacs stopped pointing at it.
+
+With `supersonic-playback-sync-queue-on-switch' non-nil, the outgoing
+backend's queue -- current track plus whatever is upcoming -- is read
+before it is stopped, and replayed onto BACKEND once that is active, so
+listening carries on there in the same order from roughly the same
+track.  Reading or replaying the queue is best-effort: a failure either
+way is reported rather than left to fail silently, but never stops the
+switch itself from going through, since by the time replay would run
+the old backend is already torn down.  With the default nil, no queue
+is carried over at all -- each backend starts from whatever state it is
 independently in."
-  (interactive
-   (list
-    (intern
-     (completing-read
-      "Switch to playback backend: " (mapcar #'symbol-name (supersonic-playback-backend-names)) nil t))))
-  (unless (eq backend supersonic-playback-backend)
-    (supersonic-playback-stop)
-    (setq supersonic-playback-backend backend)))
+ (interactive
+  (list
+   (intern
+    (completing-read
+     "Switch to playback backend: " (mapcar #'symbol-name (supersonic-playback-backend-names)) nil t))))
+ (unless (eq backend supersonic-playback-backend)
+   (let (resume-ids read-error)
+     (when supersonic-playback-sync-queue-on-switch
+       (condition-case err
+           (setq resume-ids
+                 (mapcar
+                  (lambda (entry) (plist-get entry :track-id))
+                  (seq-drop-while
+                   (lambda (entry) (not (plist-get entry :current))) (aio-await (supersonic-playback-queue)))))
+         (error (setq read-error err))))
+     (supersonic-playback-stop)
+     (setq supersonic-playback-backend backend)
+     (cond
+      (read-error
+       (message "[Supersonic] Failed to read the outgoing queue to carry over: %s" (error-message-string read-error)))
+      (resume-ids
+       (condition-case err
+           (supersonic-playback-start resume-ids)
+         (error
+          (message
+           "[Supersonic] Failed to carry the queue over to `%s': %s" backend (error-message-string err)))))))))
 
 ;;;###autoload
 (defun supersonic-seek-forward (&optional seconds)

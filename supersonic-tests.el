@@ -253,6 +253,69 @@ so they must not wait on one bare.  TIMEOUT defaults to two seconds."
   (with-timeout ((or timeout 2) (ert-fail "The promise was never resolved"))
     (aio-wait-for promise)))
 
+(ert-deftest supersonic-tests-switch-backend-leaves-the-queue-alone-by-default ()
+  "With `supersonic-playback-sync-queue-on-switch' nil, switching never
+even reads the outgoing queue, let alone replays it -- #11's behavior,
+unchanged unless a user opts in, per #29."
+  (let ((supersonic-playback-backend 'test-from)
+        (supersonic-playback--backends (copy-hash-table supersonic-playback--backends))
+        (supersonic-playback-sync-queue-on-switch nil)
+        (started 'untouched))
+    (supersonic-playback-register-backend
+     'test-from `((stop . ,#'ignore) (live-p . ,(lambda () t)) (queue . ,(lambda () (error "must not be called")))))
+    (supersonic-playback-register-backend 'test-to `((stop . ,#'ignore) (start . ,(lambda (ids) (setq started ids)))))
+    (supersonic-tests--resolve (supersonic-playback-switch-backend 'test-to))
+    (should (eq 'test-to supersonic-playback-backend))
+    (should (eq 'untouched started))))
+
+(ert-deftest supersonic-tests-switch-backend-carries-the-queue-over-when-enabled ()
+  "With the option on, switching reads the outgoing backend's queue
+before it is stopped and replays the current track plus whatever is
+upcoming onto the new backend, dropping anything already played."
+  (let ((supersonic-playback-backend 'test-from)
+        (supersonic-playback--backends (copy-hash-table supersonic-playback--backends))
+        (supersonic-playback-sync-queue-on-switch t)
+        (started nil))
+    (supersonic-playback-register-backend
+     'test-from
+     `((stop . ,#'ignore)
+       (live-p . ,(lambda () t))
+       (queue
+        .
+        ,(lambda ()
+           (let ((promise (aio-promise)))
+             (aio-resolve
+              promise
+              (lambda () '((:track-id "a" :current nil) (:track-id "b" :current t) (:track-id "c" :current nil))))
+             promise)))))
+    (supersonic-playback-register-backend 'test-to `((stop . ,#'ignore) (start . ,(lambda (ids) (setq started ids)))))
+    (supersonic-tests--resolve (supersonic-playback-switch-backend 'test-to))
+    (should (eq 'test-to supersonic-playback-backend))
+    (should (equal '("b" "c") started))))
+
+(ert-deftest supersonic-tests-switch-backend-reports-a-replay-failure-without-undoing-the-switch ()
+  "A backend that rejects the replayed queue -- e.g. the jukebox refusing
+an enqueue -- leaves the switch in place and reports the failure rather
+than leaving it silent, per #29."
+  (let ((supersonic-playback-backend 'test-from)
+        (supersonic-playback--backends (copy-hash-table supersonic-playback--backends))
+        (supersonic-playback-sync-queue-on-switch t)
+        (messages nil))
+    (supersonic-playback-register-backend
+     'test-from
+     `((stop . ,#'ignore)
+       (live-p . ,(lambda () t))
+       (queue
+        . ,(lambda ()
+             (let ((promise (aio-promise)))
+               (aio-resolve promise (lambda () '((:track-id "b" :current t))))
+               promise)))))
+    (supersonic-playback-register-backend 'test-to `((stop . ,#'ignore) (start . ,(lambda (_ids) (error "boom")))))
+    (cl-letf (((symbol-function 'message) (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+      (supersonic-tests--resolve (supersonic-playback-switch-backend 'test-to)))
+    (should (eq 'test-to supersonic-playback-backend))
+    (should (equal '("[Supersonic] Failed to carry the queue over to `test-to': boom") messages))))
+
 (ert-deftest supersonic-tests-playback-status-dispatches-one-key-at-a-time ()
   "`supersonic-playback-status' asks the active backend for the one key
 it was called with -- not for a snapshot of everything -- and hands
