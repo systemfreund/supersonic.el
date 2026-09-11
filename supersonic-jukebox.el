@@ -439,6 +439,24 @@ package -- rather than erroring on the arithmetic."
   "Seek to FRACTION (0.0 to 1.0) of the way through the jukebox's current track."
   (ignore (supersonic-jukebox--seek-fraction fraction)))
 
+(aio-defun
+ supersonic-jukebox--stop ()
+ "Stop the jukebox, matching #11's teardown when switching away from it.
+Sends the same `stop' jukeboxControl action `-toggle-play' already
+sends when the cached snapshot says something is playing; unlike
+`-toggle-play' this always sends it regardless of that snapshot, since
+a caller of `supersonic-playback-stop' -- #11's backend switch, or the
+Stop/Quit commands in `supersonic-mpris.el' -- wants the server to
+actually stop, not to have its current state toggled."
+ (supersonic--with-async-error-handling
+  nil "stop the jukebox"
+  (aio-await (supersonic-jukebox--request "stop"))
+  (aio-await (supersonic-jukebox--poll))))
+
+(defun supersonic-jukebox-stop ()
+  "Stop playback on the jukebox."
+  (ignore (supersonic-jukebox--stop)))
+
 ;;;
 ;;; Polling only while `jukebox' is the active backend
 ;;;
@@ -487,10 +505,7 @@ that happen afterwards."
 ;; Announce jukebox to the playback facade as we are loaded, so that the
 ;; generic `supersonic-playback-*' functions resolve to the wrappers
 ;; above as soon as `supersonic-playback-backend' selects `jukebox' --
-;; see `supersonic-playback.el'. `stop' is left out, same as
-;; `supersonic-playback-operations' allows any backend to do:
-;; jukeboxControl has no equivalent of tearing down mpv's local process,
-;; only `stop' the transport action `toggle-play' already uses.
+;; see `supersonic-playback.el'.
 (supersonic-playback-register-backend
  'jukebox
  '((start . supersonic-jukebox-start)
@@ -498,6 +513,7 @@ that happen afterwards."
    (toggle-play . supersonic-jukebox-toggle-play)
    (next . supersonic-jukebox-next)
    (prev . supersonic-jukebox-prev)
+   (stop . supersonic-jukebox-stop)
    (seek . supersonic-jukebox-seek)
    (seek-fraction . supersonic-jukebox-seek-fraction)
    (live-p . supersonic-jukebox-live-p)

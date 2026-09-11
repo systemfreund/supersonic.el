@@ -1964,13 +1964,11 @@ In call order."
 (ert-deftest supersonic-tests-jukebox-is-registered-as-a-backend ()
   "Loading `supersonic-jukebox' registers `jukebox' under that name,
 implementing every operation the ticket asks for -- start, enqueue,
-toggle-play, next, prev, seek, seek-fraction, plus the
-liveness/status/queue plumbing every backend needs -- even though it
-leaves `stop' out, which `supersonic-playback-operations' allows any
-backend to do."
+toggle-play, next, prev, stop, seek, seek-fraction, plus the
+liveness/status/queue plumbing every backend needs."
   (let ((operations (gethash 'jukebox supersonic-playback--backends)))
     (should operations)
-    (dolist (operation '(start enqueue toggle-play next prev seek seek-fraction live-p status queue))
+    (dolist (operation '(start enqueue toggle-play next prev stop seek seek-fraction live-p status queue))
       (should (functionp (alist-get operation operations))))))
 
 (ert-deftest supersonic-tests-jukebox-poll-caches-status-and-queue ()
@@ -2234,6 +2232,20 @@ request just to find out which."
    (setq supersonic-tests--jukebox-requests nil)
    (supersonic-tests--resolve (supersonic-jukebox--toggle-play))
    (should (equal '("start" "get") (supersonic-tests--jukebox-request-actions)))))
+
+(ert-deftest supersonic-tests-jukebox-stop-always-sends-stop ()
+  "`supersonic-jukebox-stop' sends `stop' unconditionally, unlike
+`supersonic-jukebox-toggle-play' which only sends it when the cached
+snapshot shows the jukebox playing -- see #11's teardown-on-switch,
+which wants the server to actually stop, not to have its state
+toggled."
+  (supersonic-tests--with-jukebox
+   (setq supersonic-tests--jukebox-playlist
+         `(("currentIndex" . 0) ("playing" . :json-false) ("position" . 0) ("entry" . ((("id" . "a"))))))
+   (supersonic-tests--resolve (supersonic-jukebox--poll))
+   (setq supersonic-tests--jukebox-requests nil)
+   (supersonic-tests--resolve (supersonic-jukebox--stop))
+   (should (equal '("stop" "get") (supersonic-tests--jukebox-request-actions)))))
 
 (ert-deftest supersonic-tests-jukebox-next-skips-to-the-following-index ()
   "`supersonic-jukebox-next' sends `skip' with the cached current index
