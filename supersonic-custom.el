@@ -204,11 +204,11 @@ When nil, the default, switching backends leaves each one to whatever
 state it is independently in -- nothing queued on the outgoing backend
 follows onto the incoming one.  When non-nil, the switch reads the
 outgoing backend's current queue (the current track plus whatever is
-upcoming) and replays it onto the incoming backend, preserving order
-and resuming on roughly the same track.  Playback position within that
-track is not carried over -- the two backends measure it too
-differently to line up exactly -- so the resumed track always starts
-from the beginning."
+upcoming) and its position within the current track, and replays both
+onto the incoming backend: the queue via `supersonic-playback-start',
+preserving order and resuming on the same track, then the position via
+`supersonic-playback-seek' once that track has actually started
+playing there."
   :type 'boolean
   :group 'supersonic)
 

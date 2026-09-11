@@ -305,6 +305,7 @@ than leaving it silent, per #29."
      'test-from
      `((stop . ,#'ignore)
        (live-p . ,(lambda () t))
+       (status . ,(lambda (_key) (let ((promise (aio-promise))) (aio-resolve promise (lambda () 0)) promise)))
        (queue
         . ,(lambda ()
              (let ((promise (aio-promise)))
@@ -315,6 +316,86 @@ than leaving it silent, per #29."
       (supersonic-tests--resolve (supersonic-playback-switch-backend 'test-to)))
     (should (eq 'test-to supersonic-playback-backend))
     (should (equal '("[Supersonic] Failed to carry the queue over to `test-to': boom") messages))))
+
+(ert-deftest supersonic-tests-switch-backend-carries-the-position-over-when-enabled ()
+  "With the option on, switching also reads the outgoing backend's
+in-track position and seeks the incoming backend to it, once that
+backend reports itself live -- starting it is fire-and-forget, so
+nothing else says the track has actually begun."
+  (let ((supersonic-playback-backend 'test-from)
+        (supersonic-playback--backends (copy-hash-table supersonic-playback--backends))
+        (supersonic-playback-sync-queue-on-switch t)
+        (to-live nil)
+        (sought nil))
+    (supersonic-playback-register-backend
+     'test-from
+     `((stop . ,#'ignore)
+       (live-p . ,(lambda () t))
+       (status . ,(lambda (_key) (let ((promise (aio-promise))) (aio-resolve promise (lambda () 42.5)) promise)))
+       (queue
+        . ,(lambda ()
+             (let ((promise (aio-promise)))
+               (aio-resolve promise (lambda () '((:track-id "b" :current t))))
+               promise)))))
+    (supersonic-playback-register-backend
+     'test-to
+     `((stop . ,#'ignore)
+       (live-p . ,(lambda () to-live))
+       (start . ,(lambda (_ids) (setq to-live t)))
+       (seek . ,(lambda (offset) (setq sought offset)))))
+    (supersonic-tests--resolve (supersonic-playback-switch-backend 'test-to))
+    (should (eq 'test-to supersonic-playback-backend))
+    (should (equal 42.5 sought))))
+
+(ert-deftest supersonic-tests-switch-backend-skips-seeking-a-zero-position ()
+  "A resumed track that was already at its very start does not get a
+pointless `seek' to 0."
+  (let ((supersonic-playback-backend 'test-from)
+        (supersonic-playback--backends (copy-hash-table supersonic-playback--backends))
+        (supersonic-playback-sync-queue-on-switch t)
+        (sought 'untouched))
+    (supersonic-playback-register-backend
+     'test-from
+     `((stop . ,#'ignore)
+       (live-p . ,(lambda () t))
+       (status . ,(lambda (_key) (let ((promise (aio-promise))) (aio-resolve promise (lambda () 0)) promise)))
+       (queue
+        . ,(lambda ()
+             (let ((promise (aio-promise)))
+               (aio-resolve promise (lambda () '((:track-id "b" :current t))))
+               promise)))))
+    (supersonic-playback-register-backend
+     'test-to `((stop . ,#'ignore) (live-p . ,(lambda () t)) (start . ,#'ignore) (seek . ,(lambda (offset) (setq sought offset)))))
+    (supersonic-tests--resolve (supersonic-playback-switch-backend 'test-to))
+    (should (eq 'untouched sought))))
+
+(ert-deftest supersonic-tests-switch-backend-position-failure-does-not-block-the-queue ()
+  "A backend that cannot report its position -- or any other failure
+reading it -- still gets its queue replayed; only the position is
+skipped, and the failure is reported rather than left silent."
+  (let ((supersonic-playback-backend 'test-from)
+        (supersonic-playback--backends (copy-hash-table supersonic-playback--backends))
+        (supersonic-playback-sync-queue-on-switch t)
+        (started nil)
+        (messages nil))
+    (supersonic-playback-register-backend
+     'test-from
+     `((stop . ,#'ignore)
+       (live-p . ,(lambda () t))
+       (queue
+        . ,(lambda ()
+             (let ((promise (aio-promise)))
+               (aio-resolve promise (lambda () '((:track-id "b" :current t))))
+               promise)))))
+    (supersonic-playback-register-backend 'test-to `((stop . ,#'ignore) (start . ,(lambda (ids) (setq started ids)))))
+    (cl-letf (((symbol-function 'message) (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+      (supersonic-tests--resolve (supersonic-playback-switch-backend 'test-to)))
+    (should (eq 'test-to supersonic-playback-backend))
+    (should (equal '("b") started))
+    (should
+     (equal
+      '("[Supersonic] Failed to read the outgoing position to carry over: The ‘test-from’ playback backend cannot status")
+      messages))))
 
 (ert-deftest supersonic-tests-playback-status-dispatches-one-key-at-a-time ()
   "`supersonic-playback-status' asks the active backend for the one key
