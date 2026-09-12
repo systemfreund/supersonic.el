@@ -1240,6 +1240,23 @@ buffer behind for the rest of the session."
   (with-current-buffer buff
     (string-match-p regexp (buffer-string))))
 
+(defun supersonic-tests--force-animation-tick (buff)
+  "Run one `supersonic-now-playing--animation-tick' for BUFF, one field switch late.
+`supersonic-now-playing--animation-tick' now measures real elapsed time
+rather than assuming each call is
+`supersonic-now-playing-animation-interval' seconds after the last, so
+calling it back to back the way a test does no longer switches fields
+deterministically on its own -- barely any wall-clock time passes
+between two synchronous Lisp calls.  Backdating
+`supersonic-now-playing--animation-last-time' first makes the tick see
+exactly one interval's worth of elapsed time, however fast the test
+itself actually ran, so tests can still drive the animation one
+deterministic step at a time."
+  (with-current-buffer buff
+    (setq supersonic-now-playing--animation-last-time
+          (- (float-time) supersonic-now-playing-animation-interval)))
+  (supersonic-now-playing--animation-tick))
+
 (defun supersonic-tests--now-playing-label (buff)
   "Return the text of BUFF's now-playing label next to the cover art.
 Distinct from `supersonic-tests--buffer-matches' because the plain
@@ -1396,10 +1413,40 @@ the title, rather than the label sitting on the title alone."
               (supersonic-tests--wait-for
                (lambda () (supersonic-tests--buffer-matches buff (regexp-quote supersonic-tests--track-1)))))
              (should (equal supersonic-tests--track-1 (supersonic-tests--now-playing-label buff)))
-             (supersonic-now-playing--animation-tick)
+             (supersonic-tests--force-animation-tick buff)
              (should (equal "Some Artist" (supersonic-tests--now-playing-label buff)))
-             (supersonic-now-playing--animation-tick)
+             (supersonic-tests--force-animation-tick buff)
              (should (equal "Some Album" (supersonic-tests--now-playing-label buff)))
+             (supersonic-tests--force-animation-tick buff)
+             (should (equal supersonic-tests--track-1 (supersonic-tests--now-playing-label buff))))
+         (supersonic-now-playing--stop-animation-timer)
+         (kill-buffer buff))))))
+
+(ert-deftest supersonic-tests-now-playing-animation-tick-does-not-assume-elapsed-time ()
+  "Two `supersonic-now-playing--animation-tick' calls back to back do not
+switch the field just because two ticks happened -- unlike
+`supersonic-now-playing-animation-frame-interval' (how often a tick
+fires at all), `supersonic-now-playing-animation-interval' (how long a
+field is actually shown) is paced against real elapsed time
+(`supersonic-now-playing--advance-field'), and running two ticks in the
+same test barely takes any wall-clock time at all."
+  (supersonic-tests--with-mpv
+   (cl-letf (((symbol-function 'supersonic-get-json)
+              (aio-lambda (url) `(("subsonic-response" ("song" ("title" . ,url) ("artist" . "Some Artist")))))))
+     (let ((buff (get-buffer-create supersonic-now-playing-buffer-name))
+           (supersonic-now-playing-cycle-fields '(title artist)))
+       (unwind-protect
+           (progn
+             (with-current-buffer buff
+               (supersonic-now-playing-mode))
+             (set-window-buffer (selected-window) buff)
+             (supersonic-mpv-start (list supersonic-tests--track-1))
+             (should
+              (supersonic-tests--wait-for
+               (lambda () (supersonic-tests--buffer-matches buff (regexp-quote supersonic-tests--track-1)))))
+             (should (equal supersonic-tests--track-1 (supersonic-tests--now-playing-label buff)))
+             (supersonic-now-playing--animation-tick)
+             (supersonic-now-playing--animation-tick)
              (supersonic-now-playing--animation-tick)
              (should (equal supersonic-tests--track-1 (supersonic-tests--now-playing-label buff))))
          (supersonic-now-playing--stop-animation-timer)
@@ -1455,11 +1502,11 @@ reset, the moment the buffer becomes visible again."
               (supersonic-tests--wait-for
                (lambda () (equal supersonic-tests--track-1 (buffer-local-value 'supersonic-now-playing--track-id buff)))))
              (should (equal supersonic-tests--track-1 (supersonic-tests--now-playing-label buff)))
-             (supersonic-now-playing--animation-tick)
-             (supersonic-now-playing--animation-tick)
+             (supersonic-tests--force-animation-tick buff)
+             (supersonic-tests--force-animation-tick buff)
              (should (equal supersonic-tests--track-1 (supersonic-tests--now-playing-label buff)))
              (set-window-buffer (selected-window) buff)
-             (supersonic-now-playing--animation-tick)
+             (supersonic-tests--force-animation-tick buff)
              (should (equal "Some Artist" (supersonic-tests--now-playing-label buff))))
          (supersonic-now-playing--stop-animation-timer)
          (kill-buffer buff)
@@ -1487,7 +1534,7 @@ the same case `supersonic-now-playing--art' draws nothing for."
               (supersonic-tests--wait-for
                (lambda () (supersonic-tests--buffer-matches buff (regexp-quote supersonic-tests--track-1)))))
              (should (equal supersonic-tests--track-1 (supersonic-tests--now-playing-label buff)))
-             (supersonic-now-playing--animation-tick)
+             (supersonic-tests--force-animation-tick buff)
              (should (equal "Some Artist" (supersonic-tests--now-playing-label buff))))
          (supersonic-now-playing--stop-animation-timer)
          (kill-buffer buff))))))
@@ -1539,10 +1586,44 @@ reason: `supersonic-enable-art' is off by default here."
               (supersonic-tests--wait-for
                (lambda () (supersonic-tests--buffer-matches buff (regexp-quote supersonic-tests--track-1)))))
              (should (equal supersonic-tests--track-1 (supersonic-tests--now-playing-label buff)))
-             (supersonic-now-playing--animation-tick)
+             (supersonic-tests--force-animation-tick buff)
              (should (equal "Some Artist" (supersonic-tests--now-playing-label buff))))
          (supersonic-now-playing--stop-animation-timer)
          (kill-buffer buff))))))
+
+(ert-deftest supersonic-tests-now-playing-art-overlay-scroll-moves-by-elapsed-time ()
+  "`supersonic-now-playing-animate-art-overlay-scroll' advances
+`supersonic-now-playing--scroll-offset' by DELTA times
+`supersonic-now-playing-scroll-step' -- a speed, in pixels per second --
+rather than a fixed amount per call, so the crawl covers the same
+ground in the same real time regardless of how often
+`supersonic-now-playing-animation-frame-interval' happens to fire."
+  (let ((supersonic-cache-path (expand-file-name (make-temp-name "supersonic-tests-cache-") temporary-file-directory))
+        (supersonic-enable-art t)
+        (supersonic-now-playing-scroll-step 10)
+        (buff (generate-new-buffer " *supersonic-tests-scroll*")))
+    (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
+      (unwind-protect
+          (progn
+            (mkdir supersonic-cache-path)
+            (let ((coding-system-for-write 'no-conversion))
+              (write-region
+               (base64-decode-string
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+               nil (supersonic-art-cache-file "art-1" supersonic-now-playing-art-size)))
+            (with-current-buffer buff
+              (supersonic-now-playing-mode)
+              (let ((inhibit-read-only t))
+                (insert (propertize " " 'supersonic-now-playing-field 'art)))
+              (setq supersonic-now-playing--art-id "art-1")
+              (setq supersonic-now-playing--title "Some Track")
+              (should (= 0 supersonic-now-playing--scroll-offset))
+              (supersonic-now-playing-animate-art-overlay-scroll buff 2.5)
+              (should (= 25 supersonic-now-playing--scroll-offset))
+              (supersonic-now-playing-animate-art-overlay-scroll buff 0.5)
+              (should (= 30 supersonic-now-playing--scroll-offset))))
+        (kill-buffer buff)
+        (delete-directory supersonic-cache-path t)))))
 
 (ert-deftest supersonic-tests-now-playing-falls-back-to-track-id ()
   "A failing getSong.view lookup leaves the now-playing buffer showing the
