@@ -164,12 +164,12 @@ A list drawn from `title', `artist' and `album', in the order they
 should cycle; nil turns cycling off and pins the display on the
 track's title, same as `supersonic-now-playing-cycle-label' being nil
 used to.  How often it advances is
-`supersonic-now-playing-animation-interval'; what advancing actually
+`supersonic-now-playing-cycle-interval'; what advancing actually
 draws is `supersonic-now-playing-animation-function'."
   :type '(repeat (choice (const title) (const artist) (const album)))
   :group 'supersonic)
 
-(defcustom supersonic-now-playing-animation-interval 10
+(defcustom supersonic-now-playing-cycle-interval 10
   "Seconds between advances of `supersonic-now-playing-cycle-fields'.
 Only takes effect while that list is non-nil.  Measured against real
 elapsed time (see `supersonic-now-playing--advance-field'), not against
@@ -183,12 +183,12 @@ speed up how often the field switches here."
 
 (defcustom supersonic-now-playing-animation-frame-interval 0.2
   "Seconds between animation timer ticks.
-Independent of `supersonic-now-playing-animation-interval': this is how
+Independent of `supersonic-now-playing-cycle-interval': this is how
 often `supersonic-now-playing-animation-function' merely gets a chance
 to redraw, not how often anything actually changes.
 `supersonic-now-playing-animate-label' and
 `supersonic-now-playing-animate-art-overlay' still only switch fields
-once `supersonic-now-playing-animation-interval' seconds have really
+once `supersonic-now-playing-cycle-interval' seconds have really
 passed, however many ticks that took;
 `supersonic-now-playing-animate-art-overlay-scroll' instead redraws on
 every tick, moving forward in proportion to real elapsed time (see
@@ -222,7 +222,7 @@ tick (0 for an unconditional first paint -- see
 - `supersonic-now-playing-animate-label' (the default): updates the
   text label next to the cover art -- the only place a rotated field
   ever showed before this existed.  Only actually switches fields (and
-  redraws) once `supersonic-now-playing-animation-interval' seconds of
+  redraws) once `supersonic-now-playing-cycle-interval' seconds of
   DELTA have really accumulated, however many ticks that took.
 - `supersonic-now-playing-animate-art-overlay': layers the field onto
   the cover art itself instead, in place of the side label, switching

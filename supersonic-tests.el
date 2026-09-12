@@ -1244,7 +1244,7 @@ buffer behind for the rest of the session."
   "Run one `supersonic-now-playing--animation-tick' for BUFF, one field switch late.
 `supersonic-now-playing--animation-tick' now measures real elapsed time
 rather than assuming each call is
-`supersonic-now-playing-animation-interval' seconds after the last, so
+`supersonic-now-playing-cycle-interval' seconds after the last, so
 calling it back to back the way a test does no longer switches fields
 deterministically on its own -- barely any wall-clock time passes
 between two synchronous Lisp calls.  Backdating
@@ -1254,7 +1254,7 @@ itself actually ran, so tests can still drive the animation one
 deterministic step at a time."
   (with-current-buffer buff
     (setq supersonic-now-playing--animation-last-time
-          (- (float-time) supersonic-now-playing-animation-interval)))
+          (- (float-time) supersonic-now-playing-cycle-interval)))
   (supersonic-now-playing--animation-tick))
 
 (defun supersonic-tests--now-playing-label (buff)
@@ -1426,7 +1426,7 @@ the title, rather than the label sitting on the title alone."
   "Two `supersonic-now-playing--animation-tick' calls back to back do not
 switch the field just because two ticks happened -- unlike
 `supersonic-now-playing-animation-frame-interval' (how often a tick
-fires at all), `supersonic-now-playing-animation-interval' (how long a
+fires at all), `supersonic-now-playing-cycle-interval' (how long a
 field is actually shown) is paced against real elapsed time
 (`supersonic-now-playing--advance-field'), and running two ticks in the
 same test barely takes any wall-clock time at all."
@@ -1449,6 +1449,43 @@ same test barely takes any wall-clock time at all."
              (supersonic-now-playing--animation-tick)
              (supersonic-now-playing--animation-tick)
              (should (equal supersonic-tests--track-1 (supersonic-tests--now-playing-label buff))))
+         (supersonic-now-playing--stop-animation-timer)
+         (kill-buffer buff))))))
+
+(ert-deftest supersonic-tests-now-playing-advance-field-does-not-double-count-a-composite-tick ()
+  "A composite `supersonic-now-playing-animation-function' that calls a
+field-cycling built-in more than once in the same tick -- the shape
+`supersonic-now-playing-animation-function''s own docstring recommends
+for showing the rotated field in two places at once -- still only
+advances one step per `supersonic-now-playing-cycle-interval', not one
+step per call.  Without `supersonic-now-playing--cycle-tick' guarding
+`supersonic-now-playing--advance-field' against a second call, each
+call would accumulate the same DELTA again and the field would land
+two steps ahead -- title straight to album, skipping artist -- from a
+single tick."
+  (supersonic-tests--with-mpv
+   (cl-letf (((symbol-function 'supersonic-get-json)
+              (aio-lambda (url)
+                `(("subsonic-response"
+                   ("song" ("title" . ,url) ("artist" . "Some Artist") ("album" . "Some Album")))))))
+     (let ((buff (get-buffer-create supersonic-now-playing-buffer-name))
+           (supersonic-now-playing-animation-function
+            (lambda (buff delta)
+              (supersonic-now-playing-animate-label buff delta)
+              (supersonic-now-playing-animate-label buff delta)))
+           (supersonic-now-playing-cycle-fields '(title artist album)))
+       (unwind-protect
+           (progn
+             (with-current-buffer buff
+               (supersonic-now-playing-mode))
+             (set-window-buffer (selected-window) buff)
+             (supersonic-mpv-start (list supersonic-tests--track-1))
+             (should
+              (supersonic-tests--wait-for
+               (lambda () (supersonic-tests--buffer-matches buff (regexp-quote supersonic-tests--track-1)))))
+             (should (equal supersonic-tests--track-1 (supersonic-tests--now-playing-label buff)))
+             (supersonic-tests--force-animation-tick buff)
+             (should (equal "Some Artist" (supersonic-tests--now-playing-label buff))))
          (supersonic-now-playing--stop-animation-timer)
          (kill-buffer buff))))))
 

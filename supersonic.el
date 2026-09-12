@@ -206,10 +206,33 @@ a track change always starts out on the title.")
   "Seconds accumulated toward the next `supersonic-now-playing--advance-field'.
 Real elapsed time, not a tick count -- see
 `supersonic-now-playing--animation-tick' -- so a field switch lands
-`supersonic-now-playing-animation-interval' seconds after the last one
+`supersonic-now-playing-cycle-interval' seconds after the last one
 on average however unevenly `supersonic-now-playing-animation-frame-interval'
 actually fires.  Reset to 0 whenever `supersonic-now-playing--render'
 moves on to a new track, the same way `supersonic-now-playing--field-index' is.")
+
+(defvar-local supersonic-now-playing--cycle-tick nil
+  "`supersonic-now-playing--animation-last-time' as of the last DELTA
+`supersonic-now-playing--advance-field' actually accumulated, or nil.
+A composite `supersonic-now-playing-animation-function' can call more
+than one of the field-cycling built-ins
+(`supersonic-now-playing-animate-label',
+`supersonic-now-playing-animate-art-overlay') in the same tick, each
+with the same DELTA; without this, both would accumulate it into
+`supersonic-now-playing--cycle-elapsed' independently and the field
+would advance twice as fast as `supersonic-now-playing-cycle-interval'
+says.  Comparing against `supersonic-now-playing--animation-last-time'
+(unchanged for the duration of one tick, however many built-ins it
+calls) is how `supersonic-now-playing--advance-field' recognizes a
+second call within the same tick and skips accumulating again.  Reset
+to nil whenever `supersonic-now-playing--render' moves on to a new
+track, the same way the fields above are.")
+
+(defvar-local supersonic-now-playing--cycle-changed nil
+  "Whether `supersonic-now-playing--advance-field' last actually
+switched the field, cached so a second call within the same tick (see
+`supersonic-now-playing--cycle-tick') answers the same way the first
+one did instead of re-deciding from DELTA already spent.")
 
 (defvar-local supersonic-now-playing--animation-last-time nil
   "float-time of the last animation tick this buffer processed, or nil.
@@ -321,7 +344,7 @@ with the result is up to `supersonic-now-playing-animation-function'."
 DELTA is real seconds elapsed since the last animation tick, as
 `supersonic-now-playing--animation-tick' measures it -- accumulated in
 `supersonic-now-playing--cycle-elapsed' and compared against
-`supersonic-now-playing-animation-interval' rather than assuming every
+`supersonic-now-playing-cycle-interval' rather than assuming every
 call to this is exactly that far apart from the last one, which is
 what a plain per-tick increment amounted to before this existed and
 stopped being true the moment ticks could run at a different cadence
@@ -329,17 +352,27 @@ than the field switch itself (`supersonic-now-playing-animation-frame-interval')
 or be skipped altogether (a hidden buffer).  Whatever does not divide
 evenly is kept rather than discarded, so a switch that is a little
 early or late one time still lands on schedule on average instead of
-drifting.  Returns non-nil if the field just changed, which is what
+drifting.
+
+A second call in the same tick -- a composite
+`supersonic-now-playing-animation-function' calling both
 `supersonic-now-playing-animate-label' and
-`supersonic-now-playing-animate-art-overlay' use to decide whether
-there is anything new to redraw at all."
-  (setq supersonic-now-playing--cycle-elapsed (+ supersonic-now-playing--cycle-elapsed delta))
-  (let ((steps (floor (/ supersonic-now-playing--cycle-elapsed supersonic-now-playing-animation-interval))))
-    (when (> steps 0)
-      (setq supersonic-now-playing--field-index (+ supersonic-now-playing--field-index steps))
-      (setq supersonic-now-playing--cycle-elapsed
-            (- supersonic-now-playing--cycle-elapsed (* steps supersonic-now-playing-animation-interval)))
-      t)))
+`supersonic-now-playing-animate-art-overlay' -- does not accumulate
+DELTA again; see `supersonic-now-playing--cycle-tick'.  Returns
+non-nil if the field is due to be shown as changed this tick, which is
+what those two functions use to decide whether there is anything new
+to redraw at all."
+  (if (equal supersonic-now-playing--cycle-tick supersonic-now-playing--animation-last-time)
+      supersonic-now-playing--cycle-changed
+    (setq supersonic-now-playing--cycle-tick supersonic-now-playing--animation-last-time)
+    (setq supersonic-now-playing--cycle-elapsed (+ supersonic-now-playing--cycle-elapsed delta))
+    (let ((steps (floor (/ supersonic-now-playing--cycle-elapsed supersonic-now-playing-cycle-interval))))
+      (setq supersonic-now-playing--cycle-changed (> steps 0))
+      (when supersonic-now-playing--cycle-changed
+        (setq supersonic-now-playing--field-index (+ supersonic-now-playing--field-index steps))
+        (setq supersonic-now-playing--cycle-elapsed
+              (- supersonic-now-playing--cycle-elapsed (* steps supersonic-now-playing-cycle-interval))))
+      supersonic-now-playing--cycle-changed)))
 
 (defun supersonic-now-playing-animate-label (buff delta)
   "Show BUFF's currently due field as its text label next to the cover art.
@@ -422,7 +455,7 @@ current track not cached yet."
 (defun supersonic-now-playing--start-animation-timer ()
   "Start rotating `supersonic-now-playing-cycle-fields', unless already running.
 Ticks every `supersonic-now-playing-animation-frame-interval' seconds --
-deliberately not `supersonic-now-playing-animation-interval', which
+deliberately not `supersonic-now-playing-cycle-interval', which
 paces the field switch itself and needs to keep meaning that regardless
 of how fast or slow this timer happens to run (see
 `supersonic-now-playing--animation-tick')."
@@ -448,7 +481,7 @@ last tick this buffer processed
 (`supersonic-now-playing--animation-last-time'), not an assumption that
 it is always exactly the frame interval.  This is what lets
 `supersonic-now-playing-animate-label' switch fields every
-`supersonic-now-playing-animation-interval' seconds on the dot
+`supersonic-now-playing-cycle-interval' seconds on the dot
 regardless of what the frame interval is set to, instead of assuming
 one tick means one interval has passed.
 
@@ -715,6 +748,8 @@ from) -- see `supersonic-now-playing--track-id'."
           ;; track before it.
           (setq supersonic-now-playing--field-index 0)
           (setq supersonic-now-playing--cycle-elapsed 0)
+          (setq supersonic-now-playing--cycle-tick nil)
+          (setq supersonic-now-playing--cycle-changed nil)
           (setq supersonic-now-playing--animation-last-time nil)
           (setq supersonic-now-playing--scroll-offset 0)
           ;; Whatever waveform was cached here belonged to the previous
@@ -779,7 +814,7 @@ from) -- see `supersonic-now-playing--track-id'."
             ;; pinned-to-the-title display still needs painting once.  A
             ;; DELTA of 0 is this function's signal for exactly that: paint
             ;; now, unconditionally, rather than waiting for
-            ;; `supersonic-now-playing-animation-interval' seconds to
+            ;; `supersonic-now-playing-cycle-interval' seconds to
             ;; actually have passed.
             (funcall supersonic-now-playing-animation-function buff 0)))
         (goto-char (point-min))
