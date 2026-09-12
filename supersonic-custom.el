@@ -82,7 +82,7 @@ coincide (e.g. a track and its own cover art id)."
   :type 'directory
   :group 'supersonic)
 
-(defcustom supersonic-enable-art nil
+(defcustom supersonic-enable-art t
   "Enable displaying album art in supported frames.
 Also a statement about the frame itself, since supersonic only draws
 art it can draw -- see `supersonic-art-available-p'."
@@ -113,7 +113,7 @@ opens one connection per row, so a 50 album list hits the server with
   :type 'integer
   :group 'supersonic)
 
-(defcustom supersonic-enable-waveform nil
+(defcustom supersonic-enable-waveform t
   "Enable a clickable waveform seekbar in the now-playing buffer.
 Requires a graphic frame and the `pbm' image type (see
 `supersonic-waveform-available-p'), the same restriction
@@ -253,7 +253,7 @@ consulted."
 (declare-function supersonic-now-playing-recolor-waveform "supersonic")
 (declare-function supersonic-now-playing-maybe-fetch-waveform "supersonic")
 
-(defcustom supersonic-now-playing-animation-functions (list #'supersonic-now-playing-animate-label)
+(defcustom supersonic-now-playing-animation-functions (list #'supersonic-now-playing-animate-art-overlay)
   "Functions run in order on every animation tick to render the buffer.
 Each is called as (FUNCTION BUFF DELTA), DELTA being the real seconds
 elapsed since the last tick (0 for an unconditional first paint -- see
@@ -264,14 +264,15 @@ driving all of them -- down with it; see
 
 Three are built in:
 
-- `supersonic-now-playing-animate-label' (the default): updates the
-  text label below the cover art -- the only place a rotated field
-  ever showed before this existed.  Only actually switches fields (and
-  redraws) once `supersonic-now-playing-cycle-interval' seconds of
-  DELTA have really accumulated, however many ticks that took.
-- `supersonic-now-playing-animate-art-overlay': layers the field onto
-  the cover art itself instead, in place of the side label, switching
-  between fields (and gating its redraws) the same way the label does.
+- `supersonic-now-playing-animate-label': updates the text label below
+  the cover art -- the only place a rotated field ever showed before
+  this existed.  Only actually switches fields (and redraws) once
+  `supersonic-now-playing-cycle-interval' seconds of DELTA have really
+  accumulated, however many ticks that took.
+- `supersonic-now-playing-animate-art-overlay' (the default): layers
+  the field onto the cover art itself instead, in place of the side
+  label, switching between fields (and gating its redraws) the same
+  way the label does.
 - `supersonic-now-playing-animate-art-overlay-scroll': also layers onto
   the art, but joins every field in `supersonic-now-playing-cycle-fields'
   into one line instead of switching between them one at a time.  Shown
@@ -367,7 +368,7 @@ playback moves on, wherever reordering puts it), `-format' and `-size'."
   :type '(repeat function)
   :group 'supersonic)
 
-(defcustom supersonic-now-playing-waveform-in-overlay nil
+(defcustom supersonic-now-playing-waveform-in-overlay t
   "Layer the waveform seekbar onto the cover art instead of below it.
 Requires both `supersonic-enable-art' and `supersonic-enable-waveform'
 to actually show anything -- see

@@ -30,9 +30,7 @@ Example use-package config:
   :bind (("C-c m" . supersonic))
   :custom
   (supersonic-host "https://mysubsonicserver:4355") ;; For authentication see section below
-  (supersonic-enable-scrobbling t)
-  (supersonic-enable-art t)
-  (supersonic-enable-waveform t))
+  (supersonic-enable-scrobbling t))
 ```
 
 `supersonic-host` may be given without a scheme, in which case
@@ -65,9 +63,9 @@ album, format, duration and size, plus clickable playback controls.
 Keys in that buffer: `SPC` play/pause, `n`/`p` next/previous track,
 `f`/`b` seek, `g` refresh manually.
 
-Enabling `supersonic-enable-waveform` adds a clickable waveform seekbar
-next to the cover art, above the label and the transport buttons,
-click anywhere on it to seek there.
+A clickable waveform seekbar (`supersonic-enable-waveform`, on by
+default) sits next to the cover art, above the label and the
+transport buttons -- click anywhere on it to seek there.
 `supersonic-waveform-width`/`-height` set its display size. 
 
 The label below the cover art shows the track's title by default.
@@ -75,15 +73,15 @@ Setting `supersonic-now-playing-cycle-fields` to a list of `title`,
 `artist` and/or `album` makes it rotate through them instead, every
 `supersonic-now-playing-cycle-interval` seconds (10 by default).
 
-That rotation can also be layered onto the cover art itself, in place
-of the side label, by adding `supersonic-now-playing-animate-art-overlay`
-to `supersonic-now-playing-animation-functions` (the default,
-`supersonic-now-playing-animate-label`, is what draws the side label
-instead). `supersonic-now-playing-animate-art-overlay-scroll` is a
-third option: instead of switching between fields, it joins all of
-them into one line and scrolls it across the art. To show more than
-one of these at once (e.g. the side label and the art overlay
-together), just list more than one.
+That rotation is layered onto the cover art itself by default, via
+`supersonic-now-playing-animate-art-overlay` in
+`supersonic-now-playing-animation-functions`; swap it for
+`supersonic-now-playing-animate-label` to draw the side label instead.
+`supersonic-now-playing-animate-art-overlay-scroll` is a third option:
+instead of switching between fields, it joins all of them into one
+line and scrolls it across the art. To show more than one of these at
+once (e.g. the side label and the art overlay together), just list
+more than one.
 
 The side label's font is the `supersonic-now-playing-label` face
 (bold by default); customize it, e.g. via `M-x customize-face`, to
@@ -94,9 +92,10 @@ the SVG image instead, so it has its own face,
 pixel size stays tied to `supersonic-now-playing-art-size`).
 
 With both `supersonic-enable-art` and `supersonic-enable-waveform` on,
-turning on `supersonic-now-playing-waveform-in-overlay` layers the
-waveform seekbar onto the cover art as well, in a lane below the text,
-instead of showing it next to the cover art on its own.
+`supersonic-now-playing-waveform-in-overlay` (also on by default)
+layers the waveform seekbar onto the cover art as well, in a lane
+below the text, instead of showing it next to the cover art on its
+own.
 
 The Title/Artist/Album/Duration/Format/Size rows below the transport
 buttons come from `supersonic-now-playing-render-functions`, a list
@@ -124,8 +123,8 @@ results, ...) in place on the left.
 
 ## Cover art
 
-Cover art needs `supersonic-enable-art` to be enabled, and a graphical 
-frame to draw it in. Its size is set per view: `supersonic-list-art-size` 
+Cover art is on by default (`supersonic-enable-art`) and needs a
+graphical frame to draw it in. Its size is set per view: `supersonic-list-art-size` 
 for the album and podcast lists, `supersonic-now-playing-art-size` here. 
 
 ## MPRIS
