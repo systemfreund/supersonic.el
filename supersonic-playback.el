@@ -43,7 +43,6 @@
 ;;; Code:
 
 (require 'aio)
-(require 'seq)
 
 (require 'supersonic-custom)
 
@@ -230,20 +229,6 @@ an empty queue and no backend to ask look the same from here."
  (when (supersonic-playback-live-p)
    (aio-await (supersonic-playback--call 'queue))))
 
-(aio-defun
- supersonic-playback--wait-until-live (&optional timeout)
- "Poll `supersonic-playback-live-p' until it answers non-nil.
-Gives up and returns nil after TIMEOUT seconds, two by default.
-Starting a backend is fire-and-forget at the facade level -- see
-`supersonic-playback-start' -- so there is no promise to await for
-\"the track has actually begun\"; a caller that needs to know, such as
-`supersonic-playback-switch-backend' seeking into a track it just
-started on the incoming backend, polls for it instead."
- (let ((deadline (+ (float-time) (or timeout 2))))
-   (while (and (not (supersonic-playback-live-p)) (< (float-time) deadline))
-     (aio-await (aio-sleep 0.05)))
-   (supersonic-playback-live-p)))
-
 ;;;###autoload
 (defun supersonic-toggle-playing ()
   "Toggle playing/paused state."
@@ -263,9 +248,8 @@ started on the incoming backend, polls for it instead."
   (supersonic-playback-prev))
 
 ;;;###autoload
-(aio-defun
- supersonic-playback-switch-backend (backend)
- "Make BACKEND the active playback backend.
+(defun supersonic-playback-switch-backend (backend)
+  "Make BACKEND the active playback backend.
 Interactively, prompts among the names
 `supersonic-playback-register-backend' has been called for.
 
@@ -275,65 +259,17 @@ which is why the switch has to happen here rather than via a plain
 `setq': mpv's `stop' kills its process, and the jukebox backend's
 `stop' sends the server a `stop' action, so nothing each backend's own
 `stop' mapping already knows how to tear down keeps running
-unsupervised just because Emacs stopped pointing at it.
-
-With `supersonic-playback-sync-queue-on-switch' non-nil, the outgoing
-backend's queue -- current track plus whatever is upcoming -- and its
-position within the current track are read before it is stopped, then
-replayed onto BACKEND once that is active: the queue via
-`supersonic-playback-start', the position via `supersonic-playback-seek'
-once BACKEND reports itself live (starting a backend is itself
-fire-and-forget, so there is otherwise nothing to say the track has
-actually begun and can be seeked into).  Reading or replaying either is
-best-effort: a failure along the way is reported rather than left to
-fail silently, but never stops the switch itself from going through,
-since by the time replay would run the old backend is already torn
-down.  With the default nil, neither the queue nor the position is
-carried over at all -- each backend starts from whatever state it is
+unsupervised just because Emacs stopped pointing at it.  No queue is
+carried over -- each backend starts from whatever state it is
 independently in."
- (interactive
-  (list
-   (intern
-    (completing-read
-     "Switch to playback backend: " (mapcar #'symbol-name (supersonic-playback-backend-names)) nil t))))
- (unless (eq backend supersonic-playback-backend)
-   (let (resume-ids resume-position read-error position-error)
-     (when supersonic-playback-sync-queue-on-switch
-       (condition-case err
-           (setq resume-ids
-                 (mapcar
-                  (lambda (entry) (plist-get entry :track-id))
-                  (seq-drop-while
-                   (lambda (entry) (not (plist-get entry :current))) (aio-await (supersonic-playback-queue)))))
-         (error (setq read-error err)))
-       ;; Position is carried best-effort on top of the queue: a backend
-       ;; that cannot report it -- or any other failure reading it --
-       ;; must not stop the queue itself from being replayed below.
-       (when (and resume-ids (not read-error))
-         (condition-case err
-             (setq resume-position (aio-await (supersonic-playback-status 'position)))
-           (error (setq position-error err)))))
-     (supersonic-playback-stop)
-     (setq supersonic-playback-backend backend)
-     (when read-error
-       (message "[Supersonic] Failed to read the outgoing queue to carry over: %s" (error-message-string read-error)))
-     (when position-error
-       (message
-        "[Supersonic] Failed to read the outgoing position to carry over: %s" (error-message-string position-error)))
-     (when resume-ids
-       (condition-case err
-           (progn
-             (supersonic-playback-start resume-ids)
-             (when (and resume-position (> resume-position 0) (aio-await (supersonic-playback--wait-until-live)))
-               (condition-case err
-                   (supersonic-playback-seek resume-position)
-                 (error
-                  (message
-                   "[Supersonic] Failed to seek `%s' to the outgoing position: %s" backend
-                   (error-message-string err))))))
-         (error
-          (message
-           "[Supersonic] Failed to carry the queue over to `%s': %s" backend (error-message-string err))))))))
+  (interactive
+   (list
+    (intern
+     (completing-read
+      "Switch to playback backend: " (mapcar #'symbol-name (supersonic-playback-backend-names)) nil t))))
+  (unless (eq backend supersonic-playback-backend)
+    (supersonic-playback-stop)
+    (setq supersonic-playback-backend backend)))
 
 ;;;###autoload
 (defun supersonic-seek-forward (&optional seconds)
