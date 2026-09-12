@@ -299,6 +299,29 @@ alongside the rest."
   :type '(repeat function)
   :group 'supersonic)
 
+(defcustom supersonic-now-playing-waveform-in-overlay nil
+  "Layer the waveform seekbar onto the cover art instead of below it.
+Requires both `supersonic-enable-art' and `supersonic-enable-waveform'
+to actually show anything -- see
+`supersonic-now-playing-animate-art-overlay'/`-scroll', which draw the
+waveform into a lane above their text once this is on, the same way
+they already draw that text onto the art instead of beside it.  The
+combined image stays clickable to seek, exactly like the standalone
+seekbar this replaces.
+
+Only takes effect together with `supersonic-now-playing-animate-art-overlay'
+or `-scroll' in `supersonic-now-playing-animation-functions': with
+`supersonic-now-playing-animate-label', or for a track with no cover
+art cached, nothing draws a waveform onto anything, and this option
+just told `supersonic-now-playing--render' not to reserve a standalone
+line for one either -- so the waveform would not appear anywhere at
+all.  `supersonic-waveform-width'/`supersonic-waveform-height' do not
+apply to the composited lane either; it is sized off
+`supersonic-now-playing-art-size' instead, the same as the text scrim
+is."
+  :type 'boolean
+  :group 'supersonic)
+
 (defcustom supersonic-album-list-count 50
   "Number of albums to display in random/newest albums etc."
   :type 'integer

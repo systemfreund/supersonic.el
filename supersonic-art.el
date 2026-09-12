@@ -29,6 +29,13 @@
 (require 'svg)
 (require 'supersonic-custom)
 (require 'supersonic-api)
+;; Only for `supersonic-waveform-bars'/`supersonic-waveform-svg-bars': the
+;; bucket geometry and SVG drawing a waveform layered onto the cover art
+;; needs (see `supersonic-art-overlay-propertize') are owned by that file,
+;; the same way the (PEAKS . RMS) envelope shape they operate on is --
+;; this file otherwise knows nothing about waveforms, the same way that
+;; one otherwise knows nothing about the now-playing buffer.
+(require 'supersonic-waveform)
 (defvar url-http-end-of-headers)
 
 (defun supersonic-art-available-p ()
@@ -64,7 +71,16 @@ fit without scrolling?) is made against always matches the figure
 actually drawn with."
   (max 10 (round (* size 0.07))))
 
-(defun supersonic-art-overlay-propertize (id size text)
+(defun supersonic-art-overlay-waveform-lane-height (size)
+  "Return how tall the waveform lane above the text row is, at SIZE.
+Only added to the scrim at all when the overlay propertize functions
+are actually given a WAVEFORM argument -- independent of
+`supersonic-art-overlay-font-size', so a track's text sits at the same
+size and the same distance from the bottom edge whether or not a
+waveform lane is drawn above it."
+  (round (* size 0.16)))
+
+(defun supersonic-art-overlay-propertize (id size text &optional waveform)
   "Generate a property displaying cover art ID at SIZE with TEXT layered over it.
 TEXT sits in a semi-opaque scrim across the bottom, composited in with
 `svg.el' rather than shown as a string alongside the art the way
@@ -72,16 +88,30 @@ TEXT sits in a semi-opaque scrim across the bottom, composited in with
 text that reads as part of the cover itself, the way a lock-screen
 \"now playing\" widget overlays a track name on the art instead of
 setting it beside it.  Like `supersonic-image-propertize', expects the
-art to be cached at SIZE already."
+art to be cached at SIZE already.
+
+WAVEFORM, if given, is (ENVELOPE . PROGRESS) as `supersonic-waveform-propertize'
+takes them; when given, a lane of waveform bars
+\(`supersonic-waveform-svg-bars') is drawn between the scrim and TEXT,
+extending the scrim by `supersonic-art-overlay-waveform-lane-height' to
+fit it, so the result reads as art, then waveform, then text, stacked
+in that order, instead of TEXT sitting directly on the scrim the way it
+does without one."
   (let* ((file (supersonic-art-cache-file id size))
          (mime (format "image/%s" (image-type-from-file-header file)))
          (svg (svg-create size size))
-         (scrim-height (round (* size 0.22)))
+         (text-height (round (* size 0.22)))
+         (lane-height (if waveform (supersonic-art-overlay-waveform-lane-height size) 0))
+         (scrim-height (+ text-height lane-height))
          (font-size (supersonic-art-overlay-font-size size)))
     (svg-embed svg file mime nil :width size :height size)
     (svg-rectangle svg 0 (- size scrim-height) size scrim-height :fill "black" :fill-opacity 0.55)
+    (when waveform
+      (supersonic-waveform-svg-bars
+       svg (supersonic-waveform-bars (car waveform) (cdr waveform) size lane-height) (- size scrim-height)
+       lane-height))
     (svg-text svg text
-              :x (/ size 2) :y (- size (/ scrim-height 2))
+              :x (/ size 2) :y (- size (/ text-height 2))
               :fill "white" :font-size font-size :font-weight "bold"
               :text-anchor "middle" :dominant-baseline "middle")
     (propertize " " 'display (svg-image svg))))
@@ -124,7 +154,7 @@ back."
          (available (- size (* 2 (supersonic-art-scroll-pad size)))))
     (max 0 (round (- (supersonic-art-scroll-text-width text font-size) available)))))
 
-(defun supersonic-art-overlay-scroll-propertize (id size text offset)
+(defun supersonic-art-overlay-scroll-propertize (id size text offset &optional waveform)
   "Generate a property showing TEXT across cover art ID at SIZE, OFFSET pixels in.
 Like `supersonic-art-overlay-propertize', but left-aligned and shifted
 left by OFFSET pixels instead of centered and fixed in place --
@@ -132,20 +162,29 @@ left by OFFSET pixels instead of centered and fixed in place --
 between 0 and `supersonic-art-scroll-max-offset' (see that function) to
 reveal TEXT a little at a time when it does not fit in one line; this
 function only ever draws the single frame it is given for whatever
-OFFSET that is.  Clipped to the scrim so TEXT never draws outside of
-it, whichever edge is currently cut off."
+OFFSET that is.  Clipped to its own text row so TEXT never draws
+outside of it, whichever edge is currently cut off -- WAVEFORM's lane
+above that row, if there is one, is left unclipped, since nothing ever
+scrolls there.
+
+WAVEFORM is as in `supersonic-art-overlay-propertize'."
   (let* ((file (supersonic-art-cache-file id size))
          (mime (format "image/%s" (image-type-from-file-header file)))
          (svg (svg-create size size))
-         (scrim-height (round (* size 0.22)))
+         (text-height (round (* size 0.22)))
+         (lane-height (if waveform (supersonic-art-overlay-waveform-lane-height size) 0))
+         (scrim-height (+ text-height lane-height))
          (scrim-y (- size scrim-height))
          (font-size (supersonic-art-overlay-font-size size))
-         (baseline-y (- size (/ scrim-height 2)))
+         (baseline-y (- size (/ text-height 2)))
          (pad (supersonic-art-scroll-pad size))
          (clip (svg-clip-path svg :id "supersonic-art-scroll-clip")))
     (svg-embed svg file mime nil :width size :height size)
     (svg-rectangle svg 0 scrim-y size scrim-height :fill "black" :fill-opacity 0.55)
-    (svg-rectangle clip 0 scrim-y size scrim-height)
+    (when waveform
+      (supersonic-waveform-svg-bars svg (supersonic-waveform-bars (car waveform) (cdr waveform) size lane-height)
+                                     scrim-y lane-height))
+    (svg-rectangle clip 0 (- size text-height) size text-height)
     (svg-text svg text
               :x (- pad offset) :y baseline-y
               :fill "white" :font-size font-size :font-weight "bold"

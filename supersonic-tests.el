@@ -645,48 +645,84 @@ a track's own id often doubles as its cover art id, and
   (let ((supersonic-cache-path "/tmp/supersonic-tests-shared-cache"))
     (should-not (equal (supersonic-art-cache-file "shared-id" 300) (supersonic-waveform-cache-file "shared-id" 300)))))
 
+(defun supersonic-tests--count-substring (needle haystack)
+  "Return how many times NEEDLE occurs in HAYSTACK, non-overlapping."
+  (with-temp-buffer
+    (insert haystack)
+    (goto-char (point-min))
+    (how-many (regexp-quote needle))))
+
+(defmacro supersonic-tests--with-cached-art (id size &rest body)
+  "Run BODY with cover art ID cached at SIZE under a temporary cache path.
+The bytes written are the smallest possible valid PNG (a single
+transparent pixel) -- real bytes are needed, not a placeholder string,
+since `image-type-from-file-header' has to recognize them to pick the
+right MIME type to embed the file as."
+  (declare (indent 2))
+  `(let ((supersonic-cache-path (expand-file-name (make-temp-name "supersonic-tests-cache-") temporary-file-directory)))
+     (unwind-protect
+         (progn
+           (mkdir supersonic-cache-path)
+           (let ((coding-system-for-write 'no-conversion))
+             (write-region
+              (base64-decode-string
+               "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+              nil (supersonic-art-cache-file ,id ,size)))
+           ,@body)
+       (delete-directory supersonic-cache-path t))))
+
 (ert-deftest supersonic-tests-art-overlay-propertize-bakes-text-into-the-image ()
   "`supersonic-art-overlay-propertize' returns a display spec built from
 an `svg' image rather than the plain file `supersonic-image-propertize'
 shows -- the whole point being that the text is composited into the
 image itself instead of shown as a separate string beside it."
-  (let ((supersonic-cache-path (expand-file-name (make-temp-name "supersonic-tests-cache-") temporary-file-directory)))
-    (unwind-protect
-        (progn
-          (mkdir supersonic-cache-path)
-          (let ((coding-system-for-write 'no-conversion))
-            (write-region
-             ;; The smallest possible valid PNG (a single transparent
-             ;; pixel) -- real bytes are needed here, not a placeholder
-             ;; string, since `image-type-from-file-header' has to
-             ;; recognize it to pick the right MIME type to embed it as.
-             (base64-decode-string
-              "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
-             nil (supersonic-art-cache-file "art-1" 100)))
-          (let ((spec (get-text-property 0 'display (supersonic-art-overlay-propertize "art-1" 100 "Some Track"))))
-            (should (eq (car spec) 'image))
-            (should (eq (plist-get (cdr spec) :type) 'svg))))
-      (delete-directory supersonic-cache-path t))))
+  (supersonic-tests--with-cached-art
+   "art-1" 100
+   (let ((spec (get-text-property 0 'display (supersonic-art-overlay-propertize "art-1" 100 "Some Track"))))
+     (should (eq (car spec) 'image))
+     (should (eq (plist-get (cdr spec) :type) 'svg)))))
 
 (ert-deftest supersonic-tests-art-overlay-scroll-propertize-bakes-text-into-the-image ()
   "`supersonic-art-overlay-scroll-propertize' returns a display spec built
 from an `svg' image, the same as `supersonic-art-overlay-propertize' --
 the crawl is a difference in how the text is laid out within that image,
 not in what kind of display spec comes back."
-  (let ((supersonic-cache-path (expand-file-name (make-temp-name "supersonic-tests-cache-") temporary-file-directory)))
-    (unwind-protect
-        (progn
-          (mkdir supersonic-cache-path)
-          (let ((coding-system-for-write 'no-conversion))
-            (write-region
-             (base64-decode-string
-              "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
-             nil (supersonic-art-cache-file "art-1" 100)))
-          (let ((spec (get-text-property
-                       0 'display (supersonic-art-overlay-scroll-propertize "art-1" 100 "Some Track — Some Artist" 0))))
-            (should (eq (car spec) 'image))
-            (should (eq (plist-get (cdr spec) :type) 'svg))))
-      (delete-directory supersonic-cache-path t))))
+  (supersonic-tests--with-cached-art
+   "art-1" 100
+   (let ((spec
+          (get-text-property
+           0 'display (supersonic-art-overlay-scroll-propertize "art-1" 100 "Some Track — Some Artist" 0))))
+     (should (eq (car spec) 'image))
+     (should (eq (plist-get (cdr spec) :type) 'svg)))))
+
+(ert-deftest supersonic-tests-art-overlay-propertize-draws-a-waveform-lane-when-given-one ()
+  "`supersonic-art-overlay-propertize' draws extra rectangles for a
+WAVEFORM argument's bars, on top of its usual single scrim rectangle --
+the same image otherwise, whether or not one is given."
+  (supersonic-tests--with-cached-art
+   "art-1" 100
+   (let* ((envelope (cons (supersonic-tests--bytes '(255 0)) (supersonic-tests--bytes '(200 0))))
+          (plain (get-text-property 0 'display (supersonic-art-overlay-propertize "art-1" 100 "Some Track")))
+          (with-waveform
+           (get-text-property 0 'display (supersonic-art-overlay-propertize "art-1" 100 "Some Track" (cons envelope 0.5)))))
+     (should
+      (> (supersonic-tests--count-substring "<rect" (plist-get (cdr with-waveform) :data))
+         (supersonic-tests--count-substring "<rect" (plist-get (cdr plain) :data)))))))
+
+(ert-deftest supersonic-tests-art-overlay-scroll-propertize-draws-a-waveform-lane-when-given-one ()
+  "`supersonic-art-overlay-scroll-propertize' draws the same extra
+waveform rectangles `supersonic-art-overlay-propertize' does when given
+a WAVEFORM argument, above its own clip rectangle and text."
+  (supersonic-tests--with-cached-art
+   "art-1" 100
+   (let* ((envelope (cons (supersonic-tests--bytes '(255 0)) (supersonic-tests--bytes '(200 0))))
+          (plain (get-text-property 0 'display (supersonic-art-overlay-scroll-propertize "art-1" 100 "Some Track" 0)))
+          (with-waveform
+           (get-text-property
+            0 'display (supersonic-art-overlay-scroll-propertize "art-1" 100 "Some Track" 0 (cons envelope 0.5)))))
+     (should
+      (> (supersonic-tests--count-substring "<rect" (plist-get (cdr with-waveform) :data))
+         (supersonic-tests--count-substring "<rect" (plist-get (cdr plain) :data)))))))
 
 (ert-deftest supersonic-tests-art-scroll-text-width-uses-real-font-metrics-when-available ()
   "`supersonic-art-scroll-text-width' measures TEXT via `string-pixel-width'
@@ -1157,6 +1193,48 @@ must leave the corner pixel it keys off of untouched."
       (should (eq 'heuristic (plist-get (cdr img) :mask)))
       (should (equal (list (aref pixels 0) (aref pixels 1) (aref pixels 2)) bg)))))
 
+(ert-deftest supersonic-tests-waveform-bars-splits-rms-and-peak-around-center ()
+  "`supersonic-waveform-bars' turns each bucket of an envelope into a
+geometry plist whose :rms-extent never exceeds its :peak-extent, and
+whose :x0/:x1 tile WIDTH exactly -- the same bucket math
+`supersonic-waveform-image' used to compute inline, now shared with
+`supersonic-waveform-svg-bars' too."
+  (let* ((peaks (supersonic-tests--bytes '(255 0)))
+         (rms (supersonic-tests--bytes '(128 0)))
+         (bars (supersonic-waveform-bars (cons peaks rms) 0.5 10 8)))
+    (should (= 2 (length bars)))
+    (should (eq t (plist-get (nth 0 bars) :played)))
+    (should (eq nil (plist-get (nth 1 bars) :played)))
+    (should (= 0 (plist-get (nth 0 bars) :x0)))
+    (should (= (plist-get (nth 0 bars) :x1) (plist-get (nth 1 bars) :x0)))
+    (should (= 10 (plist-get (nth 1 bars) :x1)))
+    (should (>= (plist-get (nth 0 bars) :peak-extent) (plist-get (nth 0 bars) :rms-extent)))
+    ;; A silent (all-zero) bucket still draws a sliver rather than
+    ;; vanishing entirely -- the same `max 1' floor `supersonic-waveform-image'
+    ;; always applied to :rms-extent.
+    (should (= 1 (plist-get (nth 1 bars) :rms-extent)))
+    (should (= 0 (plist-get (nth 1 bars) :peak-extent)))))
+
+(ert-deftest supersonic-tests-waveform-svg-bars-draws-more-for-a-wider-peak-reach ()
+  "`supersonic-waveform-svg-bars' draws a second, dimmer rectangle for
+the reach between a bar's RMS and peak extents, but only when there is
+one -- a bucket whose peak does not exceed its RMS (silence, or a
+perfectly flat tone) gets just the one solid rectangle."
+  (let* ((wide (supersonic-waveform-bars (cons (supersonic-tests--bytes '(255)) (supersonic-tests--bytes '(50))) 0 10 8))
+         (flat (supersonic-waveform-bars (cons (supersonic-tests--bytes '(0)) (supersonic-tests--bytes '(0))) 0 10 8))
+         (svg-wide (svg-create 10 8))
+         (svg-flat (svg-create 10 8)))
+    (supersonic-waveform-svg-bars svg-wide wide 0 8)
+    (supersonic-waveform-svg-bars svg-flat flat 0 8)
+    (let ((rects-wide (with-temp-buffer
+                         (svg-print svg-wide)
+                         (how-many "<rect" (point-min) (point-max))))
+          (rects-flat (with-temp-buffer
+                        (svg-print svg-flat)
+                        (how-many "<rect" (point-min) (point-max)))))
+      (should (= 2 rects-wide))
+      (should (= 1 rects-flat)))))
+
 (ert-deftest supersonic-tests-waveform-seek-map-suppresses-drag-region-point-move ()
   "`supersonic-waveform-seek-map' overrides `down-mouse-1' with a no-op.
 The global `down-mouse-1' binding is `mouse-drag-region', which moves
@@ -1267,6 +1345,17 @@ deterministic step at a time."
     (setq supersonic-now-playing--animation-last-time
           (- (float-time) supersonic-now-playing-cycle-interval)))
   (supersonic-now-playing--animation-tick))
+
+(defun supersonic-tests--now-playing-art-keymap (buff)
+  "Return the `keymap' property of BUFF's cover art field, or nil.
+`supersonic-now-playing--maybe-seekable' is what puts one there, on top
+of an art overlay that layered a waveform in -- nil otherwise, the same
+as the plain art image `supersonic-now-playing--art' shows without one."
+  (with-current-buffer buff
+    (save-excursion
+      (goto-char (point-min))
+      (let ((match (text-property-search-forward 'supersonic-now-playing-field 'art t)))
+        (and match (get-text-property (prop-match-beginning match) 'keymap))))))
 
 (defun supersonic-tests--now-playing-label (buff)
   "Return the text of BUFF's now-playing label next to the cover art.
@@ -1742,6 +1831,15 @@ just the placeholder `supersonic-now-playing--render' inserts for it."
       (let ((match (text-property-search-forward 'supersonic-now-playing-field 'waveform t)))
         (and match (get-text-property (prop-match-beginning match) 'display))))))
 
+(defun supersonic-tests--waveform-field-present-p (buff)
+  "Return non-nil if BUFF has a standalone `waveform' field at all, empty
+placeholder or not -- unlike `supersonic-tests--waveform-image-shown-p',
+which only cares whether an image has landed in one."
+  (with-current-buffer buff
+    (save-excursion
+      (goto-char (point-min))
+      (and (text-property-search-forward 'supersonic-now-playing-field 'waveform t) t))))
+
 (ert-deftest supersonic-tests-now-playing-buffer-shows-waveform-once-ready ()
   "The now-playing buffer patches in a waveform seekbar once
 `supersonic-waveform-ensure' delivers an envelope for the current
@@ -2126,6 +2224,78 @@ crosses into another bucket -- once every twelve seconds for a
               (supersonic-now-playing-recolor-waveform buff 30)
               (should (= 1 redraws))))
         (kill-buffer buff)))))
+
+(ert-deftest supersonic-tests-now-playing-waveform-in-overlay-suppresses-standalone-field ()
+  "`supersonic-now-playing--render' reserves no standalone `waveform'
+field at all once `supersonic-now-playing-waveform-in-overlay' is on --
+there is nothing left to show there once the seekbar is drawn onto the
+cover art instead (see `supersonic-now-playing-animate-art-overlay'/
+`-scroll')."
+  (skip-unless (image-type-available-p 'pbm))
+  (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
+    (let ((supersonic-enable-waveform t)
+          (buff (get-buffer-create "*supersonic-tests-now-playing*"))
+          (song '(("id" . "t") ("title" . "Song") ("duration" . 100))))
+      (unwind-protect
+          (with-current-buffer buff
+            (supersonic-now-playing-mode)
+            (let ((supersonic-now-playing-waveform-in-overlay nil))
+              (supersonic-now-playing--render buff song nil 0 "t")
+              (should (supersonic-tests--waveform-field-present-p buff)))
+            (let ((supersonic-now-playing-waveform-in-overlay t))
+              (supersonic-now-playing--render buff song nil 0 "t2")
+              (should-not (supersonic-tests--waveform-field-present-p buff))))
+        (kill-buffer buff)))))
+
+(ert-deftest supersonic-tests-now-playing-recolor-waveform-redraws-art-overlay-when-configured ()
+  "With `supersonic-now-playing-waveform-in-overlay' on, a bucket change
+re-runs `supersonic-now-playing-animation-functions' (DELTA 0) instead
+of touching a standalone `waveform' field -- there is none to touch,
+and it is those functions that know how to draw the waveform onto the
+art, not `supersonic-now-playing-recolor-waveform' itself."
+  (skip-unless (image-type-available-p 'pbm))
+  (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
+    (let ((supersonic-enable-waveform t)
+          (supersonic-waveform-buckets 4)
+          (supersonic-now-playing-waveform-in-overlay t)
+          (repaints 0)
+          (buff (get-buffer-create "*supersonic-tests-now-playing*")))
+      (unwind-protect
+          (with-current-buffer buff
+            (supersonic-now-playing-mode)
+            (let ((supersonic-now-playing-animation-functions
+                   (list (lambda (_buff delta) (when (= delta 0) (cl-incf repaints))))))
+              (supersonic-now-playing--render buff '(("id" . "t") ("duration" . 100)) nil 0 "t")
+              (setq repaints 0)
+              (supersonic-now-playing--show-waveform
+               buff "t"
+               (cons (supersonic-tests--bytes '(10 20 30 40)) (supersonic-tests--bytes '(5 10 15 20))))
+              ;; Four buckets over 100 seconds: 0-24s is all bucket 0, no
+              ;; redraw due yet; 25s crosses into bucket 1.
+              (supersonic-now-playing-recolor-waveform buff 1)
+              (should (= 0 repaints))
+              (supersonic-now-playing-recolor-waveform buff 25)
+              (should (= 1 repaints))
+              (should-not (supersonic-tests--waveform-field-present-p buff))))
+        (kill-buffer buff)))))
+
+(ert-deftest supersonic-tests-now-playing-art-overlay-waveform-is-seekable ()
+  "The cover art overlay stays clickable to seek once a waveform is
+layered onto it -- `supersonic-now-playing-animate-art-overlay-scroll'
+hands its result through `supersonic-now-playing--maybe-seekable' when
+`supersonic-now-playing--overlay-waveform' returns non-nil, the same
+way `supersonic-waveform-propertize' already makes the standalone
+seekbar clickable."
+  (let ((supersonic-now-playing-waveform-in-overlay t))
+    (supersonic-tests--with-scroll-overlay
+     "Some Track"
+     (with-current-buffer buff
+       (setq supersonic-now-playing--duration 100)
+       (setq supersonic-now-playing--position 10)
+       (setq supersonic-now-playing--waveform
+             (cons "t" (cons (supersonic-tests--bytes '(10 20)) (supersonic-tests--bytes '(5 10)))))
+       (supersonic-now-playing-animate-art-overlay-scroll buff 0)
+       (should (eq supersonic-waveform-seek-map (supersonic-tests--now-playing-art-keymap buff)))))))
 
 (ert-deftest supersonic-tests-mpris-sync-announces-live-status-and-metadata ()
   "`supersonic-mpris--sync' pulls the active backend's track id and pause

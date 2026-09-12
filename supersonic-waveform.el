@@ -52,6 +52,7 @@
 
 ;;; Code:
 (require 'cl-lib)
+(require 'svg)
 (require 'supersonic-custom)
 (require 'supersonic-api)
 (require 'supersonic-playback)
@@ -609,6 +610,39 @@ and would otherwise walk the same list with `nth' each time."
     (aset buf (1+ offset) g)
     (aset buf (+ offset 2) b)))
 
+(defun supersonic-waveform-bars (envelope progress width height)
+  "Return each bucket of (PEAKS . RMS) ENVELOPE as a bar geometry plist.
+Shared by `supersonic-waveform-image' (a standalone seekbar, drawn
+pixel by pixel into a PBM image) and `supersonic-waveform-svg-bars'
+\(the same bars layered onto something else's SVG canvas instead, e.g.
+`supersonic-art-overlay-scroll-propertize' onto the cover art) -- both
+need the identical bucket-by-bucket split between a solid RMS reach and
+a lighter peak reach around a vertical center at WIDTH x HEIGHT, and
+differ only in what they draw those bars with.  PROGRESS (0..1, or nil
+for 0) is the played/unplayed boundary, same as `supersonic-waveform-image'.
+
+Each element is a plist: :x0/:x1 (this bar's pixel column range, half
+open), :played (t or nil), and :rms-extent/:peak-extent (pixels out
+from the vertical center at (/ HEIGHT 2) each bar's RMS/peak reaches --
+:peak-extent is always >= :rms-extent, and neither ever exceeds
+HEIGHT/2, so a caller centering both around that same HEIGHT never has
+to clamp)."
+  (let* ((peaks (car envelope))
+         (rms (cdr envelope))
+         (buckets (length peaks))
+         (progress (or progress 0))
+         (center (/ height 2)))
+    (cl-loop
+     for b below buckets
+     collect
+     (let ((x0 (/ (* b width) buckets)))
+       (list
+        :x0 x0
+        :x1 (max (1+ x0) (/ (* (1+ b) width) buckets))
+        :played (< (/ (float b) buckets) progress)
+        :rms-extent (max 1 (round (* (/ (aref rms b) 255.0) center)))
+        :peak-extent (round (* (/ (aref peaks b) 255.0) center)))))))
+
 (defun supersonic-waveform-image (envelope progress)
   "Render (PEAKS . RMS) ENVELOPE into a seekbar image.
 PROGRESS (0..1, or nil for 0) marks how much of the track counts as
@@ -629,10 +663,6 @@ region -- shows through instead of whatever `face-background' happened
 to report when this image was generated."
   (let* ((width supersonic-waveform-width)
          (height supersonic-waveform-height)
-         (peaks (car envelope))
-         (rms (cdr envelope))
-         (buckets (length peaks))
-         (progress (or progress 0))
          (bg (supersonic-waveform--rgb (face-background 'default nil t)))
          (played (supersonic-waveform--rgb (face-foreground 'default nil t)))
          (unplayed (supersonic-waveform--rgb (face-foreground 'shadow nil t)))
@@ -646,10 +676,8 @@ to report when this image was generated."
          ;; during playback after that.
          (buf (mapconcat #'identity (make-list (* width height) (apply #'unibyte-string bg)) ""))
          (center (/ height 2)))
-    (dotimes (b buckets)
-      (let* ((x0 (/ (* b width) buckets))
-             (x1 (max (1+ x0) (/ (* (1+ b) width) buckets)))
-             (playedp (< (/ (float b) buckets) progress))
+    (dolist (bar (supersonic-waveform-bars envelope progress width height))
+      (let* ((playedp (plist-get bar :played))
              (solid
               (if playedp
                   played
@@ -665,10 +693,10 @@ to report when this image was generated."
              (tr (nth 0 translucent))
              (tg (nth 1 translucent))
              (tb (nth 2 translucent))
-             (rms-extent (max 1 (round (* (/ (aref rms b) 255.0) center))))
-             (peak-extent (round (* (/ (aref peaks b) 255.0) center)))
-             (x x0))
-        (while (< x x1)
+             (rms-extent (plist-get bar :rms-extent))
+             (peak-extent (plist-get bar :peak-extent))
+             (x (plist-get bar :x0)))
+        (while (< x (plist-get bar :x1))
           (dotimes (i rms-extent)
             (supersonic-waveform--set-pixel buf width x (max 0 (- center i)) sr sg sb)
             (supersonic-waveform--set-pixel buf width x (min (1- height) (+ center i)) sr sg sb))
@@ -684,6 +712,32 @@ to report when this image was generated."
            (supersonic-waveform--set-pixel buf width x (min (1- height) (+ center i)) tr tg tb))
           (setq x (1+ x)))))
     (create-image (concat (string-to-unibyte (format "P6\n%d %d\n255\n" width height)) buf) 'pbm t :mask 'heuristic)))
+
+(defun supersonic-waveform-svg-bars (svg bars y height)
+  "Draw BARS (see `supersonic-waveform-bars') into SVG as rectangles.
+Y and HEIGHT mark the band BARS was computed against, so every bar's
+:rms-extent/:peak-extent already falls within [0, HEIGHT/2] of its
+vertical center -- no clamping needed here, unlike the raw pixel
+buffer `supersonic-waveform-image' draws into.
+
+Colors are a plain white rather than that function's theme-derived
+faces: this is meant for drawing onto a photograph (see
+`supersonic-art-overlay-scroll-propertize'), not the buffer background,
+and a fixed light color is the one that reliably reads over any cover
+art -- the same reasoning the scrim's own text already relies on.
+Played vs. unplayed, and the RMS vs. peak reach, are both told apart by
+opacity instead of a different color, for the same reason."
+  (let ((center (+ y (/ height 2))))
+    (dolist (bar bars)
+      (let* ((x0 (plist-get bar :x0))
+             (width (- (plist-get bar :x1) x0))
+             (rms-extent (plist-get bar :rms-extent))
+             (peak-extent (plist-get bar :peak-extent))
+             (opacity (if (plist-get bar :played) 0.9 0.4)))
+        (when (> peak-extent rms-extent)
+          (svg-rectangle
+           svg x0 (- center peak-extent) width (* 2 peak-extent) :fill "white" :fill-opacity (* opacity 0.5)))
+        (svg-rectangle svg x0 (- center rms-extent) width (* 2 rms-extent) :fill "white" :fill-opacity opacity)))))
 
 (defvar supersonic-waveform-seek-map
   (let ((map (make-sparse-keymap)))
@@ -715,18 +769,24 @@ playing."
              (ratio (max 0.0 (min 1.0 (/ (float x) width)))))
         (supersonic-playback-seek-fraction ratio)))))
 
+(defun supersonic-waveform-seekable (display)
+  "Return a display string showing DISPLAY (an image spec), clickable to seek.
+Shared by `supersonic-waveform-propertize' and whichever of
+`supersonic-now-playing-animate-art-overlay'/`-scroll' just composited
+a waveform onto the cover art (see
+`supersonic-now-playing-waveform-in-overlay'): both hand back exactly
+this, differing only in what image DISPLAY actually is.  The click
+itself does not care which one it was either --
+`supersonic-waveform--seek-at-click' reads the fraction straight off
+wherever in the image was clicked, the
+same way regardless."
+  (propertize " " 'display display 'keymap supersonic-waveform-seek-map 'pointer 'hand 'help-echo
+              "mouse-1: seek to this position"))
+
 (defun supersonic-waveform-propertize (envelope progress)
   "Return a display string embedding ENVELOPE's seekbar image, clickable to seek.
 PROGRESS is as in `supersonic-waveform-image'."
-  (propertize " "
-              'display
-              (supersonic-waveform-image envelope progress)
-              'keymap
-              supersonic-waveform-seek-map
-              'pointer
-              'hand
-              'help-echo
-              "mouse-1: seek to this position"))
+  (supersonic-waveform-seekable (supersonic-waveform-image envelope progress)))
 
 (defun supersonic-waveform-unload-function ()
   "Undo the `kill-emacs-hook' entry this file adds at load time.
