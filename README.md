@@ -66,10 +66,11 @@ Keys in that buffer: `SPC` play/pause, `n`/`p` next/previous track,
 `f`/`b` seek, `g` refresh manually.
 
 Enabling `supersonic-enable-waveform` adds a clickable waveform seekbar
-above the transport buttons, click anywhere on it to seek there. 
+next to the cover art, above the label and the transport buttons,
+click anywhere on it to seek there.
 `supersonic-waveform-width`/`-height` set its display size. 
 
-The label next to the cover art shows the track's title by default.
+The label below the cover art shows the track's title by default.
 Setting `supersonic-now-playing-cycle-fields` to a list of `title`,
 `artist` and/or `album` makes it rotate through them instead, every
 `supersonic-now-playing-cycle-interval` seconds (10 by default).
@@ -87,7 +88,7 @@ together), just list more than one.
 With both `supersonic-enable-art` and `supersonic-enable-waveform` on,
 turning on `supersonic-now-playing-waveform-in-overlay` layers the
 waveform seekbar onto the cover art as well, in a lane above the text,
-instead of showing it as its own line below the label.
+instead of showing it next to the cover art on its own.
 
 The Title/Artist/Album/Duration/Format/Size rows below the transport
 buttons come from `supersonic-now-playing-render-functions`, a list

@@ -393,7 +393,7 @@ to redraw at all."
       supersonic-now-playing--cycle-changed)))
 
 (defun supersonic-now-playing-animate-label (buff delta)
-  "Show BUFF's currently due field as its text label next to the cover art.
+  "Show BUFF's currently due field as its text label below the cover art.
 DELTA is real seconds elapsed since the last animation tick, as every
 entry in `supersonic-now-playing-animation-functions' is called with;
 0 means an unconditional first paint (see `supersonic-now-playing--render')
@@ -988,24 +988,27 @@ from) -- see `supersonic-now-playing--track-id'."
           (progn
             (when art
               (insert (propertize art 'supersonic-now-playing-field 'art) "  "))
-            ;; Just the tagged placeholder here, the same way the waveform
-            ;; slot below is -- `supersonic-now-playing-animation-functions'
-            ;; fills it in (or leaves it empty, if it targets the art
-            ;; overlay instead) a few lines down, once the rest of the
-            ;; buffer exists for it to search across.
-            (insert (propertize " " 'supersonic-now-playing-field 'label))
-            ;; No blank line before the waveform -- it sits right under
-            ;; the label -- but one is still wanted before the buttons
-            ;; when there is no standalone waveform line to close that
-            ;; gap instead (either none is enabled, or
+            ;; The waveform sits right beside the art, where the label
+            ;; used to -- whether there is an image to put in it is
+            ;; settled at the end of this function, via
+            ;; `supersonic-now-playing--show-waveform'.  Nothing at all
+            ;; is inserted here when there is no standalone waveform to
+            ;; show (either none is enabled, or
             ;; `supersonic-now-playing-waveform-in-overlay' is drawing
-            ;; it onto the art instead of reserving a line for it here).
-            (insert (if (supersonic-now-playing--waveform-standalone-p) "\n" "\n\n"))
-            ;; Just the tagged placeholder here; whether there is an
-            ;; image to put in it is settled at the end of this function,
-            ;; via `supersonic-now-playing--show-waveform'.
+            ;; it onto the art instead).
             (when (supersonic-now-playing--waveform-standalone-p)
-              (insert (propertize " " 'supersonic-now-playing-field 'waveform) "\n"))
+              (insert (propertize " " 'supersonic-now-playing-field 'waveform)))
+            ;; The label moved down to the waveform's old slot instead,
+            ;; always on its own line below the art (and the waveform,
+            ;; if it's there) rather than sharing a line with either --
+            ;; `supersonic-now-playing-animation-functions' fills it in
+            ;; (or leaves it empty, if it targets the art overlay
+            ;; instead) a few lines down, once the rest of the buffer
+            ;; exists for it to search across.  Always followed by a
+            ;; blank line before the buttons, since -- unlike the
+            ;; waveform above it -- the label placeholder is here
+            ;; unconditionally.
+            (insert "\n" (propertize " " 'supersonic-now-playing-field 'label) "\n\n")
             (supersonic-now-playing--insert-button "|◀◀" #'supersonic-prev-track)
             (insert "  ")
             (supersonic-now-playing--insert-button

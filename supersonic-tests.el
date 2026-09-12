@@ -1358,7 +1358,7 @@ as the plain art image `supersonic-now-playing--art' shows without one."
         (and match (get-text-property (prop-match-beginning match) 'keymap))))))
 
 (defun supersonic-tests--now-playing-label (buff)
-  "Return the text of BUFF's now-playing label next to the cover art.
+  "Return the text of BUFF's now-playing label below the cover art.
 Distinct from `supersonic-tests--buffer-matches' because the plain
 \"Artist:\" field further down always shows the artist too -- reading
 this one by its `supersonic-now-playing-field' tag is what lets a test

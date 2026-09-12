@@ -242,7 +242,7 @@ driving all of them -- down with it; see
 Three are built in:
 
 - `supersonic-now-playing-animate-label' (the default): updates the
-  text label next to the cover art -- the only place a rotated field
+  text label below the cover art -- the only place a rotated field
   ever showed before this existed.  Only actually switches fields (and
   redraws) once `supersonic-now-playing-cycle-interval' seconds of
   DELTA have really accumulated, however many ticks that took.
@@ -438,7 +438,7 @@ default face is the ready-player look this is going for instead; hover
 feedback still comes for free from `button-type-get's `mouse-face',
 which is unaffected by this face.  `:height' is relative (a float),
 scaling off whatever face this is displayed alongside, e.g. the label's
-`bold' next to the cover art, rather than a fixed point size that would
+`bold' below the cover art, rather than a fixed point size that would
 stop tracking it."
   :group 'supersonic)
 
