@@ -598,13 +598,14 @@ two different timers (STOP-FN is whichever of
 
 (defun supersonic-now-playing--run-field-functions (functions buff arg)
   "Call each of FUNCTIONS as (FUNCTION BUFF ARG), one broken entry at a time.
-Shared by `supersonic-now-playing-animation-functions' (ARG is DELTA)
-and `supersonic-now-playing-position-functions' (ARG is POSITION): both
-are user-customizable lists, so one entry signalling an error is
-reported and skipped rather than propagated -- taking every function
-after it in the same list, and the timer driving the whole list, down
-with it would make one bad entry (a typo in a hand-written function,
-say) far more costly than it has to be."
+Shared by `supersonic-now-playing-animation-functions' (ARG is DELTA),
+`supersonic-now-playing-position-functions' (ARG is POSITION) and
+`supersonic-now-playing-render-functions' (ARG is SONG): all three are
+user-customizable lists, so one entry signalling an error is reported
+and skipped rather than propagated -- taking every function after it in
+the same list (and, for the first two, the timer driving the whole
+list) down with it would make one bad entry (a typo in a hand-written
+function, say) far more costly than it has to be."
   (dolist (function functions)
     (condition-case err
         (funcall function buff arg)
@@ -880,6 +881,50 @@ unexpected; see `supersonic-now-playing-waveform-in-overlay''s
 docstring."
   (and (supersonic-waveform-available-p) (not supersonic-now-playing-waveform-in-overlay)))
 
+(defun supersonic-now-playing-render-title (_buff song)
+  "Insert SONG's \"Title:\" row, if it has one.  Built into
+`supersonic-now-playing-render-functions'."
+  (supersonic-now-playing--insert-field "Title" (assoc-default "title" song)))
+
+(defun supersonic-now-playing-render-artist (_buff song)
+  "Insert SONG's \"Artist:\" row, if it has one.  Built into
+`supersonic-now-playing-render-functions'."
+  (supersonic-now-playing--insert-field "Artist" (assoc-default "artist" song)))
+
+(defun supersonic-now-playing-render-album (_buff song)
+  "Insert SONG's \"Album:\" row, if it has one.  Built into
+`supersonic-now-playing-render-functions'."
+  (supersonic-now-playing--insert-field "Album" (assoc-default "album" song)))
+
+(defun supersonic-now-playing-render-duration (buff _song)
+  "Insert BUFF's \"Duration:\" row, tagged for later updates.
+Reads the position/duration to show off `supersonic-now-playing--position'/
+`supersonic-now-playing--duration' rather than off SONG, since
+`supersonic-now-playing--render' has already set both by the time
+`supersonic-now-playing-render-functions' runs, and POSITION in
+particular is not part of SONG at all.  Tagged `duration' so
+`supersonic-now-playing-update-duration-field' can keep patching this
+row in place as playback moves on, wherever in the buffer this
+function ends up putting it.  Built into
+`supersonic-now-playing-render-functions'."
+  (supersonic-now-playing--insert-field
+   "Duration"
+   (supersonic-now-playing--position
+    (buffer-local-value 'supersonic-now-playing--position buff)
+    (buffer-local-value 'supersonic-now-playing--duration buff))
+   'duration))
+
+(defun supersonic-now-playing-render-format (_buff song)
+  "Insert SONG's \"Format:\" row, if it is known.  Built into
+`supersonic-now-playing-render-functions'."
+  (supersonic-now-playing--insert-field "Format" (supersonic-now-playing--format song)))
+
+(defun supersonic-now-playing-render-size (_buff song)
+  "Insert SONG's \"Size:\" row, if it is known.  Built into
+`supersonic-now-playing-render-functions'."
+  (let ((size (assoc-default "size" song)))
+    (supersonic-now-playing--insert-field "Size" (and size (format "%.2f MB" (/ size 1048576.0))))))
+
 (defun supersonic-now-playing--render (buff song paused position track-id)
   "Render SONG into BUFF, marked as paused or playing according to PAUSED.
 POSITION is how many seconds into SONG playback currently is.  SONG is a
@@ -893,7 +938,6 @@ from) -- see `supersonic-now-playing--track-id'."
       (let* ((inhibit-read-only t)
              (art (and song (supersonic-now-playing--art song)))
              (duration (and song (assoc-default "duration" song)))
-             (size (and song (assoc-default "size" song)))
              ;; Re-rendering the track already on show is the common case,
              ;; not the exception: a pause, a resume, `g', and two or three
              ;; renders inside the first second of a fresh mpv start all
@@ -976,13 +1020,7 @@ from) -- see `supersonic-now-playing--track-id'."
             (insert "  ")
             (supersonic-now-playing--insert-button "▶▶" #'supersonic-seek-forward)
             (insert "\n\n")
-            (supersonic-now-playing--insert-field "Title" (assoc-default "title" song))
-            (supersonic-now-playing--insert-field "Artist" (assoc-default "artist" song))
-            (supersonic-now-playing--insert-field "Album" (assoc-default "album" song))
-            (supersonic-now-playing--insert-field "Duration" (supersonic-now-playing--position position duration)
-                                                  'duration)
-            (supersonic-now-playing--insert-field "Format" (supersonic-now-playing--format song))
-            (supersonic-now-playing--insert-field "Size" (and size (format "%.2f MB" (/ size 1048576.0))))
+            (supersonic-now-playing--run-field-functions supersonic-now-playing-render-functions buff song)
             ;; Paint whatever `supersonic-now-playing--field-index' points at
             ;; right away rather than leaving the label (or the art overlay)
             ;; blank until the first animation tick, which is up to

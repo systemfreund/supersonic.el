@@ -89,14 +89,14 @@ art it can draw -- see `supersonic-art-available-p'."
   :type 'boolean
   :group 'supersonic)
 
-(defcustom supersonic-list-art-size 100
+(defcustom supersonic-list-art-size 400
   "Height in pixels of the cover art in the album and podcast lists.
 The art is also downloaded at this size, so raising it costs a
 re-download of anything already cached at the old size."
   :type 'integer
   :group 'supersonic)
 
-(defcustom supersonic-now-playing-art-size 300
+(defcustom supersonic-now-playing-art-size 600
   "Height in pixels of the cover art in the now-playing buffer.
 The art is also downloaded at this size, so raising it costs a
 re-download of anything already cached at the old size."
@@ -296,6 +296,51 @@ Three are built in, and make up the default:
 Dropping one of these from the list turns that behaviour off; adding a
 function of your own -- synced lyrics keyed on position, say -- runs it
 alongside the rest."
+  :type '(repeat function)
+  :group 'supersonic)
+
+(declare-function supersonic-now-playing-render-title "supersonic")
+(declare-function supersonic-now-playing-render-artist "supersonic")
+(declare-function supersonic-now-playing-render-album "supersonic")
+(declare-function supersonic-now-playing-render-duration "supersonic")
+(declare-function supersonic-now-playing-render-format "supersonic")
+(declare-function supersonic-now-playing-render-size "supersonic")
+
+(defcustom supersonic-now-playing-render-functions
+  (list #'supersonic-now-playing-render-title
+        #'supersonic-now-playing-render-artist
+        #'supersonic-now-playing-render-album
+        #'supersonic-now-playing-render-duration
+        #'supersonic-now-playing-render-format
+        #'supersonic-now-playing-render-size)
+  "Functions laying out the now-playing buffer's informational text rows.
+Each is called as (FUNCTION BUFF SONG), in list order, right after the
+transport buttons -- SONG is the \"song\" alist
+`supersonic-now-playing--render' is rendering, the same shape
+`supersonic-now-playing-fetch-and-render' fetched from getSong.view.
+Every built-in inserts nothing at all if its value is missing for the
+current track, so a track with no album, say, just leaves that row out
+rather than showing it empty.  Same per-function error isolation as
+`supersonic-now-playing-animation-functions'.
+
+This is the layout counterpart to that variable and
+`supersonic-now-playing-position-functions': those two decide how a
+handful of tagged fields (the label/art overlay, the duration text, the
+waveform) get redrawn as time or position moves on; this one decides
+which rows exist in the first place, and in what order, each time
+`supersonic-now-playing--render' rebuilds the buffer from scratch.
+Reordering entries reorders the rows; dropping one drops the row;
+adding a function of your own -- a \"Genre:\" row read off SONG, say --
+inserts it alongside the rest.  Cover art, the label/art overlay, the
+waveform and the transport buttons are not part of this list -- they
+are laid out unconditionally by `supersonic-now-playing--render' itself,
+before this one runs.
+
+Six are built in, and make up the default, in the order they have
+always appeared in: `supersonic-now-playing-render-title',
+`-artist', `-album', `-duration' (tags its row so
+`supersonic-now-playing-update-duration-field' can keep patching it as
+playback moves on, wherever reordering puts it), `-format' and `-size'."
   :type '(repeat function)
   :group 'supersonic)
 

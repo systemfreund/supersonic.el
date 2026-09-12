@@ -1822,6 +1822,78 @@ track id instead of claiming that nothing is playing."
                (lambda () (supersonic-tests--buffer-matches buff (regexp-quote supersonic-tests--track-1))))))
          (kill-buffer buff))))))
 
+(ert-deftest supersonic-tests-now-playing-render-functions-control-row-order-and-presence ()
+  "Trimming `supersonic-now-playing-render-functions' down to a single
+entry drops every other informational row -- proof that
+`supersonic-now-playing--render' no longer hardcodes which rows exist,
+the way it did before this variable existed."
+  (let ((buff (get-buffer-create "*supersonic-tests-now-playing*"))
+        (song '(("id" . "t") ("title" . "A Title") ("artist" . "An Artist") ("album" . "An Album"))))
+    (unwind-protect
+        (with-current-buffer buff
+          (supersonic-now-playing-mode)
+          (let ((supersonic-now-playing-render-functions (list #'supersonic-now-playing-render-artist)))
+            (supersonic-now-playing--render buff song nil 0 "t")
+            (should (supersonic-tests--buffer-matches buff "Artist:"))
+            (should-not (supersonic-tests--buffer-matches buff "Title:"))
+            (should-not (supersonic-tests--buffer-matches buff "Album:"))))
+      (kill-buffer buff))))
+
+(ert-deftest supersonic-tests-now-playing-render-functions-accepts-a-custom-row ()
+  "A user-supplied function in `supersonic-now-playing-render-functions'
+runs alongside the built-ins, with the same (BUFF SONG) calling
+convention as every other entry."
+  (let ((buff (get-buffer-create "*supersonic-tests-now-playing*"))
+        (song '(("id" . "t") ("title" . "A Title") ("genre" . "Ambient"))))
+    (unwind-protect
+        (with-current-buffer buff
+          (supersonic-now-playing-mode)
+          (let ((supersonic-now-playing-render-functions
+                 (append
+                  supersonic-now-playing-render-functions
+                  (list
+                   (lambda (_buff song) (supersonic-now-playing--insert-field "Genre" (assoc-default "genre" song)))))))
+            (supersonic-now-playing--render buff song nil 0 "t")
+            (should (supersonic-tests--buffer-matches buff "Genre:.*Ambient"))))
+      (kill-buffer buff))))
+
+(ert-deftest supersonic-tests-now-playing-render-duration-stays-updatable-wherever-it-is ()
+  "`supersonic-now-playing-render-duration''s row keeps its `duration'
+tag -- and so stays reachable by `supersonic-now-playing-update-duration-field'
+-- no matter where in `supersonic-now-playing-render-functions' it ends
+up, since that function finds it by tag rather than position."
+  (let ((buff (get-buffer-create "*supersonic-tests-now-playing*"))
+        (song '(("id" . "t") ("title" . "A Title") ("duration" . 100))))
+    (unwind-protect
+        (with-current-buffer buff
+          (supersonic-now-playing-mode)
+          (let ((supersonic-now-playing-render-functions
+                 (list #'supersonic-now-playing-render-duration #'supersonic-now-playing-render-title)))
+            (supersonic-now-playing--render buff song nil 0 "t")
+            (supersonic-now-playing-update-duration-field buff 50)
+            (should (supersonic-tests--buffer-matches buff "00:50 / 01:40"))))
+      (kill-buffer buff))))
+
+(ert-deftest supersonic-tests-now-playing-render-functions-isolates-a-broken-entry ()
+  "An entry in `supersonic-now-playing-render-functions' that signals an
+error does not stop the rest of the list from running --
+`supersonic-now-playing--run-field-functions' reports and skips it
+instead of letting it take every row after it down too."
+  (let ((buff (get-buffer-create "*supersonic-tests-now-playing*"))
+        (song '(("id" . "t") ("title" . "A Title") ("artist" . "An Artist"))))
+    (unwind-protect
+        (with-current-buffer buff
+          (supersonic-now-playing-mode)
+          (let ((supersonic-now-playing-render-functions
+                 (list
+                  (lambda (_buff _song) (error "boom"))
+                  #'supersonic-now-playing-render-title
+                  #'supersonic-now-playing-render-artist)))
+            (supersonic-now-playing--render buff song nil 0 "t")
+            (should (supersonic-tests--buffer-matches buff "Title:"))
+            (should (supersonic-tests--buffer-matches buff "Artist:"))))
+      (kill-buffer buff))))
+
 (defun supersonic-tests--waveform-image-shown-p (buff)
   "Return non-nil if BUFF's waveform field holds a rendered image, not
 just the placeholder `supersonic-now-playing--render' inserts for it."
