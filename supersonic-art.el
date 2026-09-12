@@ -87,16 +87,22 @@ art to be cached at SIZE already."
     (propertize " " 'display (svg-image svg))))
 
 (defun supersonic-art-scroll-text-width (text font-size)
-  "Estimate TEXT's rendered width in pixels at FONT-SIZE.
-`svg.el' has no way to ask back how wide a string came out once drawn --
-only a live frame's font metrics could answer that exactly, and the
-scrolling overlay draws into an image that never becomes one.  0.6 of
-FONT-SIZE per character is close enough for the bold sans-serif
-`supersonic-art-overlay-scroll-propertize' draws with to time when it
-is done bouncing (see `supersonic-art-scroll-max-offset'); being a
-little off just makes it stop a little short of or past the text's
-actual edge, not that it draws in the wrong place."
-  (* (length text) font-size 0.6))
+  "Measure TEXT's rendered width in pixels at FONT-SIZE.
+`svg.el' has no way to ask the image back how wide TEXT came out once
+drawn -- the scrolling overlay draws into an image that never becomes
+one -- but the selected frame's own font metrics
+(`string-pixel-width', added in Emacs 29.1) are a real answer rather
+than a guess: a flat per-character multiplier used to be all this had,
+and a title's actual mix of narrow (\"i\", \"l\", a space) and wide
+(\"m\", \"w\") characters swung that guess wide enough to call text
+that visually fit worth scrolling anyway.  Falls back to 0.6 of
+FONT-SIZE per character on Emacs versions before `string-pixel-width'
+existed -- this package still supports 28.1, see the
+\"Package-Requires\" header in supersonic.el -- where that flat guess
+is the best available without it."
+  (if (fboundp 'string-pixel-width)
+      (string-pixel-width (propertize text 'face (list :weight 'bold :font (font-spec :size font-size))))
+    (* (length text) font-size 0.6)))
 
 (defun supersonic-art-scroll-pad (size)
   "Return the pixel margin the scrolling overlay's text keeps clear of the edges.

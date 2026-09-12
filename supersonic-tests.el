@@ -688,6 +688,17 @@ not in what kind of display spec comes back."
             (should (eq (plist-get (cdr spec) :type) 'svg))))
       (delete-directory supersonic-cache-path t))))
 
+(ert-deftest supersonic-tests-art-scroll-text-width-uses-real-font-metrics-when-available ()
+  "`supersonic-art-scroll-text-width' measures TEXT via `string-pixel-width'
+rather than a flat per-character guess whenever that function exists.
+The flat guess (0.6 of FONT-SIZE per character) called text like
+\"Barcode anxiety - paniq\" -- many narrow characters and spaces --
+worth scrolling even though it visually fit the cover art; this is
+what replaced it to fix that."
+  (skip-unless (fboundp 'string-pixel-width))
+  (cl-letf (((symbol-function 'string-pixel-width) (lambda (&rest _) 42)))
+    (should (= 42 (supersonic-art-scroll-text-width "Barcode anxiety - paniq" 21)))))
+
 (ert-deftest supersonic-tests-waveform-find-data-chunk-skips-extended-fmt-chunk ()
   "`supersonic-waveform--find-data-chunk' finds \"data\" behind a 40-byte
 extended \"fmt \" chunk -- what mpv actually writes -- rather than
@@ -1677,33 +1688,36 @@ draws once and leaves it alone regardless of how many ticks follow."
 forward to `supersonic-art-scroll-max-offset' once
 `supersonic-now-playing-scroll-pause' seconds have passed, rests there,
 then scrolls back to 0 and repeats -- a bounce, never scrolling past
-either edge or looping straight back to the start without resting."
-  (supersonic-tests--with-scroll-overlay
-      (make-string 60 ?x)
+either edge or looping straight back to the start without resting.
+`supersonic-art-scroll-max-offset' itself is stubbed to a fixed
+overflow rather than relied on to measure some text wide enough to
+overflow for real: the bounce state machine is what this exercises,
+not `supersonic-art-scroll-text-width''s real font metrics, which do
+not mean much rendered under `--batch' anyway."
+  (supersonic-tests--with-scroll-overlay "Some Track"
     (let ((supersonic-now-playing-scroll-step 1000)
           (supersonic-now-playing-scroll-pause 1)
-          max-offset)
-      (with-current-buffer buff
-        (setq max-offset (supersonic-art-scroll-max-offset supersonic-now-playing-art-size (supersonic-now-playing--scroll-text)))
-        (should (> max-offset 0))
-        (supersonic-now-playing-animate-art-overlay-scroll buff 0)
-        (should (= 0 supersonic-now-playing--scroll-offset))
-        (should (eq 'pause-start supersonic-now-playing--scroll-phase))
-        ;; The pause elapses; nothing has moved yet, just past it.
-        (supersonic-now-playing-animate-art-overlay-scroll buff 1)
-        (should (= 0 supersonic-now-playing--scroll-offset))
-        (should (eq 'forward supersonic-now-playing--scroll-phase))
-        ;; A big step overshoots MAX-OFFSET -- clamped, not run past.
-        (supersonic-now-playing-animate-art-overlay-scroll buff 1)
-        (should (= max-offset supersonic-now-playing--scroll-offset))
-        (should (eq 'pause-end supersonic-now-playing--scroll-phase))
-        (supersonic-now-playing-animate-art-overlay-scroll buff 1)
-        (should (= max-offset supersonic-now-playing--scroll-offset))
-        (should (eq 'backward supersonic-now-playing--scroll-phase))
-        ;; Another big step overshoots 0 the other way -- clamped too.
-        (supersonic-now-playing-animate-art-overlay-scroll buff 1)
-        (should (= 0 supersonic-now-playing--scroll-offset))
-        (should (eq 'pause-start supersonic-now-playing--scroll-phase))))))
+          (max-offset 480))
+      (cl-letf (((symbol-function 'supersonic-art-scroll-max-offset) (lambda (&rest _) max-offset)))
+        (with-current-buffer buff
+          (supersonic-now-playing-animate-art-overlay-scroll buff 0)
+          (should (= 0 supersonic-now-playing--scroll-offset))
+          (should (eq 'pause-start supersonic-now-playing--scroll-phase))
+          ;; The pause elapses; nothing has moved yet, just past it.
+          (supersonic-now-playing-animate-art-overlay-scroll buff 1)
+          (should (= 0 supersonic-now-playing--scroll-offset))
+          (should (eq 'forward supersonic-now-playing--scroll-phase))
+          ;; A big step overshoots MAX-OFFSET -- clamped, not run past.
+          (supersonic-now-playing-animate-art-overlay-scroll buff 1)
+          (should (= max-offset supersonic-now-playing--scroll-offset))
+          (should (eq 'pause-end supersonic-now-playing--scroll-phase))
+          (supersonic-now-playing-animate-art-overlay-scroll buff 1)
+          (should (= max-offset supersonic-now-playing--scroll-offset))
+          (should (eq 'backward supersonic-now-playing--scroll-phase))
+          ;; Another big step overshoots 0 the other way -- clamped too.
+          (supersonic-now-playing-animate-art-overlay-scroll buff 1)
+          (should (= 0 supersonic-now-playing--scroll-offset))
+          (should (eq 'pause-start supersonic-now-playing--scroll-phase)))))))
 
 (ert-deftest supersonic-tests-now-playing-falls-back-to-track-id ()
   "A failing getSong.view lookup leaves the now-playing buffer showing the
