@@ -175,6 +175,18 @@ Mirrors the active backend's play queue, refreshed whenever it may have changed.
 Only runs while that list is non-nil and a track is playing; see
 `supersonic-now-playing--animation-tick'.")
 
+(defvar supersonic-now-playing--animation-timer-interval nil
+  "`supersonic-now-playing-animation-frame-interval' as of the last
+(re)start of `supersonic-now-playing--animation-timer', or nil while it
+is not running.  A `run-at-time' timer's period is fixed at creation
+and does not track later changes to the variable it was read from, so
+`supersonic-now-playing--start-animation-timer' compares against this
+to notice a customization made (live, e.g. via `setopt') while a track
+is already playing and restart the timer at the new pace instead of
+leaving it ticking at whatever interval was in effect when it first
+started -- otherwise silently stale for as long as playback itself
+never stops, however unrelated a change the interval on paper looks.")
+
 (defvar-local supersonic-now-playing--title nil
   "Title of the track the now-playing buffer is currently showing, or nil.
 Kept around, alongside `supersonic-now-playing--artist' and
@@ -568,8 +580,19 @@ Ticks every `supersonic-now-playing-animation-frame-interval' seconds --
 deliberately not `supersonic-now-playing-cycle-interval', which
 paces the field switch itself and needs to keep meaning that regardless
 of how fast or slow this timer happens to run (see
-`supersonic-now-playing--animation-tick')."
+`supersonic-now-playing--animation-tick').
+
+Restarts the timer first if it is already running at a stale interval
+-- see `supersonic-now-playing--animation-timer-interval' -- so a
+customization of `supersonic-now-playing-animation-frame-interval' made
+while a track is already playing takes effect on the next render rather
+than being silently ignored for as long as playback itself never stops."
+  (when (and supersonic-now-playing--animation-timer
+             (not (equal supersonic-now-playing--animation-timer-interval
+                         supersonic-now-playing-animation-frame-interval)))
+    (supersonic-now-playing--stop-animation-timer))
   (when (and supersonic-now-playing-cycle-fields (not supersonic-now-playing--animation-timer))
+    (setq supersonic-now-playing--animation-timer-interval supersonic-now-playing-animation-frame-interval)
     (setq supersonic-now-playing--animation-timer
           (run-at-time
            supersonic-now-playing-animation-frame-interval supersonic-now-playing-animation-frame-interval
@@ -579,7 +602,8 @@ of how fast or slow this timer happens to run (see
   "Stop rotating `supersonic-now-playing-cycle-fields'."
   (when supersonic-now-playing--animation-timer
     (cancel-timer supersonic-now-playing--animation-timer)
-    (setq supersonic-now-playing--animation-timer nil)))
+    (setq supersonic-now-playing--animation-timer nil)
+    (setq supersonic-now-playing--animation-timer-interval nil)))
 
 (defun supersonic-now-playing--stopped-buffer (stop-fn)
   "Return the live now-playing buffer, or call STOP-FN and return nil.
