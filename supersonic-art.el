@@ -26,6 +26,7 @@
 ;;; Code:
 (require 'url)
 (require 'aio)
+(require 'svg)
 (require 'supersonic-custom)
 (require 'supersonic-api)
 (defvar url-http-end-of-headers)
@@ -53,6 +54,28 @@ id) and collide on the same file name."
 (defun supersonic-image-propertize (id size)
   "Generate a property displaying cover art ID at SIZE pixels high."
   (propertize " " 'display (create-image (supersonic-art-cache-file id size) nil nil :height size)))
+
+(defun supersonic-art-overlay-propertize (id size text)
+  "Generate a property displaying cover art ID at SIZE with TEXT layered over it.
+TEXT sits in a semi-opaque scrim across the bottom, composited in with
+`svg.el' rather than shown as a string alongside the art the way
+`supersonic-image-propertize' is used for -- the point of this one is
+text that reads as part of the cover itself, the way a lock-screen
+\"now playing\" widget overlays a track name on the art instead of
+setting it beside it.  Like `supersonic-image-propertize', expects the
+art to be cached at SIZE already."
+  (let* ((file (supersonic-art-cache-file id size))
+         (mime (format "image/%s" (image-type-from-file-header file)))
+         (svg (svg-create size size))
+         (scrim-height (round (* size 0.22)))
+         (font-size (max 10 (round (* size 0.07)))))
+    (svg-embed svg file mime nil :width size :height size)
+    (svg-rectangle svg 0 (- size scrim-height) size scrim-height :fill "black" :fill-opacity 0.55)
+    (svg-text svg text
+              :x (/ size 2) :y (- size (/ scrim-height 2))
+              :fill "white" :font-size font-size :font-weight "bold"
+              :text-anchor "middle" :dominant-baseline "middle")
+    (propertize " " 'display (svg-image svg))))
 
 (aio-defun
  supersonic--fetch-art (id size)

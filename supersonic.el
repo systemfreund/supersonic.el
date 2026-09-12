@@ -170,26 +170,37 @@ Mirrors the active backend's play queue, refreshed whenever it may have changed.
 (defvar supersonic-now-playing--timer nil
   "Timer ticking the playback position shown in the now-playing buffer.")
 
-(defvar supersonic-now-playing--label-timer nil
-  "Timer cycling the now-playing label between title and artist.
-Only runs while `supersonic-now-playing-cycle-label' is enabled and a
-track is playing; see `supersonic-now-playing--label-tick'.")
+(defvar supersonic-now-playing--animation-timer nil
+  "Timer advancing `supersonic-now-playing-cycle-fields'.
+Only runs while that list is non-nil and a track is playing; see
+`supersonic-now-playing--animation-tick'.")
 
 (defvar-local supersonic-now-playing--title nil
   "Title of the track the now-playing buffer is currently showing, or nil.
-Kept around, alongside `supersonic-now-playing--artist', so
-`supersonic-now-playing--label-tick' can swap the label next to the
-cover art between the two without another metadata lookup.")
+Kept around, alongside `supersonic-now-playing--artist' and
+`supersonic-now-playing--album', so
+`supersonic-now-playing--animation-tick' can rotate between them
+without another metadata lookup.")
 
 (defvar-local supersonic-now-playing--artist nil
   "Artist of the track the now-playing buffer is currently showing, or nil.
 See `supersonic-now-playing--title'.")
 
-(defvar-local supersonic-now-playing--label-showing-artist nil
-  "Non-nil while the label next to the cover art is showing the artist.
-Toggled by `supersonic-now-playing--label-tick'; reset to nil whenever
-`supersonic-now-playing--render' moves on to a new track, so a track
-change always starts out on the title.")
+(defvar-local supersonic-now-playing--album nil
+  "Album of the track the now-playing buffer is currently showing, or nil.
+See `supersonic-now-playing--title'.")
+
+(defvar-local supersonic-now-playing--art-id nil
+  "Cover art id of the track the now-playing buffer is currently showing, or nil.
+Set by `supersonic-now-playing--render'; read by
+`supersonic-now-playing-animate-art-overlay' so it can redraw the art
+with new text without needing the whole song alist again.")
+
+(defvar-local supersonic-now-playing--field-index 0
+  "Index into `supersonic-now-playing-cycle-fields' of the field currently shown.
+Advanced by `supersonic-now-playing--animation-tick'; reset to 0
+whenever `supersonic-now-playing--render' moves on to a new track, so
+a track change always starts out on the title.")
 
 (defvar-local supersonic-now-playing--duration nil
   "Duration in seconds of the track the now-playing buffer is showing.
@@ -258,41 +269,75 @@ without retrying one that already ran (and maybe failed).")
     (cancel-timer supersonic-now-playing--timer)
     (setq supersonic-now-playing--timer nil)))
 
-(defun supersonic-now-playing--label-text ()
-  "Return the label the current buffer should show next to the cover art.
-The artist only when `supersonic-now-playing--label-showing-artist' is
-non-nil and the current track actually has one; the title otherwise --
-which is also what a track with no known artist to cycle to keeps
-showing regardless of that flag."
-  (if (and supersonic-now-playing--label-showing-artist supersonic-now-playing--artist)
-      supersonic-now-playing--artist
-    (or supersonic-now-playing--title "?")))
+(defun supersonic-now-playing--field-value (field)
+  "Return the current buffer's cached value for FIELD (title/artist/album)."
+  (pcase field
+    ('title supersonic-now-playing--title)
+    ('artist supersonic-now-playing--artist)
+    ('album supersonic-now-playing--album)))
 
-(defun supersonic-now-playing--start-label-timer ()
-  "Start cycling the now-playing label, unless disabled or already running."
-  (when (and supersonic-now-playing-cycle-label (not supersonic-now-playing--label-timer))
-    (setq supersonic-now-playing--label-timer
+(defun supersonic-now-playing--current-field ()
+  "Return (FIELD . VALUE) for whichever field is currently up to be shown.
+FIELD is whatever `supersonic-now-playing--field-index' currently
+points at in `supersonic-now-playing-cycle-fields'; VALUE falls back to
+the track's title -- \"?\" failing that -- when the list is empty or
+the field it points at has no value for the current track, e.g. an
+index landing on `album' for a track with none.  What actually happens
+with the result is up to `supersonic-now-playing-animation-function'."
+  (let* ((fields supersonic-now-playing-cycle-fields)
+         (field (and fields (nth (mod supersonic-now-playing--field-index (length fields)) fields))))
+    (cons (or field 'title) (or (and field (supersonic-now-playing--field-value field)) supersonic-now-playing--title "?"))))
+
+(defun supersonic-now-playing-animate-label (buff field)
+  "Show FIELD's value as BUFF's text label next to the cover art.
+FIELD is a (SYMBOL . VALUE) cons, as `supersonic-now-playing--current-field'
+returns.  The default value of `supersonic-now-playing-animation-function',
+and the only thing a rotated field did before that existed."
+  (supersonic-now-playing--update-field buff 'label (propertize (cdr field) 'face 'bold)))
+
+(defun supersonic-now-playing-animate-art-overlay (buff field)
+  "Layer FIELD's value onto BUFF's cover art instead of the side label.
+FIELD is a (SYMBOL . VALUE) cons, as `supersonic-now-playing--current-field'
+returns.  Falls back to `supersonic-now-playing-animate-label' when
+there is no cached art to layer text onto -- `supersonic-art-available-p'
+is nil, or the file for the current track has not landed yet -- the
+same case `supersonic-now-playing--art' draws nothing for."
+  (with-current-buffer buff
+    (if (and supersonic-now-playing--art-id
+             (supersonic-art-available-p)
+             (file-exists-p (supersonic-art-cache-file supersonic-now-playing--art-id supersonic-now-playing-art-size)))
+        (supersonic-now-playing--update-field
+         buff 'art
+         (supersonic-art-overlay-propertize
+          supersonic-now-playing--art-id supersonic-now-playing-art-size (cdr field)))
+      (supersonic-now-playing-animate-label buff field))))
+
+(defun supersonic-now-playing--start-animation-timer ()
+  "Start rotating `supersonic-now-playing-cycle-fields', unless already running."
+  (when (and supersonic-now-playing-cycle-fields (not supersonic-now-playing--animation-timer))
+    (setq supersonic-now-playing--animation-timer
           (run-at-time
-           supersonic-now-playing-cycle-label-interval supersonic-now-playing-cycle-label-interval
-           #'supersonic-now-playing--label-tick))))
+           supersonic-now-playing-animation-interval supersonic-now-playing-animation-interval
+           #'supersonic-now-playing--animation-tick))))
 
-(defun supersonic-now-playing--stop-label-timer ()
-  "Stop cycling the now-playing label."
-  (when supersonic-now-playing--label-timer
-    (cancel-timer supersonic-now-playing--label-timer)
-    (setq supersonic-now-playing--label-timer nil)))
+(defun supersonic-now-playing--stop-animation-timer ()
+  "Stop rotating `supersonic-now-playing-cycle-fields'."
+  (when supersonic-now-playing--animation-timer
+    (cancel-timer supersonic-now-playing--animation-timer)
+    (setq supersonic-now-playing--animation-timer nil)))
 
-(defun supersonic-now-playing--label-tick ()
-  "Swap the now-playing label between the current track's title and artist.
-Stops itself once there is nothing left playing to label, the same way
-`supersonic-now-playing--tick' does for the position."
+(defun supersonic-now-playing--animation-tick ()
+  "Advance the animated field and render it.
+Rendering is `supersonic-now-playing-animation-function''s job; this
+just picks which field is next.  Stops itself once there is nothing
+left playing to animate, the same way `supersonic-now-playing--tick'
+does for the position."
   (let ((buff (supersonic-now-playing-buffer)))
     (if (or (not buff) (not (supersonic-playback-live-p)))
-        (supersonic-now-playing--stop-label-timer)
+        (supersonic-now-playing--stop-animation-timer)
       (with-current-buffer buff
-        (setq supersonic-now-playing--label-showing-artist (not supersonic-now-playing--label-showing-artist))
-        (supersonic-now-playing--update-field
-         buff 'label (propertize (supersonic-now-playing--label-text) 'face 'bold))))))
+        (setq supersonic-now-playing--field-index (1+ supersonic-now-playing--field-index))
+        (funcall supersonic-now-playing-animation-function buff (supersonic-now-playing--current-field))))))
 
 (defun supersonic-now-playing--tick ()
   "Update the playback position in the now-playing buffer.
@@ -522,10 +567,12 @@ from) -- see `supersonic-now-playing--track-id'."
         (setq supersonic-now-playing--track-id track-id)
         (setq supersonic-now-playing--title (and song (assoc-default "title" song)))
         (setq supersonic-now-playing--artist (and song (assoc-default "artist" song)))
+        (setq supersonic-now-playing--album (and song (assoc-default "album" song)))
+        (setq supersonic-now-playing--art-id (and song (assoc-default "coverArt" song)))
         (unless same-track
-          ;; A track change always starts the label back on the title,
-          ;; whatever it last settled on for the track before it.
-          (setq supersonic-now-playing--label-showing-artist nil)
+          ;; A track change always starts the animated field back on the
+          ;; title, whatever it last settled on for the track before it.
+          (setq supersonic-now-playing--field-index 0)
           ;; Whatever waveform was cached here belonged to the previous
           ;; track (or there wasn't one); `supersonic-now-playing--maybe-fetch-waveform'
           ;; repopulates it for the new one once it's ready.
@@ -535,19 +582,21 @@ from) -- see `supersonic-now-playing--track-id'."
         (if song
             (supersonic-now-playing--start-timer)
           (supersonic-now-playing--stop-timer))
-        (if (and song supersonic-now-playing-cycle-label)
-            (supersonic-now-playing--start-label-timer)
-          (supersonic-now-playing--stop-label-timer))
+        (if (and song supersonic-now-playing-cycle-fields)
+            (supersonic-now-playing--start-animation-timer)
+          (supersonic-now-playing--stop-animation-timer))
         (erase-buffer)
         (if (not song)
             (insert "Nothing is playing.\n")
           (progn
             (when art
-              (insert art "  "))
-            (insert
-             (propertize (supersonic-now-playing--label-text) 'face 'bold 'supersonic-now-playing-field 'label))
-            (when paused
-              (insert "  " (propertize "(paused)" 'face 'shadow)))
+              (insert (propertize art 'supersonic-now-playing-field 'art) "  "))
+            ;; Just the tagged placeholder here, the same way the waveform
+            ;; slot below is -- `supersonic-now-playing-animation-function'
+            ;; fills it in (or leaves it empty, if it targets the art
+            ;; overlay instead) a few lines down, once the rest of the
+            ;; buffer exists for it to search across.
+            (insert (propertize " " 'supersonic-now-playing-field 'label))
             ;; No blank line before the waveform -- it sits right under
             ;; the label -- but one is still wanted before the buttons
             ;; when there is no waveform to close that gap instead.
@@ -577,7 +626,14 @@ from) -- see `supersonic-now-playing--track-id'."
             (supersonic-now-playing--insert-field "Duration" (supersonic-now-playing--position position duration)
                                                   'duration)
             (supersonic-now-playing--insert-field "Format" (supersonic-now-playing--format song))
-            (supersonic-now-playing--insert-field "Size" (and size (format "%.2f MB" (/ size 1048576.0))))))
+            (supersonic-now-playing--insert-field "Size" (and size (format "%.2f MB" (/ size 1048576.0))))
+            ;; Paint whatever `supersonic-now-playing--field-index' points at
+            ;; right away rather than leaving the label (or the art overlay)
+            ;; blank until the first animation tick, which is up to
+            ;; `supersonic-now-playing-animation-interval' seconds away --
+            ;; this runs whether or not cycling is even enabled, since a
+            ;; pinned-to-the-title display still needs painting once.
+            (funcall supersonic-now-playing-animation-function buff (supersonic-now-playing--current-field))))
         (goto-char (point-min))
         ;; `erase-buffer' above took the seekbar image with it.  If this
         ;; was a re-render of a track whose envelope is already in hand,

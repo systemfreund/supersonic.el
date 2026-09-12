@@ -69,9 +69,16 @@ above the transport buttons, click anywhere on it to seek there.
 `supersonic-waveform-width`/`-height` set its display size. 
 
 The label next to the cover art shows the track's title by default.
-Enabling `supersonic-now-playing-cycle-label` makes it alternate between
-title and artist instead, every `supersonic-now-playing-cycle-label-interval`
-seconds (10 by default).
+Setting `supersonic-now-playing-cycle-fields` to a list of `title`,
+`artist` and/or `album` makes it rotate through them instead, every
+`supersonic-now-playing-animation-interval` seconds (10 by default).
+
+That rotation can also be layered onto the cover art itself, in place
+of the side label, by setting `supersonic-now-playing-animation-function`
+to `supersonic-now-playing-animate-art-overlay` (the default,
+`supersonic-now-playing-animate-label`, is what draws the side label).
+To show it in both places at once, set it to a function that calls
+both in turn.
 
 By default the now-playing buffer opens in the selected window, replacing
 whatever was there. To keep it pinned in its own window instead, e.g. to

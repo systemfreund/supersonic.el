@@ -645,6 +645,29 @@ a track's own id often doubles as its cover art id, and
   (let ((supersonic-cache-path "/tmp/supersonic-tests-shared-cache"))
     (should-not (equal (supersonic-art-cache-file "shared-id" 300) (supersonic-waveform-cache-file "shared-id" 300)))))
 
+(ert-deftest supersonic-tests-art-overlay-propertize-bakes-text-into-the-image ()
+  "`supersonic-art-overlay-propertize' returns a display spec built from
+an `svg' image rather than the plain file `supersonic-image-propertize'
+shows -- the whole point being that the text is composited into the
+image itself instead of shown as a separate string beside it."
+  (let ((supersonic-cache-path (expand-file-name (make-temp-name "supersonic-tests-cache-") temporary-file-directory)))
+    (unwind-protect
+        (progn
+          (mkdir supersonic-cache-path)
+          (let ((coding-system-for-write 'no-conversion))
+            (write-region
+             ;; The smallest possible valid PNG (a single transparent
+             ;; pixel) -- real bytes are needed here, not a placeholder
+             ;; string, since `image-type-from-file-header' has to
+             ;; recognize it to pick the right MIME type to embed it as.
+             (base64-decode-string
+              "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+             nil (supersonic-art-cache-file "art-1" 100)))
+          (let ((spec (get-text-property 0 'display (supersonic-art-overlay-propertize "art-1" 100 "Some Track"))))
+            (should (eq (car spec) 'image))
+            (should (eq (plist-get (cdr spec) :type) 'svg))))
+      (delete-directory supersonic-cache-path t))))
+
 (ert-deftest supersonic-tests-waveform-find-data-chunk-skips-extended-fmt-chunk ()
   "`supersonic-waveform--find-data-chunk' finds \"data\" behind a 40-byte
 extended \"fmt \" chunk -- what mpv actually writes -- rather than
@@ -1302,9 +1325,11 @@ onwards -- which is all this is about -- is the same either way."
 
 (ert-deftest supersonic-tests-now-playing-buffer-follows-pause-toggle ()
   "An open now-playing buffer reflects pausing and resuming, which mpv
-reports as a property change rather than as a track event.  Playing has
-no label of its own -- only `(paused)' is ever shown, since that is the
-one state worth calling out."
+reports as a property change rather than as a track event: the
+play/pause button flips between \"⏸\" and \"▶\" accordingly.  Matched
+padded (\" ▶ \") rather than bare, since the transport row also has a
+\"▶▶|\" skip button and \"▶▶\" seek button that would otherwise match a
+bare \"▶\" even while playing."
   (supersonic-tests--with-mpv
    (cl-letf (((symbol-function 'supersonic-get-json)
               (aio-lambda (url) `(("subsonic-response" ("song" ("title" . ,url)))))))
@@ -1317,27 +1342,58 @@ one state worth calling out."
              (should
               (supersonic-tests--wait-for
                (lambda () (supersonic-tests--buffer-matches buff (regexp-quote supersonic-tests--track-1)))))
-             (should-not (supersonic-tests--buffer-matches buff (regexp-quote "(paused)")))
+             (should (supersonic-tests--buffer-matches buff (regexp-quote "⏸")))
              (supersonic-toggle-playing)
              (should
               (supersonic-tests--wait-for
-               (lambda () (supersonic-tests--buffer-matches buff (regexp-quote "(paused)")))))
+               (lambda () (supersonic-tests--buffer-matches buff (regexp-quote " ▶ ")))))
              (supersonic-toggle-playing)
              (should
               (supersonic-tests--wait-for
-               (lambda () (not (supersonic-tests--buffer-matches buff (regexp-quote "(paused)")))))))
+               (lambda () (supersonic-tests--buffer-matches buff (regexp-quote "⏸"))))))
          (kill-buffer buff))))))
 
-(ert-deftest supersonic-tests-now-playing-label-cycles-between-title-and-artist ()
-  "With `supersonic-now-playing-cycle-label' enabled, each tick of
-`supersonic-now-playing--label-tick' swaps the label next to the cover
-art between the current track's title and artist, rather than the
-label sitting on the title alone."
+(ert-deftest supersonic-tests-now-playing-fields-cycle-through-configured-list ()
+  "With `supersonic-now-playing-cycle-fields' set, each
+`supersonic-now-playing--animation-tick' advances the label next to
+the cover art to the next field in the list and wraps back around to
+the title, rather than the label sitting on the title alone."
+  (supersonic-tests--with-mpv
+   (cl-letf (((symbol-function 'supersonic-get-json)
+              (aio-lambda (url)
+                `(("subsonic-response"
+                   ("song" ("title" . ,url) ("artist" . "Some Artist") ("album" . "Some Album")))))))
+     (let ((buff (get-buffer-create supersonic-now-playing-buffer-name))
+           (supersonic-now-playing-cycle-fields '(title artist album)))
+       (unwind-protect
+           (progn
+             (with-current-buffer buff
+               (supersonic-now-playing-mode))
+             (supersonic-mpv-start (list supersonic-tests--track-1))
+             (should
+              (supersonic-tests--wait-for
+               (lambda () (supersonic-tests--buffer-matches buff (regexp-quote supersonic-tests--track-1)))))
+             (should (equal supersonic-tests--track-1 (supersonic-tests--now-playing-label buff)))
+             (supersonic-now-playing--animation-tick)
+             (should (equal "Some Artist" (supersonic-tests--now-playing-label buff)))
+             (supersonic-now-playing--animation-tick)
+             (should (equal "Some Album" (supersonic-tests--now-playing-label buff)))
+             (supersonic-now-playing--animation-tick)
+             (should (equal supersonic-tests--track-1 (supersonic-tests--now-playing-label buff))))
+         (supersonic-now-playing--stop-animation-timer)
+         (kill-buffer buff))))))
+
+(ert-deftest supersonic-tests-now-playing-fields-do-not-cycle-when-disabled ()
+  "With `supersonic-now-playing-cycle-fields' set to nil, rendering never
+starts the animation timer -- it stops one if it finds it running
+instead, which also cleans up after the previous test if its own timer
+has not self-cancelled yet -- so the label stays on the title and
+there is no timer left running to advance it later."
   (supersonic-tests--with-mpv
    (cl-letf (((symbol-function 'supersonic-get-json)
               (aio-lambda (url) `(("subsonic-response" ("song" ("title" . ,url) ("artist" . "Some Artist")))))))
      (let ((buff (get-buffer-create supersonic-now-playing-buffer-name))
-           (supersonic-now-playing-cycle-label t))
+           (supersonic-now-playing-cycle-fields nil))
        (unwind-protect
            (progn
              (with-current-buffer buff
@@ -1347,23 +1403,20 @@ label sitting on the title alone."
               (supersonic-tests--wait-for
                (lambda () (supersonic-tests--buffer-matches buff (regexp-quote supersonic-tests--track-1)))))
              (should (equal supersonic-tests--track-1 (supersonic-tests--now-playing-label buff)))
-             (supersonic-now-playing--label-tick)
-             (should (equal "Some Artist" (supersonic-tests--now-playing-label buff)))
-             (supersonic-now-playing--label-tick)
-             (should (equal supersonic-tests--track-1 (supersonic-tests--now-playing-label buff))))
-         (supersonic-now-playing--stop-label-timer)
+             (should-not supersonic-now-playing--animation-timer))
          (kill-buffer buff))))))
 
-(ert-deftest supersonic-tests-now-playing-label-does-not-cycle-when-disabled ()
-  "With `supersonic-now-playing-cycle-label' at its default of nil,
-rendering never starts the cycling timer -- it stops one if it finds it
-running instead, which also cleans up after the previous test if its
-own timer has not self-cancelled yet -- so the label stays on the
-title and there is no timer left running to swap it later."
+(ert-deftest supersonic-tests-now-playing-art-overlay-falls-back-to-label-without-art ()
+  "`supersonic-now-playing-animate-art-overlay' updates the side label
+instead of the (non-existent) art when there is no cover art available
+to layer text onto -- `supersonic-enable-art' is off by default here,
+the same case `supersonic-now-playing--art' draws nothing for."
   (supersonic-tests--with-mpv
    (cl-letf (((symbol-function 'supersonic-get-json)
               (aio-lambda (url) `(("subsonic-response" ("song" ("title" . ,url) ("artist" . "Some Artist")))))))
-     (let ((buff (get-buffer-create supersonic-now-playing-buffer-name)))
+     (let ((buff (get-buffer-create supersonic-now-playing-buffer-name))
+           (supersonic-now-playing-animation-function #'supersonic-now-playing-animate-art-overlay)
+           (supersonic-now-playing-cycle-fields '(title artist)))
        (unwind-protect
            (progn
              (with-current-buffer buff
@@ -1373,7 +1426,9 @@ title and there is no timer left running to swap it later."
               (supersonic-tests--wait-for
                (lambda () (supersonic-tests--buffer-matches buff (regexp-quote supersonic-tests--track-1)))))
              (should (equal supersonic-tests--track-1 (supersonic-tests--now-playing-label buff)))
-             (should-not supersonic-now-playing--label-timer))
+             (supersonic-now-playing--animation-tick)
+             (should (equal "Some Artist" (supersonic-tests--now-playing-label buff))))
+         (supersonic-now-playing--stop-animation-timer)
          (kill-buffer buff))))))
 
 (ert-deftest supersonic-tests-now-playing-falls-back-to-track-id ()

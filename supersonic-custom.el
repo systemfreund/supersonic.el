@@ -158,19 +158,45 @@ something new to show this often even between polls."
   :type 'number
   :group 'supersonic)
 
-(defcustom supersonic-now-playing-cycle-label nil
-  "Cycle the label next to the cover art between title and artist.
-Off by default, in which case the label is always the track's title
--- see `supersonic-now-playing-cycle-label-interval' for how often it
-alternates once this is on."
-  :type 'boolean
+(defcustom supersonic-now-playing-cycle-fields '(title artist)
+  "Fields `supersonic-now-playing-animation-function' rotates through.
+A list drawn from `title', `artist' and `album', in the order they
+should cycle; nil turns cycling off and pins the display on the
+track's title, same as `supersonic-now-playing-cycle-label' being nil
+used to.  How often it advances is
+`supersonic-now-playing-animation-interval'; what advancing actually
+draws is `supersonic-now-playing-animation-function'."
+  :type '(repeat (choice (const title) (const artist) (const album)))
   :group 'supersonic)
 
-(defcustom supersonic-now-playing-cycle-label-interval 10
-  "Seconds between swaps of the now-playing label between title and artist.
-Only takes effect while `supersonic-now-playing-cycle-label' is
-enabled."
+(defcustom supersonic-now-playing-animation-interval 10
+  "Seconds between advances of `supersonic-now-playing-cycle-fields'.
+Only takes effect while that list is non-nil."
   :type 'number
+  :group 'supersonic)
+
+;; Defined in supersonic.el, which requires this file rather than the
+;; other way around (see the Commentary above) -- declared here purely
+;; to keep the byte-compiler quiet about the forward reference below,
+;; not to actually load it early.
+(declare-function supersonic-now-playing-animate-label "supersonic")
+
+(defcustom supersonic-now-playing-animation-function #'supersonic-now-playing-animate-label
+  "Function called on each field advance to render it into the buffer.
+Called with BUFF and (FIELD . VALUE), the cons
+`supersonic-now-playing--current-field' returns.  Two are built in:
+
+- `supersonic-now-playing-animate-label' (the default): updates the
+  text label next to the cover art -- the only place a rotated field
+  ever showed before this existed.
+- `supersonic-now-playing-animate-art-overlay': layers the field onto
+  the cover art itself instead, in place of the side label.
+
+To show it in both places at once, set this to a function that calls
+both in turn rather than looking for a third built-in for it -- there
+is no in-between behaviour left to name that a plain combination of
+the two doesn't already cover."
+  :type 'function
   :group 'supersonic)
 
 (defcustom supersonic-album-list-count 50
