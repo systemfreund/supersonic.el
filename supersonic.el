@@ -2,7 +2,7 @@
 
 ;; Author: systemfreund <github@o9z.de>
 ;; URL: https://github.com/systemfreund/supersonic.el
-;; Version: 0.2.0
+;; Version: 0.5.1
 ;; Keywords: multimedia
 ;; Package-Requires: ((emacs "28.1") (transient "0.2") (aio "1.0"))
 
