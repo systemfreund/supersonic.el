@@ -71,6 +71,32 @@ fit without scrolling?) is made against always matches the figure
 actually drawn with."
   (max 10 (round (* size 0.07))))
 
+(defun supersonic-art-overlay-font-weight ()
+  "Return the SVG `font-weight' for `supersonic-now-playing-art-overlay-label's
+`:weight'.  SVG text only understands \"bold\"/\"normal\", so any of Emacs's
+finer-grained weight symbols (`semi-bold', `extra-bold', ...) collapses
+to whichever of the two it reads closer to."
+  (if (memq (face-attribute 'supersonic-now-playing-art-overlay-label :weight)
+            '(bold semi-bold extra-bold ultra-bold))
+      "bold"
+    "normal"))
+
+(defun supersonic-art-overlay-font-family ()
+  "Return `supersonic-now-playing-art-overlay-label's `:family', or nil if unset.
+Nil leaves the SVG text without a `font-family' attribute altogether,
+so the renderer falls back to its own default, rather than passing on
+whatever `face-attribute' would otherwise resolve an unset `:family' to
+\(typically the selected frame's default font\), which is unlikely to be
+installed wherever the SVG image is actually rendered."
+  (let ((family (face-attribute 'supersonic-now-playing-art-overlay-label :family)))
+    (unless (eq family 'unspecified) family)))
+
+(defun supersonic-art-overlay-fill ()
+  "Return the SVG `fill' color for
+`supersonic-now-playing-art-overlay-label's `:foreground'."
+  (let ((foreground (face-attribute 'supersonic-now-playing-art-overlay-label :foreground)))
+    (if (eq foreground 'unspecified) "white" foreground)))
+
 (defun supersonic-art-overlay-waveform-lane-height (size)
   "Return how tall the waveform lane below the text row is, at SIZE.
 Only added to the scrim at all when the overlay propertize functions
@@ -113,10 +139,12 @@ scrim the way it does without one."
       (supersonic-waveform-svg-bars
        svg (supersonic-waveform-bars (car waveform) (cdr waveform) size lane-height) (- size lane-height)
        lane-height))
-    (svg-text svg text
-              :x (/ size 2) :y (+ scrim-y (/ text-height 2))
-              :fill "white" :font-size font-size :font-weight "bold"
-              :text-anchor "middle" :dominant-baseline "middle")
+    (let ((family (supersonic-art-overlay-font-family)))
+      (apply #'svg-text svg text
+             :x (/ size 2) :y (+ scrim-y (/ text-height 2))
+             :fill (supersonic-art-overlay-fill) :font-size font-size :font-weight (supersonic-art-overlay-font-weight)
+             :text-anchor "middle" :dominant-baseline "middle"
+             (and family (list :font-family family))))
     (propertize " " 'display (svg-image svg))))
 
 (defun supersonic-art-scroll-text-width (text font-size)
@@ -128,13 +156,21 @@ one -- but the selected frame's own font metrics
 than a guess: a flat per-character multiplier used to be all this had,
 and a title's actual mix of narrow (\"i\", \"l\", a space) and wide
 (\"m\", \"w\") characters swung that guess wide enough to call text
-that visually fit worth scrolling anyway.  Falls back to 0.6 of
+that visually fit worth scrolling anyway.  Measured against
+`supersonic-now-playing-art-overlay-label's `:weight' and `:family'
+rather than a fixed `bold', so a customization that widens or narrows
+the actual glyphs (a different typeface, a lighter weight) moves the
+scrolling threshold along with it instead of leaving it measured
+against a font nothing is drawn in any more.  Falls back to 0.6 of
 FONT-SIZE per character on Emacs versions before `string-pixel-width'
 existed -- this package still supports 28.1, see the
 \"Package-Requires\" header in supersonic.el -- where that flat guess
 is the best available without it."
   (if (fboundp 'string-pixel-width)
-      (string-pixel-width (propertize text 'face (list :weight 'bold :font (font-spec :size font-size))))
+      (string-pixel-width
+       (propertize text 'face
+                    (list :weight (face-attribute 'supersonic-now-playing-art-overlay-label :weight)
+                          :font (font-spec :size font-size :family (supersonic-art-overlay-font-family)))))
     (* (length text) font-size 0.6)))
 
 (defun supersonic-art-scroll-pad (size)
@@ -188,11 +224,13 @@ WAVEFORM is as in `supersonic-art-overlay-propertize'."
       (supersonic-waveform-svg-bars svg (supersonic-waveform-bars (car waveform) (cdr waveform) size lane-height)
                                      (- size lane-height) lane-height))
     (svg-rectangle clip 0 scrim-y size text-height)
-    (svg-text svg text
-              :x (- pad offset) :y baseline-y
-              :fill "white" :font-size font-size :font-weight "bold"
-              :text-anchor "start" :dominant-baseline "middle"
-              :clip-path "url(#supersonic-art-scroll-clip)")
+    (let ((family (supersonic-art-overlay-font-family)))
+      (apply #'svg-text svg text
+             :x (- pad offset) :y baseline-y
+             :fill (supersonic-art-overlay-fill) :font-size font-size :font-weight (supersonic-art-overlay-font-weight)
+             :text-anchor "start" :dominant-baseline "middle"
+             :clip-path "url(#supersonic-art-scroll-clip)"
+             (and family (list :font-family family))))
     (propertize " " 'display (svg-image svg))))
 
 (aio-defun

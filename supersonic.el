@@ -404,7 +404,7 @@ switch is due yet.  The default (and only) entry in
 rotated field did before that variable existed."
   (when (or (= delta 0) (supersonic-now-playing--advance-field delta))
     (supersonic-now-playing--update-field
-     buff 'label (propertize (cdr (supersonic-now-playing--current-field)) 'face 'bold))))
+     buff 'label (propertize (cdr (supersonic-now-playing--current-field)) 'face 'supersonic-now-playing-label))))
 
 (defun supersonic-now-playing--overlay-waveform ()
   "Return (ENVELOPE . PROGRESS) for the cover art overlay to layer in, or nil.

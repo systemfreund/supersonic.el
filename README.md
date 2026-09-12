@@ -85,6 +85,14 @@ them into one line and scrolls it across the art. To show more than
 one of these at once (e.g. the side label and the art overlay
 together), just list more than one.
 
+The side label's font is the `supersonic-now-playing-label` face
+(bold by default); customize it, e.g. via `M-x customize-face`, to
+change its size or typeface. The art overlay's label is drawn into
+the SVG image instead, so it has its own face,
+`supersonic-now-playing-art-overlay-label` -- only `:weight`,
+`:family` and `:foreground` carry over there, not `:height` (its
+pixel size stays tied to `supersonic-now-playing-art-size`).
+
 With both `supersonic-enable-art` and `supersonic-enable-waveform` on,
 turning on `supersonic-now-playing-waveform-in-overlay` layers the
 waveform seekbar onto the cover art as well, in a lane below the text,

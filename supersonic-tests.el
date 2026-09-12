@@ -724,6 +724,52 @@ a WAVEFORM argument, above its own clip rectangle and text."
       (> (supersonic-tests--count-substring "<rect" (plist-get (cdr with-waveform) :data))
          (supersonic-tests--count-substring "<rect" (plist-get (cdr plain) :data)))))))
 
+(ert-deftest supersonic-tests-art-overlay-propertize-honors-the-label-face ()
+  "`supersonic-art-overlay-propertize' draws its text with
+`supersonic-now-playing-art-overlay-label's `:weight'/`:family'/`:foreground',
+not the hardcoded bold white it used to be baked in with -- so
+customizing that face actually reaches the SVG text."
+  (supersonic-tests--with-cached-art
+   "art-1" 100
+   (let ((weight (face-attribute 'supersonic-now-playing-art-overlay-label :weight))
+         (family (face-attribute 'supersonic-now-playing-art-overlay-label :family))
+         (foreground (face-attribute 'supersonic-now-playing-art-overlay-label :foreground)))
+     (unwind-protect
+         (progn
+           (set-face-attribute 'supersonic-now-playing-art-overlay-label nil
+                                :weight 'normal :family "Comic Sans MS" :foreground "red")
+           (let* ((spec (get-text-property 0 'display (supersonic-art-overlay-propertize "art-1" 100 "Some Track")))
+                  (data (plist-get (cdr spec) :data)))
+             (should (> (supersonic-tests--count-substring "font-weight=\"normal\"" data) 0))
+             (should (> (supersonic-tests--count-substring "font-family=\"Comic Sans MS\"" data) 0))
+             (should (> (supersonic-tests--count-substring "fill=\"red\"" data) 0))))
+       (set-face-attribute 'supersonic-now-playing-art-overlay-label nil
+                            :weight weight :family family :foreground foreground)))))
+
+(ert-deftest supersonic-tests-art-overlay-font-family-omits-the-attribute-when-unset ()
+  "`supersonic-art-overlay-propertize' leaves out `font-family' entirely
+when `supersonic-now-playing-art-overlay-label' does not set `:family',
+rather than passing on whatever `face-attribute' would otherwise resolve
+an unset family to."
+  (supersonic-tests--with-cached-art
+   "art-1" 100
+   (should (= 0 (supersonic-tests--count-substring
+                 "font-family"
+                 (plist-get
+                  (cdr (get-text-property 0 'display (supersonic-art-overlay-propertize "art-1" 100 "Some Track")))
+                  :data))))))
+
+(ert-deftest supersonic-tests-art-overlay-font-weight-collapses-heavier-weights-to-bold ()
+  "`supersonic-art-overlay-font-weight' reads any of Emacs's heavier
+weight symbols (not just `bold' itself) as SVG's \"bold\", since SVG
+text only understands \"bold\"/\"normal\"."
+  (let ((weight (face-attribute 'supersonic-now-playing-art-overlay-label :weight)))
+    (unwind-protect
+        (dolist (heavy '(bold semi-bold extra-bold ultra-bold))
+          (set-face-attribute 'supersonic-now-playing-art-overlay-label nil :weight heavy)
+          (should (equal "bold" (supersonic-art-overlay-font-weight))))
+      (set-face-attribute 'supersonic-now-playing-art-overlay-label nil :weight weight))))
+
 (ert-deftest supersonic-tests-art-scroll-text-width-uses-real-font-metrics-when-available ()
   "`supersonic-art-scroll-text-width' measures TEXT via `string-pixel-width'
 rather than a flat per-character guess whenever that function exists.
@@ -1520,6 +1566,31 @@ the title, rather than the label sitting on the title alone."
              (supersonic-tests--force-animation-tick buff)
              (should (equal supersonic-tests--track-1 (supersonic-tests--now-playing-label buff))))
          (supersonic-now-playing--stop-animation-timer)
+         (kill-buffer buff))))))
+
+(ert-deftest supersonic-tests-now-playing-label-uses-customizable-face ()
+  "The label below the cover art carries `supersonic-now-playing-label',
+not a hardcoded `bold', so customizing that face (its size, its
+typeface, ...) actually reaches the label -- see
+`supersonic-now-playing-animate-label'."
+  (supersonic-tests--with-mpv
+   (cl-letf (((symbol-function 'supersonic-get-json)
+              (aio-lambda (url) `(("subsonic-response" ("song" ("title" . ,url)))))))
+     (let ((buff (get-buffer-create supersonic-now-playing-buffer-name)))
+       (unwind-protect
+           (progn
+             (with-current-buffer buff
+               (supersonic-now-playing-mode))
+             (supersonic-mpv-start (list supersonic-tests--track-1))
+             (should
+              (supersonic-tests--wait-for
+               (lambda () (supersonic-tests--buffer-matches buff (regexp-quote supersonic-tests--track-1)))))
+             (with-current-buffer buff
+               (save-excursion
+                 (goto-char (point-min))
+                 (let ((match (text-property-search-forward 'supersonic-now-playing-field 'label t)))
+                   (should (eq 'supersonic-now-playing-label
+                               (get-text-property (prop-match-beginning match) 'face)))))))
          (kill-buffer buff))))))
 
 (ert-deftest supersonic-tests-now-playing-animation-tick-does-not-assume-elapsed-time ()

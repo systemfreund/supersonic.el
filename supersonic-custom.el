@@ -451,6 +451,30 @@ than mixing envelopes measured at different rates."
   :type 'integer
   :group 'supersonic)
 
+(defface supersonic-now-playing-label
+  '((t :inherit bold))
+  "Face for the track/artist/album label below the cover art.
+Applied by `supersonic-now-playing-animate-label' to whichever field
+`supersonic-now-playing-cycle-fields' currently has up; customize this
+to change that label's font, e.g. `:height' for its size or `:family'
+for a different typeface, without touching the rest of the buffer."
+  :group 'supersonic)
+
+(defface supersonic-now-playing-art-overlay-label
+  '((t :weight bold :foreground "white"))
+  "Face for the label `supersonic-now-playing-animate-art-overlay'/`-scroll'
+draw onto the cover art itself, as opposed to `supersonic-now-playing-label'
+for the plain-text side label -- this text is painted into the SVG
+overlay image rather than shown as propertized buffer text, so only
+`:weight', `:family' and `:foreground' carry over, onto the SVG text's
+`font-weight'/`font-family'/`fill' respectively (see
+`supersonic-art-overlay-font-weight'/`-font-family'/`-fill').  `:height'
+does not: the pixel size is decided by `supersonic-art-overlay-font-size',
+proportional to `supersonic-now-playing-art-size' rather than a fixed
+point size, so the label keeps the same size relative to the art
+whatever that is set to."
+  :group 'supersonic)
+
 (defface supersonic-now-playing-button
   '((t :box t :height 0.85))
   "Face for the transport buttons in the now-playing buffer.
@@ -460,9 +484,9 @@ hyperlink rather than a pushable control.  A plain box around the
 default face is the ready-player look this is going for instead; hover
 feedback still comes for free from `button-type-get's `mouse-face',
 which is unaffected by this face.  `:height' is relative (a float),
-scaling off whatever face this is displayed alongside, e.g. the label's
-`bold' below the cover art, rather than a fixed point size that would
-stop tracking it."
+scaling off whatever face this is displayed alongside, e.g.
+`supersonic-now-playing-label' below the cover art, rather than a
+fixed point size that would stop tracking it."
   :group 'supersonic)
 
 (provide 'supersonic-custom)
