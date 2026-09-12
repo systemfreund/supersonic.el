@@ -159,13 +159,13 @@ something new to show this often even between polls."
   :group 'supersonic)
 
 (defcustom supersonic-now-playing-cycle-fields '(title artist)
-  "Fields `supersonic-now-playing-animation-function' rotates through.
+  "Fields `supersonic-now-playing-animation-functions' rotates through.
 A list drawn from `title', `artist' and `album', in the order they
 should cycle; nil turns cycling off and pins the display on the
 track's title, same as `supersonic-now-playing-cycle-label' being nil
 used to.  How often it advances is
 `supersonic-now-playing-cycle-interval'; what advancing actually
-draws is `supersonic-now-playing-animation-function'."
+draws is `supersonic-now-playing-animation-functions'."
   :type '(repeat (choice (const title) (const artist) (const album)))
   :group 'supersonic)
 
@@ -184,7 +184,7 @@ speed up how often the field switches here."
 (defcustom supersonic-now-playing-animation-frame-interval 0.2
   "Seconds between animation timer ticks.
 Independent of `supersonic-now-playing-cycle-interval': this is how
-often `supersonic-now-playing-animation-function' merely gets a chance
+often `supersonic-now-playing-animation-functions' merely get a chance
 to redraw, not how often anything actually changes.
 `supersonic-now-playing-animate-label' and
 `supersonic-now-playing-animate-art-overlay' still only switch fields
@@ -199,8 +199,8 @@ crawl look smoother, not faster."
 
 (defcustom supersonic-now-playing-scroll-step 30
   "Pixels per second `supersonic-now-playing-animate-art-overlay-scroll' advances.
-Only meaningful with that function set as
-`supersonic-now-playing-animation-function' -- the other two built-ins
+Only meaningful with that function listed in
+`supersonic-now-playing-animation-functions' -- the other two built-ins
 ignore it.  A speed, not a per-tick amount, so it stays the same crawl
 however often (or unevenly) `supersonic-now-playing-animation-frame-interval'
 actually fires.  Does not apply at all when
@@ -223,15 +223,23 @@ consulted."
 
 ;; Defined in supersonic.el, which requires this file rather than the
 ;; other way around (see the Commentary above) -- declared here purely
-;; to keep the byte-compiler quiet about the forward reference below,
-;; not to actually load it early.
+;; to keep the byte-compiler quiet about the forward references below,
+;; not to actually load them early.
 (declare-function supersonic-now-playing-animate-label "supersonic")
+(declare-function supersonic-now-playing-update-duration-field "supersonic")
+(declare-function supersonic-now-playing-recolor-waveform "supersonic")
+(declare-function supersonic-now-playing-maybe-fetch-waveform "supersonic")
 
-(defcustom supersonic-now-playing-animation-function #'supersonic-now-playing-animate-label
-  "Function called on every animation tick to render the buffer.
-Called with BUFF and DELTA, the real seconds elapsed since the last
-tick (0 for an unconditional first paint -- see
-`supersonic-now-playing--render').  Three are built in:
+(defcustom supersonic-now-playing-animation-functions (list #'supersonic-now-playing-animate-label)
+  "Functions run in order on every animation tick to render the buffer.
+Each is called as (FUNCTION BUFF DELTA), DELTA being the real seconds
+elapsed since the last tick (0 for an unconditional first paint -- see
+`supersonic-now-playing--render').  A function that signals an error is
+reported rather than left to take the rest of the list -- and the timer
+driving all of them -- down with it; see
+`supersonic-now-playing--run-field-functions'.
+
+Three are built in:
 
 - `supersonic-now-playing-animate-label' (the default): updates the
   text label next to the cover art -- the only place a rotated field
@@ -249,11 +257,46 @@ tick (0 for an unconditional first paint -- see
   `supersonic-now-playing-scroll-step' and
   `supersonic-now-playing-scroll-pause'.
 
-To show it in both places at once, set this to a function that calls
-both in turn rather than looking for a fourth built-in for it -- there
-is no in-between behaviour left to name that a plain combination of
-two of the above doesn't already cover."
-  :type 'function
+To show it in both places at once, list both rather than looking for a
+fourth built-in for it -- there is no in-between behaviour left to name
+that a plain combination of two of the above doesn't already cover.
+
+See `supersonic-now-playing-position-functions' for this list's
+counterpart: the same idea, but driven by the playback position the
+active backend reports rather than by elapsed time."
+  :type '(repeat function)
+  :group 'supersonic)
+
+(defcustom supersonic-now-playing-position-functions
+  (list #'supersonic-now-playing-update-duration-field
+        #'supersonic-now-playing-recolor-waveform
+        #'supersonic-now-playing-maybe-fetch-waveform)
+  "Functions run in order whenever the now-playing buffer's position updates.
+The position-driven counterpart to
+`supersonic-now-playing-animation-functions': each is called as
+(FUNCTION BUFF POSITION), POSITION being what the active backend just
+reported rather than a DELTA -- a seek or a pause between two updates
+must never show up as drift, which ruled out counting elapsed seconds
+locally the way the animation side does.  Runs on
+`supersonic-now-playing-interval''s regular timer and also right away
+on a seek, via `supersonic-now-playing-maybe-update-position'.  Same
+per-function error isolation as `supersonic-now-playing-animation-functions'.
+
+Three are built in, and make up the default:
+
+- `supersonic-now-playing-update-duration-field': redraws the
+  \"Duration:\" line's elapsed/total split.
+- `supersonic-now-playing-recolor-waveform': redraws the waveform
+  seekbar's played/unplayed split, once a waveform is actually showing
+  for the current track.
+- `supersonic-now-playing-maybe-fetch-waveform': kicks off waveform
+  generation for the current track, unless that has already been
+  requested (also requires `supersonic-enable-waveform').
+
+Dropping one of these from the list turns that behaviour off; adding a
+function of your own -- synced lyrics keyed on position, say -- runs it
+alongside the rest."
+  :type '(repeat function)
   :group 'supersonic)
 
 (defcustom supersonic-album-list-count 50

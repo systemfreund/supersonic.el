@@ -1464,12 +1464,12 @@ same test barely takes any wall-clock time at all."
          (kill-buffer buff))))))
 
 (ert-deftest supersonic-tests-now-playing-advance-field-does-not-double-count-a-composite-tick ()
-  "A composite `supersonic-now-playing-animation-function' that calls a
-field-cycling built-in more than once in the same tick -- the shape
-`supersonic-now-playing-animation-function''s own docstring recommends
-for showing the rotated field in two places at once -- still only
-advances one step per `supersonic-now-playing-cycle-interval', not one
-step per call.  Without `supersonic-now-playing--cycle-tick' guarding
+  "Listing a field-cycling built-in twice in
+`supersonic-now-playing-animation-functions' -- the shape that
+variable's own docstring recommends for showing the rotated field in
+two places at once -- still only advances one step per
+`supersonic-now-playing-cycle-interval', not one step per call.
+Without `supersonic-now-playing--cycle-tick' guarding
 `supersonic-now-playing--advance-field' against a second call, each
 call would accumulate the same DELTA again and the field would land
 two steps ahead -- title straight to album, skipping artist -- from a
@@ -1480,10 +1480,8 @@ single tick."
                 `(("subsonic-response"
                    ("song" ("title" . ,url) ("artist" . "Some Artist") ("album" . "Some Album")))))))
      (let ((buff (get-buffer-create supersonic-now-playing-buffer-name))
-           (supersonic-now-playing-animation-function
-            (lambda (buff delta)
-              (supersonic-now-playing-animate-label buff delta)
-              (supersonic-now-playing-animate-label buff delta)))
+           (supersonic-now-playing-animation-functions
+            (list #'supersonic-now-playing-animate-label #'supersonic-now-playing-animate-label))
            (supersonic-now-playing-cycle-fields '(title artist album)))
        (unwind-protect
            (progn
@@ -1569,7 +1567,7 @@ the same case `supersonic-now-playing--art' draws nothing for."
    (cl-letf (((symbol-function 'supersonic-get-json)
               (aio-lambda (url) `(("subsonic-response" ("song" ("title" . ,url) ("artist" . "Some Artist")))))))
      (let ((buff (get-buffer-create supersonic-now-playing-buffer-name))
-           (supersonic-now-playing-animation-function #'supersonic-now-playing-animate-art-overlay)
+           (supersonic-now-playing-animation-functions (list #'supersonic-now-playing-animate-art-overlay))
            (supersonic-now-playing-cycle-fields '(title artist)))
        (unwind-protect
            (progn
@@ -1621,7 +1619,7 @@ reason: `supersonic-enable-art' is off by default here."
    (cl-letf (((symbol-function 'supersonic-get-json)
               (aio-lambda (url) `(("subsonic-response" ("song" ("title" . ,url) ("artist" . "Some Artist")))))))
      (let ((buff (get-buffer-create supersonic-now-playing-buffer-name))
-           (supersonic-now-playing-animation-function #'supersonic-now-playing-animate-art-overlay-scroll)
+           (supersonic-now-playing-animation-functions (list #'supersonic-now-playing-animate-art-overlay-scroll))
            (supersonic-now-playing-cycle-fields '(title artist)))
        (unwind-protect
            (progn
@@ -2099,7 +2097,7 @@ left a gap where the image had been until something else redrew it."
   "The seekbar image only changes when the played/unplayed boundary
 crosses into another bucket -- once every twelve seconds for a
 300-bucket seekbar over an hour-long podcast, against a tick a second.
-`supersonic-now-playing--recolor-waveform' redraws only then."
+`supersonic-now-playing-recolor-waveform' redraws only then."
   (skip-unless (image-type-available-p 'pbm))
   (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
     (let ((supersonic-enable-waveform t)
@@ -2119,13 +2117,13 @@ crosses into another bucket -- once every twelve seconds for a
                           (cl-incf redraws)
                           (apply original args))))
               ;; Four buckets over 100 seconds: 0-24s is all bucket 0.
-              (supersonic-now-playing--recolor-waveform buff 1)
-              (supersonic-now-playing--recolor-waveform buff 20)
+              (supersonic-now-playing-recolor-waveform buff 1)
+              (supersonic-now-playing-recolor-waveform buff 20)
               (should (= 0 redraws))
               ;; 25s crosses into bucket 1.
-              (supersonic-now-playing--recolor-waveform buff 25)
+              (supersonic-now-playing-recolor-waveform buff 25)
               (should (= 1 redraws))
-              (supersonic-now-playing--recolor-waveform buff 30)
+              (supersonic-now-playing-recolor-waveform buff 30)
               (should (= 1 redraws))))
         (kill-buffer buff)))))
 
