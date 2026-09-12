@@ -246,12 +246,31 @@ rather than measuring against a timestamp from the track before it.")
 
 (defvar-local supersonic-now-playing--scroll-offset 0
   "Pixels `supersonic-now-playing-animate-art-overlay-scroll' has scrolled so far.
-Advanced by `supersonic-now-playing-scroll-step' (a speed, in pixels
-per second) times however many real seconds elapsed since the last
-animation tick; reset to 0 whenever `supersonic-now-playing--render'
-moves on to a new track, the same way
-`supersonic-now-playing--field-index' is, so a track change always
-starts the crawl back at the beginning.")
+0 is the text's left edge; `supersonic-art-scroll-max-offset' is its
+right edge.  Advanced (or retreated) by
+`supersonic-now-playing--advance-scroll' at
+`supersonic-now-playing-scroll-step' pixels per second; reset to 0
+whenever `supersonic-now-playing--render' moves on to a new track, the
+same way `supersonic-now-playing--field-index' is, so a track change
+always starts the bounce back at the beginning.")
+
+(defvar-local supersonic-now-playing--scroll-phase 'pause-start
+  "Where `supersonic-now-playing--advance-scroll' currently is in its bounce.
+One of `pause-start' (resting at `supersonic-now-playing--scroll-offset'
+0), `forward' (moving toward
+`supersonic-art-scroll-max-offset'), `pause-end' (resting there), or
+`backward' (moving back toward 0) -- always in that order, cycling
+back to `pause-start' once `backward' reaches 0.  Reset to `pause-start'
+whenever `supersonic-now-playing--render' moves on to a new track, the
+same way `supersonic-now-playing--scroll-offset' is.")
+
+(defvar-local supersonic-now-playing--scroll-pause-elapsed 0
+  "Seconds accumulated in the current `pause-start' or `pause-end' phase.
+Compared against `supersonic-now-playing-scroll-pause' by
+`supersonic-now-playing--advance-scroll' to know when to move on to the
+next phase; meaningless (and left untouched) during `forward' or
+`backward'.  Reset to 0 whenever `supersonic-now-playing--render' moves
+on to a new track, the same way `supersonic-now-playing--scroll-offset' is.")
 
 (defvar-local supersonic-now-playing--duration nil
   "Duration in seconds of the track the now-playing buffer is showing.
@@ -423,33 +442,83 @@ none of them have a value, the same fallback
         (mapconcat #'identity values "   •   ")
       (or supersonic-now-playing--title "?"))))
 
+(defun supersonic-now-playing--advance-scroll (delta max-offset)
+  "Advance the bounce between 0 and MAX-OFFSET by DELTA real seconds.
+Cycles `supersonic-now-playing--scroll-phase' through, in order,
+`pause-start' (holding `supersonic-now-playing--scroll-offset' at 0 for
+`supersonic-now-playing-scroll-pause' seconds), `forward' (moving it
+toward MAX-OFFSET at `supersonic-now-playing-scroll-step' pixels per
+second), `pause-end' (holding it at MAX-OFFSET, the same length of
+pause), and `backward' (moving it back to 0) -- then starts over at
+`pause-start'.  Called only once MAX-OFFSET is already known to be
+positive; a MAX-OFFSET of 0 means the text fits without scrolling at
+all, which `supersonic-now-playing-animate-art-overlay-scroll' handles
+itself without ever reaching this."
+  (pcase supersonic-now-playing--scroll-phase
+    ('pause-start
+     (setq supersonic-now-playing--scroll-pause-elapsed (+ supersonic-now-playing--scroll-pause-elapsed delta))
+     (when (>= supersonic-now-playing--scroll-pause-elapsed supersonic-now-playing-scroll-pause)
+       (setq supersonic-now-playing--scroll-phase 'forward)
+       (setq supersonic-now-playing--scroll-pause-elapsed 0)))
+    ('forward
+     (setq supersonic-now-playing--scroll-offset
+           (+ supersonic-now-playing--scroll-offset (* delta supersonic-now-playing-scroll-step)))
+     (when (>= supersonic-now-playing--scroll-offset max-offset)
+       (setq supersonic-now-playing--scroll-offset max-offset)
+       (setq supersonic-now-playing--scroll-phase 'pause-end)))
+    ('pause-end
+     (setq supersonic-now-playing--scroll-pause-elapsed (+ supersonic-now-playing--scroll-pause-elapsed delta))
+     (when (>= supersonic-now-playing--scroll-pause-elapsed supersonic-now-playing-scroll-pause)
+       (setq supersonic-now-playing--scroll-phase 'backward)
+       (setq supersonic-now-playing--scroll-pause-elapsed 0)))
+    ('backward
+     (setq supersonic-now-playing--scroll-offset
+           (- supersonic-now-playing--scroll-offset (* delta supersonic-now-playing-scroll-step)))
+     (when (<= supersonic-now-playing--scroll-offset 0)
+       (setq supersonic-now-playing--scroll-offset 0)
+       (setq supersonic-now-playing--scroll-phase 'pause-start)))))
+
 (defun supersonic-now-playing-animate-art-overlay-scroll (buff delta)
-  "Scroll `supersonic-now-playing-cycle-fields' across BUFF's cover art.
-DELTA is real seconds elapsed since the last animation tick; the crawl
-moves forward by DELTA * `supersonic-now-playing-scroll-step' pixels
-every call instead of a fixed step per tick, so its speed stays what
-that pixels-per-second setting actually says regardless of how often
-(or unevenly) `supersonic-now-playing-animation-frame-interval' fires --
-unlike `supersonic-now-playing-animate-art-overlay', which draws
-whichever single field is currently due and skips redrawing until the
-next one is, this one always draws every configured field together
-(see `supersonic-now-playing--scroll-text') and redraws on every call,
-matching the whole point of a continuous crawl over a discrete switch.
-Falls back to `supersonic-now-playing-animate-label' under the same
-conditions that one does: no cover art available, or the file for the
-current track not cached yet."
+  "Bounce `supersonic-now-playing-cycle-fields' across BUFF's cover art.
+DELTA is real seconds elapsed since the last animation tick.  Joins
+every configured field into one line (see
+`supersonic-now-playing--scroll-text') rather than switching between
+them one at a time the way `supersonic-now-playing-animate-art-overlay'
+does; if that already fits across the art, it is shown once, centered
+and motionless -- there is nothing to scroll.  Otherwise it starts at
+its left edge, rests, scrolls left just far enough to bring the right
+edge into view (`supersonic-art-scroll-max-offset'), rests there, and
+scrolls back, over and over (see `supersonic-now-playing--advance-scroll'
+and `supersonic-now-playing-scroll-pause') -- a bounce rather than a
+one-directional crawl, so it never has to jump back to the start
+mid-read the way a looping marquee would.  Falls back to
+`supersonic-now-playing-animate-label' under the same conditions
+`supersonic-now-playing-animate-art-overlay' does: no cover art
+available, or the file for the current track not cached yet."
   (with-current-buffer buff
     (if (and supersonic-now-playing--art-id
              (supersonic-art-available-p)
              (file-exists-p (supersonic-art-cache-file supersonic-now-playing--art-id supersonic-now-playing-art-size)))
-        (progn
-          (setq supersonic-now-playing--scroll-offset
-                (+ supersonic-now-playing--scroll-offset (* delta supersonic-now-playing-scroll-step)))
-          (supersonic-now-playing--update-field
-           buff 'art
-           (supersonic-art-overlay-scroll-propertize
-            supersonic-now-playing--art-id supersonic-now-playing-art-size
-            (supersonic-now-playing--scroll-text) supersonic-now-playing--scroll-offset)))
+        (let* ((text (supersonic-now-playing--scroll-text))
+               (max-offset (supersonic-art-scroll-max-offset supersonic-now-playing-art-size text)))
+          (cond
+           ;; Fits already -- draw it once and leave it alone; nothing
+           ;; here ever changes again until the track does.
+           ((<= max-offset 0)
+            (when (= delta 0)
+              (setq supersonic-now-playing--scroll-offset 0)
+              (supersonic-now-playing--update-field
+               buff 'art
+               (supersonic-art-overlay-scroll-propertize
+                supersonic-now-playing--art-id supersonic-now-playing-art-size text 0))))
+           (t
+            (unless (= delta 0)
+              (supersonic-now-playing--advance-scroll delta max-offset))
+            (supersonic-now-playing--update-field
+             buff 'art
+             (supersonic-art-overlay-scroll-propertize
+              supersonic-now-playing--art-id supersonic-now-playing-art-size
+              text supersonic-now-playing--scroll-offset)))))
       (supersonic-now-playing-animate-label buff delta))))
 
 (defun supersonic-now-playing--start-animation-timer ()
@@ -752,6 +821,8 @@ from) -- see `supersonic-now-playing--track-id'."
           (setq supersonic-now-playing--cycle-changed nil)
           (setq supersonic-now-playing--animation-last-time nil)
           (setq supersonic-now-playing--scroll-offset 0)
+          (setq supersonic-now-playing--scroll-phase 'pause-start)
+          (setq supersonic-now-playing--scroll-pause-elapsed 0)
           ;; Whatever waveform was cached here belonged to the previous
           ;; track (or there wasn't one); `supersonic-now-playing--maybe-fetch-waveform'
           ;; repopulates it for the new one once it's ready.

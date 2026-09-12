@@ -1628,39 +1628,82 @@ reason: `supersonic-enable-art' is off by default here."
          (supersonic-now-playing--stop-animation-timer)
          (kill-buffer buff))))))
 
-(ert-deftest supersonic-tests-now-playing-art-overlay-scroll-moves-by-elapsed-time ()
-  "`supersonic-now-playing-animate-art-overlay-scroll' advances
-`supersonic-now-playing--scroll-offset' by DELTA times
-`supersonic-now-playing-scroll-step' -- a speed, in pixels per second --
-rather than a fixed amount per call, so the crawl covers the same
-ground in the same real time regardless of how often
-`supersonic-now-playing-animation-frame-interval' happens to fire."
-  (let ((supersonic-cache-path (expand-file-name (make-temp-name "supersonic-tests-cache-") temporary-file-directory))
-        (supersonic-enable-art t)
-        (supersonic-now-playing-scroll-step 10)
-        (buff (generate-new-buffer " *supersonic-tests-scroll*")))
-    (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
-      (unwind-protect
-          (progn
-            (mkdir supersonic-cache-path)
-            (let ((coding-system-for-write 'no-conversion))
-              (write-region
-               (base64-decode-string
-                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
-               nil (supersonic-art-cache-file "art-1" supersonic-now-playing-art-size)))
-            (with-current-buffer buff
-              (supersonic-now-playing-mode)
-              (let ((inhibit-read-only t))
-                (insert (propertize " " 'supersonic-now-playing-field 'art)))
-              (setq supersonic-now-playing--art-id "art-1")
-              (setq supersonic-now-playing--title "Some Track")
-              (should (= 0 supersonic-now-playing--scroll-offset))
-              (supersonic-now-playing-animate-art-overlay-scroll buff 2.5)
-              (should (= 25 supersonic-now-playing--scroll-offset))
-              (supersonic-now-playing-animate-art-overlay-scroll buff 0.5)
-              (should (= 30 supersonic-now-playing--scroll-offset))))
-        (kill-buffer buff)
-        (delete-directory supersonic-cache-path t)))))
+(defmacro supersonic-tests--with-scroll-overlay (title &rest body)
+  "Run BODY with a `buff' bound to a live now-playing buffer, its cover
+art cached, TITLE set as the currently shown title, and cover art
+enabled -- everything `supersonic-now-playing-animate-art-overlay-scroll'
+needs to actually draw rather than fall back to the label."
+  (declare (indent 1))
+  `(let ((supersonic-cache-path (expand-file-name (make-temp-name "supersonic-tests-cache-") temporary-file-directory))
+         (supersonic-enable-art t)
+         (buff (generate-new-buffer " *supersonic-tests-scroll*")))
+     (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
+       (unwind-protect
+           (progn
+             (mkdir supersonic-cache-path)
+             (let ((coding-system-for-write 'no-conversion))
+               (write-region
+                (base64-decode-string
+                 "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+                nil (supersonic-art-cache-file "art-1" supersonic-now-playing-art-size)))
+             (with-current-buffer buff
+               (supersonic-now-playing-mode)
+               (let ((inhibit-read-only t))
+                 (insert (propertize " " 'supersonic-now-playing-field 'art)))
+               (setq supersonic-now-playing--art-id "art-1")
+               (setq supersonic-now-playing--title ,title))
+             ,@body)
+         (kill-buffer buff)
+         (delete-directory supersonic-cache-path t)))))
+
+(ert-deftest supersonic-tests-now-playing-art-overlay-scroll-stays-put-when-text-fits ()
+  "`supersonic-now-playing-animate-art-overlay-scroll' never moves
+`supersonic-now-playing--scroll-offset' off 0 when the text already
+fits across the art -- there is nothing to reveal by scrolling, so it
+draws once and leaves it alone regardless of how many ticks follow."
+  (supersonic-tests--with-scroll-overlay "Some Track"
+    (with-current-buffer buff
+      (should (= 0 (supersonic-art-scroll-max-offset supersonic-now-playing-art-size (supersonic-now-playing--scroll-text))))
+      (supersonic-now-playing-animate-art-overlay-scroll buff 0)
+      (should (= 0 supersonic-now-playing--scroll-offset))
+      (should (eq 'pause-start supersonic-now-playing--scroll-phase))
+      (supersonic-now-playing-animate-art-overlay-scroll buff 5)
+      (supersonic-now-playing-animate-art-overlay-scroll buff 5)
+      (should (= 0 supersonic-now-playing--scroll-offset))
+      (should (eq 'pause-start supersonic-now-playing--scroll-phase)))))
+
+(ert-deftest supersonic-tests-now-playing-art-overlay-scroll-bounces-when-text-overflows ()
+  "`supersonic-now-playing-animate-art-overlay-scroll' rests at 0, scrolls
+forward to `supersonic-art-scroll-max-offset' once
+`supersonic-now-playing-scroll-pause' seconds have passed, rests there,
+then scrolls back to 0 and repeats -- a bounce, never scrolling past
+either edge or looping straight back to the start without resting."
+  (supersonic-tests--with-scroll-overlay
+      (make-string 60 ?x)
+    (let ((supersonic-now-playing-scroll-step 1000)
+          (supersonic-now-playing-scroll-pause 1)
+          max-offset)
+      (with-current-buffer buff
+        (setq max-offset (supersonic-art-scroll-max-offset supersonic-now-playing-art-size (supersonic-now-playing--scroll-text)))
+        (should (> max-offset 0))
+        (supersonic-now-playing-animate-art-overlay-scroll buff 0)
+        (should (= 0 supersonic-now-playing--scroll-offset))
+        (should (eq 'pause-start supersonic-now-playing--scroll-phase))
+        ;; The pause elapses; nothing has moved yet, just past it.
+        (supersonic-now-playing-animate-art-overlay-scroll buff 1)
+        (should (= 0 supersonic-now-playing--scroll-offset))
+        (should (eq 'forward supersonic-now-playing--scroll-phase))
+        ;; A big step overshoots MAX-OFFSET -- clamped, not run past.
+        (supersonic-now-playing-animate-art-overlay-scroll buff 1)
+        (should (= max-offset supersonic-now-playing--scroll-offset))
+        (should (eq 'pause-end supersonic-now-playing--scroll-phase))
+        (supersonic-now-playing-animate-art-overlay-scroll buff 1)
+        (should (= max-offset supersonic-now-playing--scroll-offset))
+        (should (eq 'backward supersonic-now-playing--scroll-phase))
+        ;; Another big step overshoots 0 the other way -- clamped too.
+        (supersonic-now-playing-animate-art-overlay-scroll buff 1)
+        (should (= 0 supersonic-now-playing--scroll-offset))
+        (should (eq 'pause-start supersonic-now-playing--scroll-phase))))))
 
 (ert-deftest supersonic-tests-now-playing-falls-back-to-track-id ()
   "A failing getSong.view lookup leaves the now-playing buffer showing the

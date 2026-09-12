@@ -55,6 +55,15 @@ id) and collide on the same file name."
   "Generate a property displaying cover art ID at SIZE pixels high."
   (propertize " " 'display (create-image (supersonic-art-cache-file id size) nil nil :height size)))
 
+(defun supersonic-art-overlay-font-size (size)
+  "Return the pixel font size the art overlay scrim's text is drawn at for SIZE.
+Shared by `supersonic-art-overlay-propertize',
+`supersonic-art-overlay-scroll-propertize' and
+`supersonic-art-scroll-max-offset', so the figure a decision (does TEXT
+fit without scrolling?) is made against always matches the figure
+actually drawn with."
+  (max 10 (round (* size 0.07))))
+
 (defun supersonic-art-overlay-propertize (id size text)
   "Generate a property displaying cover art ID at SIZE with TEXT layered over it.
 TEXT sits in a semi-opaque scrim across the bottom, composited in with
@@ -68,7 +77,7 @@ art to be cached at SIZE already."
          (mime (format "image/%s" (image-type-from-file-header file)))
          (svg (svg-create size size))
          (scrim-height (round (* size 0.22)))
-         (font-size (max 10 (round (* size 0.07)))))
+         (font-size (supersonic-art-overlay-font-size size)))
     (svg-embed svg file mime nil :width size :height size)
     (svg-rectangle svg 0 (- size scrim-height) size scrim-height :fill "black" :fill-opacity 0.55)
     (svg-text svg text
@@ -83,52 +92,59 @@ art to be cached at SIZE already."
 only a live frame's font metrics could answer that exactly, and the
 scrolling overlay draws into an image that never becomes one.  0.6 of
 FONT-SIZE per character is close enough for the bold sans-serif
-`supersonic-art-overlay-scroll-propertize' draws with to time its
-wraparound by; being a little off just makes the gap between the two
-passes a little wider or narrower than intended, not that either one
-draws in the wrong place."
+`supersonic-art-overlay-scroll-propertize' draws with to time when it
+is done bouncing (see `supersonic-art-scroll-max-offset'); being a
+little off just makes it stop a little short of or past the text's
+actual edge, not that it draws in the wrong place."
   (* (length text) font-size 0.6))
 
+(defun supersonic-art-scroll-pad (size)
+  "Return the pixel margin the scrolling overlay's text keeps clear of the edges.
+Shared by `supersonic-art-overlay-scroll-propertize' and
+`supersonic-art-scroll-max-offset', for the same reason
+`supersonic-art-overlay-font-size' is."
+  (round (* size 0.04)))
+
+(defun supersonic-art-scroll-max-offset (size text)
+  "Return how many pixels TEXT overflows the scrim's padded width at SIZE.
+0 if TEXT fits already -- `supersonic-now-playing-animate-art-overlay-scroll'
+draws it once, statically, rather than scrolling at all in that case.
+Otherwise, the pixel distance between showing TEXT's left edge (OFFSET
+0 in `supersonic-art-overlay-scroll-propertize') and showing its right
+edge, which is the far end `supersonic-now-playing--advance-scroll'
+bounces `supersonic-now-playing--scroll-offset' out to before turning
+back."
+  (let* ((font-size (supersonic-art-overlay-font-size size))
+         (available (- size (* 2 (supersonic-art-scroll-pad size)))))
+    (max 0 (round (- (supersonic-art-scroll-text-width text font-size) available)))))
+
 (defun supersonic-art-overlay-scroll-propertize (id size text offset)
-  "Generate a property scrolling TEXT across cover art ID at SIZE.
-Like `supersonic-art-overlay-propertize', but instead of a single line
-pinned centered in the scrim, TEXT crawls across it right to left, the
-way a now-playing widget's ticker does when there is more to show than
-fits in one line -- the point being several metadata fields shown
-together rather than `supersonic-now-playing-animate-art-overlay's one
-field at a time.  OFFSET is how far the crawl has moved so far, in
-pixels; advancing it and calling this again on every animation tick is
-`supersonic-now-playing-animate-art-overlay-scroll''s job; this
-function just draws one frame of it for whatever OFFSET it is given.
-Two copies of TEXT are drawn one period apart (see
-`supersonic-art-scroll-text-width') so the crawl loops seamlessly
-instead of visibly resetting; both are clipped to the scrim so neither
-ever draws outside of it."
+  "Generate a property showing TEXT across cover art ID at SIZE, OFFSET pixels in.
+Like `supersonic-art-overlay-propertize', but left-aligned and shifted
+left by OFFSET pixels instead of centered and fixed in place --
+`supersonic-now-playing-animate-art-overlay-scroll' bounces OFFSET
+between 0 and `supersonic-art-scroll-max-offset' (see that function) to
+reveal TEXT a little at a time when it does not fit in one line; this
+function only ever draws the single frame it is given for whatever
+OFFSET that is.  Clipped to the scrim so TEXT never draws outside of
+it, whichever edge is currently cut off."
   (let* ((file (supersonic-art-cache-file id size))
          (mime (format "image/%s" (image-type-from-file-header file)))
          (svg (svg-create size size))
          (scrim-height (round (* size 0.22)))
          (scrim-y (- size scrim-height))
-         (font-size (max 10 (round (* size 0.07))))
+         (font-size (supersonic-art-overlay-font-size size))
          (baseline-y (- size (/ scrim-height 2)))
-         (text-width (supersonic-art-scroll-text-width text font-size))
-         ;; A gap a few characters wide between one pass and the next --
-         ;; otherwise the second copy's leading edge would butt straight
-         ;; up against the first copy's trailing edge and read as one
-         ;; run-on line instead of a loop.
-         (gap (* font-size 3))
-         (period (+ text-width gap))
-         (start-x (- size (mod offset period)))
+         (pad (supersonic-art-scroll-pad size))
          (clip (svg-clip-path svg :id "supersonic-art-scroll-clip")))
     (svg-embed svg file mime nil :width size :height size)
     (svg-rectangle svg 0 scrim-y size scrim-height :fill "black" :fill-opacity 0.55)
     (svg-rectangle clip 0 scrim-y size scrim-height)
-    (dolist (x (list start-x (+ start-x period)))
-      (svg-text svg text
-                :x x :y baseline-y
-                :fill "white" :font-size font-size :font-weight "bold"
-                :text-anchor "start" :dominant-baseline "middle"
-                :clip-path "url(#supersonic-art-scroll-clip)"))
+    (svg-text svg text
+              :x (- pad offset) :y baseline-y
+              :fill "white" :font-size font-size :font-weight "bold"
+              :text-anchor "start" :dominant-baseline "middle"
+              :clip-path "url(#supersonic-art-scroll-clip)")
     (propertize " " 'display (svg-image svg))))
 
 (aio-defun

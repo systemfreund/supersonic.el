@@ -203,7 +203,21 @@ Only meaningful with that function set as
 `supersonic-now-playing-animation-function' -- the other two built-ins
 ignore it.  A speed, not a per-tick amount, so it stays the same crawl
 however often (or unevenly) `supersonic-now-playing-animation-frame-interval'
-actually fires."
+actually fires.  Does not apply at all when
+`supersonic-now-playing-cycle-fields''s joined-up text already fits
+without scrolling -- see `supersonic-now-playing-scroll-pause'."
+  :type 'number
+  :group 'supersonic)
+
+(defcustom supersonic-now-playing-scroll-pause 2
+  "Seconds `supersonic-now-playing-animate-art-overlay-scroll' rests at each end.
+That function does not loop continuously: when
+`supersonic-now-playing-cycle-fields''s joined-up text is wider than
+the cover art, it scrolls left just far enough to bring the far end
+into view, rests here for this long, scrolls back to the start, rests
+there for this long too, and repeats.  When the text fits without
+scrolling at all, it is shown once, motionless, and this is not
+consulted."
   :type 'number
   :group 'supersonic)
 
@@ -229,9 +243,11 @@ tick (0 for an unconditional first paint -- see
   between fields (and gating its redraws) the same way the label does.
 - `supersonic-now-playing-animate-art-overlay-scroll': also layers onto
   the art, but joins every field in `supersonic-now-playing-cycle-fields'
-  into one line and scrolls it across the art right to left instead of
-  switching between them one at a time, redrawing every tick rather
-  than waiting for a field switch -- see `supersonic-now-playing-scroll-step'.
+  into one line instead of switching between them one at a time.  Shown
+  once, motionless, if that already fits; otherwise bounced left just
+  far enough to read the far end and back, resting at each end -- see
+  `supersonic-now-playing-scroll-step' and
+  `supersonic-now-playing-scroll-pause'.
 
 To show it in both places at once, set this to a function that calls
 both in turn rather than looking for a fourth built-in for it -- there
