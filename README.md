@@ -8,6 +8,7 @@ works with any server implementing the Subsonic API, such as
 [Navidrome](https://www.navidrome.org/), [Airsonic](https://airsonic.github.io/),
 [Gonic](https://github.com/sentriz/gonic) or [Ampache](https://ampache.org/).
 
+<img width="1445" height="1041" alt="image" src="https://github.com/user-attachments/assets/095571c2-0c8c-4c38-9fa8-d1ae1b5c10ec" />
 <img width="1924" height="1081" alt="image" src="https://github.com/user-attachments/assets/e7e698ca-6b1f-4505-8452-1118b6a66762" />
 <img width="1920" height="1042" alt="image" src="https://github.com/user-attachments/assets/0bfad485-afe9-4ab8-972a-5ce8d26925ce" />
 
