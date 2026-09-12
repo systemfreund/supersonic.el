@@ -72,14 +72,29 @@ above the transport buttons, click anywhere on it to seek there.
 The label next to the cover art shows the track's title by default.
 Setting `supersonic-now-playing-cycle-fields` to a list of `title`,
 `artist` and/or `album` makes it rotate through them instead, every
-`supersonic-now-playing-animation-interval` seconds (10 by default).
+`supersonic-now-playing-cycle-interval` seconds (10 by default).
 
 That rotation can also be layered onto the cover art itself, in place
-of the side label, by setting `supersonic-now-playing-animation-function`
-to `supersonic-now-playing-animate-art-overlay` (the default,
-`supersonic-now-playing-animate-label`, is what draws the side label).
-To show it in both places at once, set it to a function that calls
-both in turn.
+of the side label, by adding `supersonic-now-playing-animate-art-overlay`
+to `supersonic-now-playing-animation-functions` (the default,
+`supersonic-now-playing-animate-label`, is what draws the side label
+instead). `supersonic-now-playing-animate-art-overlay-scroll` is a
+third option: instead of switching between fields, it joins all of
+them into one line and scrolls it across the art. To show more than
+one of these at once (e.g. the side label and the art overlay
+together), just list more than one.
+
+With both `supersonic-enable-art` and `supersonic-enable-waveform` on,
+turning on `supersonic-now-playing-waveform-in-overlay` layers the
+waveform seekbar onto the cover art as well, in a lane above the text,
+instead of showing it as its own line below the label.
+
+The Title/Artist/Album/Duration/Format/Size rows below the transport
+buttons come from `supersonic-now-playing-render-functions`, a list
+with one function per row, in the order they should appear. Drop the
+entries you don't want -- setting it to `nil` hides all of them,
+leaving just the cover art, the label and the buttons -- or reorder it,
+or add a function of your own for a row it doesn't already have.
 
 By default the now-playing buffer opens in the selected window, replacing
 whatever was there. To keep it pinned in its own window instead, e.g. to
