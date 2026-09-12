@@ -249,6 +249,8 @@ consulted."
 ;; to keep the byte-compiler quiet about the forward references below,
 ;; not to actually load them early.
 (declare-function supersonic-now-playing-animate-label "supersonic")
+(declare-function supersonic-now-playing-animate-art-overlay "supersonic")
+(declare-function supersonic-now-playing-animate-art-overlay-scroll "supersonic")
 (declare-function supersonic-now-playing-update-duration-field "supersonic")
 (declare-function supersonic-now-playing-recolor-waveform "supersonic")
 (declare-function supersonic-now-playing-maybe-fetch-waveform "supersonic")
