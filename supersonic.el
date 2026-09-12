@@ -529,7 +529,7 @@ mid-read the way a looping marquee would.  Falls back to
 `supersonic-now-playing-animate-art-overlay' does: no cover art
 available, or the file for the current track not cached yet.  Also
 layers in the waveform seekbar the same way that function does -- see
-`supersonic-now-playing--overlay-waveform' -- above the text row rather
+`supersonic-now-playing--overlay-waveform' -- below the text row rather
 than behind it, so it stays put while the text scrolls past above it."
   (with-current-buffer buff
     (if (and supersonic-now-playing--art-id
@@ -605,11 +605,18 @@ user-customizable lists, so one entry signalling an error is reported
 and skipped rather than propagated -- taking every function after it in
 the same list (and, for the first two, the timer driving the whole
 list) down with it would make one bad entry (a typo in a hand-written
-function, say) far more costly than it has to be."
+function, say) far more costly than it has to be.
+
+Also where `supersonic-now-playing-force-redisplay' takes effect, once
+per call here rather than once per FUNCTIONS entry: that variable is
+about how promptly a redraw becomes visible, not about redrawing
+again, so it only needs to run after the whole list has had its turn."
   (dolist (function functions)
     (condition-case err
         (funcall function buff arg)
-      (error (message "supersonic: %s signalled %s" function err)))))
+      (error (message "supersonic: %s signalled %s" function err))))
+  (when supersonic-now-playing-force-redisplay
+    (redisplay t)))
 
 (defun supersonic-now-playing--animation-tick ()
   "Measure real elapsed time and pass it on to

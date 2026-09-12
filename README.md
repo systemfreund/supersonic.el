@@ -87,7 +87,7 @@ together), just list more than one.
 
 With both `supersonic-enable-art` and `supersonic-enable-waveform` on,
 turning on `supersonic-now-playing-waveform-in-overlay` layers the
-waveform seekbar onto the cover art as well, in a lane above the text,
+waveform seekbar onto the cover art as well, in a lane below the text,
 instead of showing it next to the cover art on its own.
 
 The Title/Artist/Album/Duration/Format/Size rows below the transport

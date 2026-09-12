@@ -1894,6 +1894,28 @@ instead of letting it take every row after it down too."
             (should (supersonic-tests--buffer-matches buff "Artist:"))))
       (kill-buffer buff))))
 
+(ert-deftest supersonic-tests-now-playing-force-redisplay-is-off-by-default ()
+  "`supersonic-now-playing--run-field-functions' does not force a
+redisplay unless `supersonic-now-playing-force-redisplay' asks for
+one -- most setups never need it, and it is real, avoidable overhead
+for the ones that don't."
+  (should-not supersonic-now-playing-force-redisplay)
+  (let ((calls 0))
+    (cl-letf (((symbol-function 'redisplay) (lambda (&rest _) (cl-incf calls))))
+      (supersonic-now-playing--run-field-functions (list #'ignore) 'buff 'arg)
+      (should (= 0 calls)))))
+
+(ert-deftest supersonic-tests-now-playing-force-redisplay-forces-one-after-the-list ()
+  "With `supersonic-now-playing-force-redisplay' on,
+`supersonic-now-playing--run-field-functions' forces exactly one
+redisplay after FUNCTIONS has had its turn -- once per tick, not once
+per entry in the list."
+  (let ((calls 0)
+        (supersonic-now-playing-force-redisplay t))
+    (cl-letf (((symbol-function 'redisplay) (lambda (&rest _) (cl-incf calls))))
+      (supersonic-now-playing--run-field-functions (list #'ignore #'ignore #'ignore) 'buff 'arg)
+      (should (= 1 calls)))))
+
 (defun supersonic-tests--waveform-image-shown-p (buff)
   "Return non-nil if BUFF's waveform field holds a rendered image, not
 just the placeholder `supersonic-now-playing--render' inserts for it."

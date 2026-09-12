@@ -197,6 +197,29 @@ crawl look smoother, not faster."
   :type 'number
   :group 'supersonic)
 
+(defcustom supersonic-now-playing-force-redisplay nil
+  "Force a redisplay after every now-playing tick, even off the selected frame.
+Emacs's own redisplay normally happens whenever it next goes idle,
+which shows an animation/position update within a fraction of a second
+of the tick that caused it -- but a frame that is visible without being
+selected (its own frame, while a different one has input focus, say)
+can end up waiting far longer than that for a truly idle moment,
+especially if something else -- another frame doing its own frequent
+updates, for instance -- keeps Emacs busy in the meantime.  The buffer
+still ticks along correctly the whole time either way (see
+`supersonic-now-playing--field-index' advancing regardless); this is
+purely about how promptly that becomes visible.
+
+Turning this on adds a forced, uninterruptible `redisplay' call -- see
+`redisplay's FORCE argument -- to every
+`supersonic-now-playing-animation-frame-interval'/
+`supersonic-now-playing-interval' tick, so updates show up right away
+regardless of which frame is selected.  Off by default: most setups
+never need it, and forcing a redisplay this often is real, avoidable
+overhead for the ones that don't."
+  :type 'boolean
+  :group 'supersonic)
+
 (defcustom supersonic-now-playing-scroll-step 30
   "Pixels per second `supersonic-now-playing-animate-art-overlay-scroll' advances.
 Only meaningful with that function listed in
@@ -349,7 +372,7 @@ playback moves on, wherever reordering puts it), `-format' and `-size'."
 Requires both `supersonic-enable-art' and `supersonic-enable-waveform'
 to actually show anything -- see
 `supersonic-now-playing-animate-art-overlay'/`-scroll', which draw the
-waveform into a lane above their text once this is on, the same way
+waveform into a lane below their text once this is on, the same way
 they already draw that text onto the art instead of beside it.  The
 combined image stays clickable to seek, exactly like the standalone
 seekbar this replaces.
