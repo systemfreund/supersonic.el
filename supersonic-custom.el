@@ -171,8 +171,22 @@ draws is `supersonic-now-playing-animation-function'."
 
 (defcustom supersonic-now-playing-animation-interval 10
   "Seconds between advances of `supersonic-now-playing-cycle-fields'.
-Only takes effect while that list is non-nil."
+Only takes effect while that list is non-nil.  Also what paces
+`supersonic-now-playing-animate-art-overlay-scroll', if that is what
+`supersonic-now-playing-animation-function' is set to -- its 10-second
+default suits switching between fields outright, not scrolling
+smoothly, so a smooth crawl means turning this down too, e.g. to 0.1,
+once that function is in use."
   :type 'number
+  :group 'supersonic)
+
+(defcustom supersonic-now-playing-scroll-step 8
+  "Pixels `supersonic-now-playing-animate-art-overlay-scroll' advances per tick.
+Only meaningful with that function set as
+`supersonic-now-playing-animation-function' -- the other two built-ins
+ignore it.  How often a tick (and so a step) happens is still governed
+by `supersonic-now-playing-animation-interval', shared with them."
+  :type 'integer
   :group 'supersonic)
 
 ;; Defined in supersonic.el, which requires this file rather than the
@@ -184,18 +198,24 @@ Only takes effect while that list is non-nil."
 (defcustom supersonic-now-playing-animation-function #'supersonic-now-playing-animate-label
   "Function called on each field advance to render it into the buffer.
 Called with BUFF and (FIELD . VALUE), the cons
-`supersonic-now-playing--current-field' returns.  Two are built in:
+`supersonic-now-playing--current-field' returns.  Three are built in:
 
 - `supersonic-now-playing-animate-label' (the default): updates the
   text label next to the cover art -- the only place a rotated field
   ever showed before this existed.
 - `supersonic-now-playing-animate-art-overlay': layers the field onto
-  the cover art itself instead, in place of the side label.
+  the cover art itself instead, in place of the side label, switching
+  between fields the same way the label does.
+- `supersonic-now-playing-animate-art-overlay-scroll': also layers onto
+  the art, but joins every field in `supersonic-now-playing-cycle-fields'
+  into one line and scrolls it across the art right to left instead of
+  switching between them one at a time -- see
+  `supersonic-now-playing-scroll-step'.
 
 To show it in both places at once, set this to a function that calls
-both in turn rather than looking for a third built-in for it -- there
+both in turn rather than looking for a fourth built-in for it -- there
 is no in-between behaviour left to name that a plain combination of
-the two doesn't already cover."
+two of the above doesn't already cover."
   :type 'function
   :group 'supersonic)
 

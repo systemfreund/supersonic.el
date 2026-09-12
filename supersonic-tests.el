@@ -668,6 +668,26 @@ image itself instead of shown as a separate string beside it."
             (should (eq (plist-get (cdr spec) :type) 'svg))))
       (delete-directory supersonic-cache-path t))))
 
+(ert-deftest supersonic-tests-art-overlay-scroll-propertize-bakes-text-into-the-image ()
+  "`supersonic-art-overlay-scroll-propertize' returns a display spec built
+from an `svg' image, the same as `supersonic-art-overlay-propertize' --
+the crawl is a difference in how the text is laid out within that image,
+not in what kind of display spec comes back."
+  (let ((supersonic-cache-path (expand-file-name (make-temp-name "supersonic-tests-cache-") temporary-file-directory)))
+    (unwind-protect
+        (progn
+          (mkdir supersonic-cache-path)
+          (let ((coding-system-for-write 'no-conversion))
+            (write-region
+             (base64-decode-string
+              "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+             nil (supersonic-art-cache-file "art-1" 100)))
+          (let ((spec (get-text-property
+                       0 'display (supersonic-art-overlay-scroll-propertize "art-1" 100 "Some Track — Some Artist" 0))))
+            (should (eq (car spec) 'image))
+            (should (eq (plist-get (cdr spec) :type) 'svg))))
+      (delete-directory supersonic-cache-path t))))
+
 (ert-deftest supersonic-tests-waveform-find-data-chunk-skips-extended-fmt-chunk ()
   "`supersonic-waveform--find-data-chunk' finds \"data\" behind a 40-byte
 extended \"fmt \" chunk -- what mpv actually writes -- rather than
@@ -1369,6 +1389,8 @@ the title, rather than the label sitting on the title alone."
            (progn
              (with-current-buffer buff
                (supersonic-now-playing-mode))
+             ;; The animation tick keeps quiet unless the buffer is on display.
+             (set-window-buffer (selected-window) buff)
              (supersonic-mpv-start (list supersonic-tests--track-1))
              (should
               (supersonic-tests--wait-for
@@ -1406,6 +1428,43 @@ there is no timer left running to advance it later."
              (should-not supersonic-now-playing--animation-timer))
          (kill-buffer buff))))))
 
+(ert-deftest supersonic-tests-now-playing-animation-tick-skips-while-buffer-hidden ()
+  "`supersonic-now-playing--animation-tick' leaves the animated field alone
+for a now-playing buffer that exists but isn't on display -- redrawing
+it (the art overlay variants rebuild a whole SVG image to do so) is
+real work not worth spending on nothing anyone can see -- and picks
+back up exactly where it left off, neither having skipped ahead nor
+reset, the moment the buffer becomes visible again."
+  (supersonic-tests--with-mpv
+   (cl-letf (((symbol-function 'supersonic-get-json)
+              (aio-lambda (url)
+                `(("subsonic-response"
+                   ("song" ("title" . ,url) ("artist" . "Some Artist") ("album" . "Some Album")))))))
+     (let ((buff (get-buffer-create supersonic-now-playing-buffer-name))
+           (other (generate-new-buffer " *supersonic-tests-other*"))
+           (supersonic-now-playing-cycle-fields '(title artist album)))
+       (unwind-protect
+           (progn
+             (with-current-buffer buff
+               (supersonic-now-playing-mode))
+             ;; buff exists but isn't shown anywhere -- `other' occupies the
+             ;; only window instead.
+             (set-window-buffer (selected-window) other)
+             (supersonic-mpv-start (list supersonic-tests--track-1))
+             (should
+              (supersonic-tests--wait-for
+               (lambda () (equal supersonic-tests--track-1 (buffer-local-value 'supersonic-now-playing--track-id buff)))))
+             (should (equal supersonic-tests--track-1 (supersonic-tests--now-playing-label buff)))
+             (supersonic-now-playing--animation-tick)
+             (supersonic-now-playing--animation-tick)
+             (should (equal supersonic-tests--track-1 (supersonic-tests--now-playing-label buff)))
+             (set-window-buffer (selected-window) buff)
+             (supersonic-now-playing--animation-tick)
+             (should (equal "Some Artist" (supersonic-tests--now-playing-label buff))))
+         (supersonic-now-playing--stop-animation-timer)
+         (kill-buffer buff)
+         (kill-buffer other))))))
+
 (ert-deftest supersonic-tests-now-playing-art-overlay-falls-back-to-label-without-art ()
   "`supersonic-now-playing-animate-art-overlay' updates the side label
 instead of the (non-existent) art when there is no cover art available
@@ -1421,6 +1480,60 @@ the same case `supersonic-now-playing--art' draws nothing for."
            (progn
              (with-current-buffer buff
                (supersonic-now-playing-mode))
+             ;; The animation tick keeps quiet unless the buffer is on display.
+             (set-window-buffer (selected-window) buff)
+             (supersonic-mpv-start (list supersonic-tests--track-1))
+             (should
+              (supersonic-tests--wait-for
+               (lambda () (supersonic-tests--buffer-matches buff (regexp-quote supersonic-tests--track-1)))))
+             (should (equal supersonic-tests--track-1 (supersonic-tests--now-playing-label buff)))
+             (supersonic-now-playing--animation-tick)
+             (should (equal "Some Artist" (supersonic-tests--now-playing-label buff))))
+         (supersonic-now-playing--stop-animation-timer)
+         (kill-buffer buff))))))
+
+(ert-deftest supersonic-tests-now-playing-scroll-text-joins-configured-fields ()
+  "`supersonic-now-playing--scroll-text' joins every configured field's
+value into one line rather than picking just one, and leaves out any
+field that has no value for the current track instead of showing a
+blank stretch for it."
+  (supersonic-tests--with-mpv
+   (cl-letf (((symbol-function 'supersonic-get-json)
+              (aio-lambda (url) `(("subsonic-response" ("song" ("title" . ,url) ("artist" . "Some Artist")))))))
+     (let ((buff (get-buffer-create supersonic-now-playing-buffer-name))
+           (supersonic-now-playing-cycle-fields '(title artist album)))
+       (unwind-protect
+           (progn
+             (with-current-buffer buff
+               (supersonic-now-playing-mode))
+             (supersonic-mpv-start (list supersonic-tests--track-1))
+             (should
+              (supersonic-tests--wait-for
+               (lambda () (supersonic-tests--buffer-matches buff (regexp-quote supersonic-tests--track-1)))))
+             (with-current-buffer buff
+               (should (equal (concat supersonic-tests--track-1 "   •   Some Artist")
+                               (supersonic-now-playing--scroll-text)))))
+         (supersonic-now-playing--stop-animation-timer)
+         (kill-buffer buff))))))
+
+(ert-deftest supersonic-tests-now-playing-art-overlay-scroll-falls-back-to-label-without-art ()
+  "`supersonic-now-playing-animate-art-overlay-scroll' updates the side
+label instead of the (non-existent) art when there is no cover art
+available to scroll text across -- the same fallback
+`supersonic-now-playing-animate-art-overlay' has, and for the same
+reason: `supersonic-enable-art' is off by default here."
+  (supersonic-tests--with-mpv
+   (cl-letf (((symbol-function 'supersonic-get-json)
+              (aio-lambda (url) `(("subsonic-response" ("song" ("title" . ,url) ("artist" . "Some Artist")))))))
+     (let ((buff (get-buffer-create supersonic-now-playing-buffer-name))
+           (supersonic-now-playing-animation-function #'supersonic-now-playing-animate-art-overlay-scroll)
+           (supersonic-now-playing-cycle-fields '(title artist)))
+       (unwind-protect
+           (progn
+             (with-current-buffer buff
+               (supersonic-now-playing-mode))
+             ;; The animation tick keeps quiet unless the buffer is on display.
+             (set-window-buffer (selected-window) buff)
              (supersonic-mpv-start (list supersonic-tests--track-1))
              (should
               (supersonic-tests--wait-for

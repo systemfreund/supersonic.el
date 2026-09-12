@@ -202,6 +202,13 @@ Advanced by `supersonic-now-playing--animation-tick'; reset to 0
 whenever `supersonic-now-playing--render' moves on to a new track, so
 a track change always starts out on the title.")
 
+(defvar-local supersonic-now-playing--scroll-offset 0
+  "Pixels `supersonic-now-playing-animate-art-overlay-scroll' has scrolled so far.
+Advanced by `supersonic-now-playing-scroll-step' on every animation
+tick; reset to 0 whenever `supersonic-now-playing--render' moves on to
+a new track, the same way `supersonic-now-playing--field-index' is, so
+a track change always starts the crawl back at the beginning.")
+
 (defvar-local supersonic-now-playing--duration nil
   "Duration in seconds of the track the now-playing buffer is showing.
 Kept around so the position can be re-rendered on its own tick, without
@@ -312,6 +319,47 @@ same case `supersonic-now-playing--art' draws nothing for."
           supersonic-now-playing--art-id supersonic-now-playing-art-size (cdr field)))
       (supersonic-now-playing-animate-label buff field))))
 
+(defun supersonic-now-playing--scroll-text ()
+  "Return `supersonic-now-playing-cycle-fields''s values joined into one line.
+What `supersonic-now-playing-animate-art-overlay-scroll' scrolls across
+the art, rather than any one field passed to it -- the whole point of
+that function over `supersonic-now-playing-animate-art-overlay' is
+showing every configured field together instead of switching between
+them.  Fields with no value for the current track (e.g. `album' on a
+track with none) are left out rather than shown as an empty stretch of
+the line.  Falls back to the track's title -- \"?\" failing that -- if
+none of them have a value, the same fallback
+`supersonic-now-playing--current-field' uses for a single field."
+  (let ((values (delq nil (mapcar #'supersonic-now-playing--field-value supersonic-now-playing-cycle-fields))))
+    (if values
+        (mapconcat #'identity values "   •   ")
+      (or supersonic-now-playing--title "?"))))
+
+(defun supersonic-now-playing-animate-art-overlay-scroll (buff field)
+  "Scroll `supersonic-now-playing-cycle-fields' across BUFF's cover art.
+FIELD is a (SYMBOL . VALUE) cons, as `supersonic-now-playing--current-field'
+returns, used only for the label fallback below -- unlike
+`supersonic-now-playing-animate-art-overlay', which draws whichever
+single field FIELD names, this one always draws every configured field
+together (see `supersonic-now-playing--scroll-text'), so nothing about
+FIELD itself matters here and no field ever gets left out waiting for
+its turn.  Falls back to `supersonic-now-playing-animate-label' under
+the same conditions that one does: no cover art available, or the file
+for the current track not cached yet."
+  (with-current-buffer buff
+    (if (and supersonic-now-playing--art-id
+             (supersonic-art-available-p)
+             (file-exists-p (supersonic-art-cache-file supersonic-now-playing--art-id supersonic-now-playing-art-size)))
+        (progn
+          (setq supersonic-now-playing--scroll-offset
+                (+ supersonic-now-playing--scroll-offset supersonic-now-playing-scroll-step))
+          (supersonic-now-playing--update-field
+           buff 'art
+           (supersonic-art-overlay-scroll-propertize
+            supersonic-now-playing--art-id supersonic-now-playing-art-size
+            (supersonic-now-playing--scroll-text) supersonic-now-playing--scroll-offset)))
+      (supersonic-now-playing-animate-label buff field))))
+
 (defun supersonic-now-playing--start-animation-timer ()
   "Start rotating `supersonic-now-playing-cycle-fields', unless already running."
   (when (and supersonic-now-playing-cycle-fields (not supersonic-now-playing--animation-timer))
@@ -330,14 +378,24 @@ same case `supersonic-now-playing--art' draws nothing for."
   "Advance the animated field and render it.
 Rendering is `supersonic-now-playing-animation-function''s job; this
 just picks which field is next.  Stops itself once there is nothing
-left playing to animate, the same way `supersonic-now-playing--tick'
-does for the position."
+left playing to animate, and keeps quiet while the buffer is not on
+display, the same way `supersonic-now-playing--tick' does for the
+position -- worth even more here than there: unlike a position update,
+`supersonic-now-playing-animate-art-overlay-scroll' redraws the cover
+art's whole SVG image on every call, and at the short interval a
+smooth scroll needs, doing that for a buffer nobody is looking at would
+burn CPU on nothing.  Neither the field index nor the scroll offset
+advances while skipped, so the animation picks back up from wherever it
+left off instead of jumping ahead once the buffer is shown again."
   (let ((buff (supersonic-now-playing-buffer)))
-    (if (or (not buff) (not (supersonic-playback-live-p)))
-        (supersonic-now-playing--stop-animation-timer)
+    (cond
+     ((or (not buff) (not (supersonic-playback-live-p)))
+      (supersonic-now-playing--stop-animation-timer))
+     ((not (get-buffer-window buff t)))
+     (t
       (with-current-buffer buff
         (setq supersonic-now-playing--field-index (1+ supersonic-now-playing--field-index))
-        (funcall supersonic-now-playing-animation-function buff (supersonic-now-playing--current-field))))))
+        (funcall supersonic-now-playing-animation-function buff (supersonic-now-playing--current-field)))))))
 
 (defun supersonic-now-playing--tick ()
   "Update the playback position in the now-playing buffer.
@@ -571,8 +629,10 @@ from) -- see `supersonic-now-playing--track-id'."
         (setq supersonic-now-playing--art-id (and song (assoc-default "coverArt" song)))
         (unless same-track
           ;; A track change always starts the animated field back on the
-          ;; title, whatever it last settled on for the track before it.
+          ;; title, whatever it last settled on for the track before it,
+          ;; and any scrolling overlay back at the beginning of its crawl.
           (setq supersonic-now-playing--field-index 0)
+          (setq supersonic-now-playing--scroll-offset 0)
           ;; Whatever waveform was cached here belonged to the previous
           ;; track (or there wasn't one); `supersonic-now-playing--maybe-fetch-waveform'
           ;; repopulates it for the new one once it's ready.
