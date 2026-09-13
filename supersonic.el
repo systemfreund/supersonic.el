@@ -461,14 +461,20 @@ file needing to track that separately."
      (cdr supersonic-now-playing--waveform)
      (supersonic-now-playing--progress-ratio supersonic-now-playing--position supersonic-now-playing--duration))))
 
-(defun supersonic-now-playing--maybe-seekable (propertized waveform)
-  "Return PROPERTIZED, made clickable-to-seek if WAVEFORM is non-nil.
-`supersonic-art-overlay-propertize'/`-scroll-propertize' only draw a
-waveform lane at all when handed a non-nil WAVEFORM in the first place,
-so this mirrors that same condition to decide whether clicking
-PROPERTIZED (the cover art, in that case) ought to seek -- see
-`supersonic-waveform-seekable'."
-  (if waveform
+(defun supersonic-now-playing--maybe-seekable (propertized waveform layers)
+  "Return PROPERTIZED, made clickable-to-seek if LAYERS drew WAVEFORM into it.
+A waveform lane needs both the envelope and the layer drawing it, and
+so does a click-to-seek surface: there is nothing to seek in on cover
+art that never got a lane, whether because WAVEFORM was nil or because
+LAYERS (the same `supersonic-art-overlay-layers'/`-scroll-layers' the
+caller just handed `supersonic-art-overlay-propertize'/
+`-scroll-propertize', which differ between the two callers) does not
+list `supersonic-art-overlay-layer-waveform'.  Rather than restate that
+condition here and risk drifting out of step with the geometry, this
+asks `supersonic-art-overlay-waveform-lane-p' -- the same predicate
+`supersonic-art-overlay--context' reserves the lane on.  See
+`supersonic-waveform-seekable' for what the click itself then does."
+  (if (supersonic-art-overlay-waveform-lane-p waveform layers)
       (supersonic-waveform-seekable (get-text-property 0 'display propertized))
     propertized))
 
@@ -482,7 +488,9 @@ is nil, or the file for the current track has not landed yet -- the
 same case `supersonic-now-playing--art' draws nothing for.  Also layers
 in the waveform seekbar -- see `supersonic-now-playing--overlay-waveform'
 and `supersonic-art-overlay-layer-waveform' -- and keeps the result
-clickable to seek when it does."
+clickable to seek whenever `supersonic-art-overlay-layers' really did
+draw that lane, but not when it only could have (see
+`supersonic-now-playing--maybe-seekable')."
   (with-current-buffer buff
     (if (and supersonic-now-playing--art-id
              (supersonic-art-available-p)
@@ -495,7 +503,7 @@ clickable to seek when it does."
               (supersonic-art-overlay-propertize
                supersonic-now-playing--art-id supersonic-now-playing-art-size
                (cdr (supersonic-now-playing--current-field)) waveform)
-              waveform))))
+              waveform supersonic-art-overlay-layers))))
       (supersonic-now-playing-animate-label buff delta))))
 
 (defun supersonic-now-playing--scroll-text ()
@@ -588,7 +596,7 @@ than behind it, so it stays put while the text scrolls past above it."
                (supersonic-now-playing--maybe-seekable
                 (supersonic-art-overlay-scroll-propertize
                  supersonic-now-playing--art-id supersonic-now-playing-art-size text 0 waveform)
-                waveform))))
+                waveform supersonic-art-overlay-scroll-layers))))
            (t
             (unless (= delta 0)
               (supersonic-now-playing--advance-scroll delta max-offset))
@@ -598,7 +606,7 @@ than behind it, so it stays put while the text scrolls past above it."
               (supersonic-art-overlay-scroll-propertize
                supersonic-now-playing--art-id supersonic-now-playing-art-size
                text supersonic-now-playing--scroll-offset waveform)
-              waveform)))))
+              waveform supersonic-art-overlay-scroll-layers)))))
       (supersonic-now-playing-animate-label buff delta))))
 
 (defun supersonic-now-playing--start-animation-timer ()

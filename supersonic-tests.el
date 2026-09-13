@@ -857,6 +857,51 @@ untouched."
      ;; scroll variant's list, not both.
      (should (memq #'supersonic-art-overlay-layer-waveform supersonic-art-overlay-layers)))))
 
+(ert-deftest supersonic-tests-art-overlay-context-reclaims-the-text-row-when-no-text-layer-is-listed ()
+  "`supersonic-art-overlay--context' sizes the scrim off which layers are
+actually going to draw, for the text row just as much as for the
+waveform lane: dropping the text layer takes that row's share of the
+scrim with it rather than leaving a permanently empty band behind --
+the very gap dropping `supersonic-art-overlay-layer-waveform' was made
+to reclaim.  Checked on the context itself, since that is the one place
+every layer reads its geometry from."
+  (supersonic-tests--with-cached-art
+   "art-1" 100
+   (let* ((waveform (cons (cons (supersonic-tests--bytes '(255 0)) (supersonic-tests--bytes '(200 0))) 0.5))
+          (lane (supersonic-art-overlay-waveform-lane-height 100))
+          (with-text (supersonic-art-overlay--context
+                      "art-1" 100 "Some Track" waveform
+                      (list #'supersonic-art-overlay-layer-scrim
+                            #'supersonic-art-overlay-layer-waveform
+                            #'supersonic-art-overlay-layer-text)))
+          (without-text (supersonic-art-overlay--context
+                         "art-1" 100 "Some Track" waveform
+                         (list #'supersonic-art-overlay-layer-scrim
+                               #'supersonic-art-overlay-layer-waveform))))
+     (should (> (plist-get with-text :text-height) 0))
+     (should (= 0 (plist-get without-text :text-height)))
+     ;; Only the row above is reclaimed -- the lane keeps its full height
+     ;; and is all the scrim has left to cover.
+     (should (= lane (plist-get without-text :lane-height)))
+     (should (= lane (plist-get without-text :scrim-height)))
+     (should (= (- (plist-get with-text :scrim-height) (plist-get with-text :text-height))
+                (plist-get without-text :scrim-height)))
+     ;; The scrolling variant's text layer counts for exactly as much:
+     ;; `-scroll-layers' carries it in place of `-layer-text', so a
+     ;; membership test naming only the static one would wrongly reclaim
+     ;; the row out from under every scrolling overlay there is.
+     (should (> (plist-get (supersonic-art-overlay--context
+                            "art-1" 100 "Some Track" nil
+                            (list #'supersonic-art-overlay-layer-scrim
+                                  #'supersonic-art-overlay-layer-text-scroll))
+                           :text-height)
+                0))
+     ;; Nothing left to sit on at all -- no scrim.
+     (should (= 0 (plist-get (supersonic-art-overlay--context
+                              "art-1" 100 "Some Track" waveform
+                              (list #'supersonic-art-overlay-layer-art))
+                             :scrim-height))))))
+
 (ert-deftest supersonic-tests-art-scroll-text-width-uses-real-font-metrics-when-available ()
   "`supersonic-art-scroll-text-width' measures TEXT via `string-pixel-width'
 rather than a flat per-character guess whenever that function exists.
@@ -2715,6 +2760,61 @@ seekbar clickable."
            (cons "t" (cons (supersonic-tests--bytes '(10 20)) (supersonic-tests--bytes '(5 10)))))
      (supersonic-now-playing-animate-art-overlay-scroll buff 0)
      (should (eq supersonic-waveform-seek-map (supersonic-tests--now-playing-art-keymap buff))))))
+
+(ert-deftest supersonic-tests-now-playing-art-overlay-is-not-seekable-without-the-waveform-layer ()
+  "Cover art that never got a waveform lane is not clickable to seek, even
+with an envelope cached and ready to hand over: dropping
+`supersonic-art-overlay-layer-waveform' from the layer list -- the
+customization the README spells out for moving the seekbar to its own
+row -- leaves nothing under the pointer to seek in, so
+`supersonic-now-playing--maybe-seekable' has to follow the layer list
+rather than the envelope alone.  The default list is exercised in the
+same test, so a keymap going missing for some unrelated reason cannot
+pass this."
+  (supersonic-tests--with-scroll-overlay
+   "Some Track"
+   (with-current-buffer buff
+     (setq supersonic-now-playing--duration 100)
+     (setq supersonic-now-playing--position 10)
+     (setq supersonic-now-playing--waveform
+           (cons "t" (cons (supersonic-tests--bytes '(10 20)) (supersonic-tests--bytes '(5 10)))))
+     (let ((supersonic-art-overlay-layers
+            (remove #'supersonic-art-overlay-layer-waveform supersonic-art-overlay-layers)))
+       (supersonic-now-playing-animate-art-overlay buff 0)
+       (should-not (supersonic-tests--now-playing-art-keymap buff)))
+     (supersonic-now-playing-animate-art-overlay buff 0)
+     (should (eq supersonic-waveform-seek-map (supersonic-tests--now-playing-art-keymap buff))))))
+
+(ert-deftest supersonic-tests-now-playing-art-overlay-seekability-follows-each-animator-s-own-layer-list ()
+  "Each art animator decides seekability from the layer list it actually
+draws with: `supersonic-now-playing-animate-art-overlay-scroll' from
+`supersonic-art-overlay-scroll-layers' and
+`supersonic-now-playing-animate-art-overlay' from
+`supersonic-art-overlay-layers'.  Dropping the waveform layer from one
+list must not make the other's overlay stop seeking, which is what
+consulting a single hardcoded list for both would do."
+  (supersonic-tests--with-scroll-overlay
+   "Some Track"
+   (with-current-buffer buff
+     (setq supersonic-now-playing--duration 100)
+     (setq supersonic-now-playing--position 10)
+     (setq supersonic-now-playing--waveform
+           (cons "t" (cons (supersonic-tests--bytes '(10 20)) (supersonic-tests--bytes '(5 10)))))
+     ;; Scroll list emptied of the lane: the scrolling overlay stops
+     ;; seeking, the static one carries on.
+     (let ((supersonic-art-overlay-scroll-layers
+            (remove #'supersonic-art-overlay-layer-waveform supersonic-art-overlay-scroll-layers)))
+       (supersonic-now-playing-animate-art-overlay-scroll buff 0)
+       (should-not (supersonic-tests--now-playing-art-keymap buff))
+       (supersonic-now-playing-animate-art-overlay buff 0)
+       (should (eq supersonic-waveform-seek-map (supersonic-tests--now-playing-art-keymap buff))))
+     ;; And the other way round.
+     (let ((supersonic-art-overlay-layers
+            (remove #'supersonic-art-overlay-layer-waveform supersonic-art-overlay-layers)))
+       (supersonic-now-playing-animate-art-overlay buff 0)
+       (should-not (supersonic-tests--now-playing-art-keymap buff))
+       (supersonic-now-playing-animate-art-overlay-scroll buff 0)
+       (should (eq supersonic-waveform-seek-map (supersonic-tests--now-playing-art-keymap buff)))))))
 
 (ert-deftest supersonic-tests-mpris-sync-announces-live-status-and-metadata ()
   "`supersonic-mpris--sync' pulls the active backend's track id and pause
