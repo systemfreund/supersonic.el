@@ -96,6 +96,12 @@ re-download of anything already cached at the old size."
   :type 'integer
   :group 'supersonic)
 
+(defcustom supersonic-list-use-header-line nil
+  "Whether to show column headers in album and podcast list buffers.
+Set to t to display headers; nil to hide them (the default)."
+  :type 'boolean
+  :group 'supersonic)
+
 (defcustom supersonic-now-playing-art-size 600
   "Height in pixels of the cover art in the now-playing buffer.
 The art is also downloaded at this size, so raising it costs a

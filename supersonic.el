@@ -1527,6 +1527,7 @@ the response at the wrong key."
  "Major mode for a list of albums across artists (newest, random, ...)."
  (setq tabulated-list-format [("Albums" 30 t) ("Artists" 30 t) ("Art" 30 nil)])
  (setq tabulated-list-padding 2)
+ (setq tabulated-list-use-header-line supersonic-list-use-header-line)
  (tabulated-list-init-header))
 
 (define-derived-mode
@@ -1536,6 +1537,7 @@ the response at the wrong key."
  "Major mode for the album list of one artist, opened by `supersonic-albums'."
  (setq tabulated-list-format [("Year" 5 t) ("Albums" 40 t) ("Art" 30 nil)])
  (setq tabulated-list-padding 2)
+ (setq tabulated-list-use-header-line supersonic-list-use-header-line)
  (tabulated-list-init-header))
 
 ;;;
