@@ -40,3 +40,46 @@ jobs:
       - run: echo "$HOME/.cask/bin" >> "$GITHUB_PATH"
       - run: make compile
       - run: make test
+
+  # The matrix above runs on nix-emacs-ci builds, which are deliberately
+  # "minimal installations [...] no image support, no `window-system'".
+  # Everything that composites a cover art overlay or a waveform image
+  # therefore skips itself there, which is most of what supersonic draws.
+  # Ubuntu's own emacs-gtk is built against librsvg and libpng, so this
+  # job picks those tests back up.  Image support is a build-time
+  # property -- a batch Emacs reports `svg' available with no DISPLAY and
+  # no window-system at all -- so there is nothing to set up beyond
+  # installing it.
+  images:
+    name: test (emacs-gtk, image support)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install an Emacs built with image support
+        run: |
+          sudo apt-get update
+          DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends emacs-gtk
+      # Without this the job stays green by skipping the very tests it
+      # exists to run, which is indistinguishable from passing them.
+      - name: Assert the image types the skipped tests need are present
+        run: |
+          emacs --version | head -1
+          emacs -Q --batch --eval '(dolist (type (list (quote svg) (quote pbm) (quote png)))
+            (unless (image-type-available-p type)
+              (error "This Emacs has no %s support; the image tests would silently skip" type)))'
+      - uses: actions/cache@v4
+        id: cache-cask-packages
+        with:
+          path: .cask
+          key: cache-cask-packages-emacs-gtk-${{ hashFiles('Cask') }}
+      - uses: actions/cache@v4
+        id: cache-cask-executable
+        with:
+          path: ~/.cask
+          key: cache-cask-executable-000
+      - uses: cask/setup-cask@master
+        if: steps.cache-cask-executable.outputs.cache-hit != 'true'
+        with:
+          version: snapshot
+      - run: echo "$HOME/.cask/bin" >> "$GITHUB_PATH"
+      - run: make test
