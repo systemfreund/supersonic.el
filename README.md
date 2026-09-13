@@ -64,9 +64,8 @@ Keys in that buffer: `SPC` play/pause, `n`/`p` next/previous track,
 `f`/`b` seek, `g` refresh manually.
 
 A clickable waveform seekbar (`supersonic-enable-waveform`, on by
-default) sits next to the cover art, above the label and the
-transport buttons -- click anywhere on it to seek there.
-`supersonic-waveform-width`/`-height` set its display size. 
+default) is layered onto the cover art overlay by default -- click
+anywhere on it to seek there.
 
 The label below the cover art shows the track's title by default.
 Setting `supersonic-now-playing-cycle-fields` to a list of `title`,
@@ -91,11 +90,30 @@ the SVG image instead, so it has its own face,
 `:family` and `:foreground` carry over there, not `:height` (its
 pixel size stays tied to `supersonic-now-playing-art-size`).
 
-With both `supersonic-enable-art` and `supersonic-enable-waveform` on,
-`supersonic-now-playing-waveform-in-overlay` (also on by default)
-layers the waveform seekbar onto the cover art as well, in a lane
-below the text, instead of showing it next to the cover art on its
-own.
+Both the cover art overlay's own composition (which of art, scrim,
+waveform lane and text get drawn, and in what stacking order) and the
+buffer's row layout (which of art, waveform, label and buttons get
+their own row, and in what order) are each built from a list of
+functions -- `supersonic-art-overlay-layers`/`-scroll-layers` for the
+former, `supersonic-now-playing-layout-functions` for the latter.
+Reorder either list to change stacking/row order, or drop an entry to
+leave it out. For example, to show the waveform as its own row in the
+buffer instead of layered onto the cover art:
+
+```elisp
+(add-to-list 'supersonic-now-playing-layout-functions #'supersonic-now-playing-layout-waveform t)
+(setq supersonic-art-overlay-layers
+      (remove #'supersonic-art-overlay-layer-waveform supersonic-art-overlay-layers))
+(setq supersonic-art-overlay-scroll-layers
+      (remove #'supersonic-art-overlay-layer-waveform supersonic-art-overlay-scroll-layers))
+```
+
+The standalone row is sized by `supersonic-waveform-width`/`-height`;
+the lane composited onto the cover art is not -- it scales with
+`supersonic-now-playing-art-size` instead. The row and the overlay
+lane are independent of each other, so it's also possible to leave
+both in place (adding the row without removing the overlay layer) and
+get the waveform in both places at once.
 
 The Title/Artist/Album/Duration/Format/Size rows below the transport
 buttons come from `supersonic-now-playing-render-functions`, a list
