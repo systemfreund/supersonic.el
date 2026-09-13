@@ -1,2 +1,9 @@
 *.elc
 .cask
+
+# Everything under .claude/ is machine-local
+.claude/*
+
+# Keep it out of the repo for now
+tools/*
+docs/agents/emacs-integration.md
