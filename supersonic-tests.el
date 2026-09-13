@@ -676,6 +676,7 @@ right MIME type to embed the file as."
 an `svg' image rather than the plain file `supersonic-image-propertize'
 shows -- the whole point being that the text is composited into the
 image itself instead of shown as a separate string beside it."
+  (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-cached-art
    "art-1" 100
    (let ((spec (get-text-property 0 'display (supersonic-art-overlay-propertize "art-1" 100 "Some Track"))))
@@ -687,6 +688,7 @@ image itself instead of shown as a separate string beside it."
 from an `svg' image, the same as `supersonic-art-overlay-propertize' --
 the crawl is a difference in how the text is laid out within that image,
 not in what kind of display spec comes back."
+  (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-cached-art
    "art-1" 100
    (let ((spec
@@ -699,6 +701,7 @@ not in what kind of display spec comes back."
   "`supersonic-art-overlay-propertize' draws extra rectangles for a
 WAVEFORM argument's bars, on top of its usual single scrim rectangle --
 the same image otherwise, whether or not one is given."
+  (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-cached-art
    "art-1" 100
    (let* ((envelope (cons (supersonic-tests--bytes '(255 0)) (supersonic-tests--bytes '(200 0))))
@@ -713,6 +716,7 @@ the same image otherwise, whether or not one is given."
   "`supersonic-art-overlay-scroll-propertize' draws the same extra
 waveform rectangles `supersonic-art-overlay-propertize' does when given
 a WAVEFORM argument, above its own clip rectangle and text."
+  (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-cached-art
    "art-1" 100
    (let* ((envelope (cons (supersonic-tests--bytes '(255 0)) (supersonic-tests--bytes '(200 0))))
@@ -729,6 +733,7 @@ a WAVEFORM argument, above its own clip rectangle and text."
 `supersonic-now-playing-art-overlay-label's `:weight'/`:family'/`:foreground',
 not the hardcoded bold white it used to be baked in with -- so
 customizing that face actually reaches the SVG text."
+  (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-cached-art
    "art-1" 100
    (let ((weight (face-attribute 'supersonic-now-playing-art-overlay-label :weight))
@@ -751,6 +756,7 @@ customizing that face actually reaches the SVG text."
 when `supersonic-now-playing-art-overlay-label' does not set `:family',
 rather than passing on whatever `face-attribute' would otherwise resolve
 an unset family to."
+  (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-cached-art
    "art-1" 100
    (should (= 0 (supersonic-tests--count-substring
@@ -778,6 +784,7 @@ presence of a matching argument by itself. Compared against the same
 call with `supersonic-art-overlay-layers' left at its default, the way
 `supersonic-tests-art-overlay-propertize-draws-a-waveform-lane-when-given-one'
 compares against a call with WAVEFORM left out."
+  (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-cached-art
    "art-1" 100
    (let* ((envelope (cons (supersonic-tests--bytes '(255 0)) (supersonic-tests--bytes '(200 0))))
@@ -798,6 +805,7 @@ compares against a call with WAVEFORM left out."
 on top -- moving `supersonic-art-overlay-layer-text' ahead of
 `supersonic-art-overlay-layer-waveform' draws the waveform bars over
 the text instead of below it, the reverse of the default order."
+  (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-cached-art
    "art-1" 100
    (let* ((envelope (cons (supersonic-tests--bytes '(255 0)) (supersonic-tests--bytes '(200 0))))
@@ -821,6 +829,7 @@ the text instead of below it, the reverse of the default order."
 `supersonic-art-overlay-layers' leaves the cover art itself out of the
 composited image -- the layer list governs every element, not just the
 scrim/waveform/text stacked on top of it."
+  (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-cached-art
    "art-1" 100
    (let* ((supersonic-art-overlay-layers
@@ -836,6 +845,7 @@ scrim/waveform/text stacked on top of it."
 separately from it -- dropping the scroll variant's waveform layer
 leaves the static variant's default list, and its own drawing,
 untouched."
+  (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-cached-art
    "art-1" 100
    (let* ((envelope (cons (supersonic-tests--bytes '(255 0)) (supersonic-tests--bytes '(200 0))))
@@ -856,6 +866,68 @@ untouched."
      ;; the waveform layer, confirming the binding above only shadowed the
      ;; scroll variant's list, not both.
      (should (memq #'supersonic-art-overlay-layer-waveform supersonic-art-overlay-layers)))))
+
+(ert-deftest supersonic-tests-art-overlay-context-reclaims-the-text-row-when-no-text-layer-is-listed ()
+  "`supersonic-art-overlay--context' sizes the scrim off which layers are
+actually going to draw, for the text row just as much as for the
+waveform lane: dropping the text layer takes that row's share of the
+scrim with it rather than leaving a permanently empty band behind --
+the very gap dropping `supersonic-art-overlay-layer-waveform' was made
+to reclaim.  Checked on the context itself, since that is the one place
+every layer reads its geometry from."
+  (supersonic-tests--with-cached-art
+   "art-1" 100
+   (let* ((waveform (cons (cons (supersonic-tests--bytes '(255 0)) (supersonic-tests--bytes '(200 0))) 0.5))
+          (lane (supersonic-art-overlay-waveform-lane-height 100))
+          (with-text (supersonic-art-overlay--context
+                      "art-1" 100 "Some Track" waveform
+                      (list #'supersonic-art-overlay-layer-scrim
+                            #'supersonic-art-overlay-layer-waveform
+                            #'supersonic-art-overlay-layer-text)))
+          (without-text (supersonic-art-overlay--context
+                         "art-1" 100 "Some Track" waveform
+                         (list #'supersonic-art-overlay-layer-scrim
+                               #'supersonic-art-overlay-layer-waveform))))
+     (should (> (plist-get with-text :text-height) 0))
+     (should (= 0 (plist-get without-text :text-height)))
+     ;; Only the row above is reclaimed -- the lane keeps its full height
+     ;; and is all the scrim has left to cover.
+     (should (= lane (plist-get without-text :lane-height)))
+     (should (= lane (plist-get without-text :scrim-height)))
+     (should (= (- (plist-get with-text :scrim-height) (plist-get with-text :text-height))
+                (plist-get without-text :scrim-height)))
+     ;; The scrolling variant's text layer counts for exactly as much:
+     ;; `-scroll-layers' carries it in place of `-layer-text', so a
+     ;; membership test naming only the static one would wrongly reclaim
+     ;; the row out from under every scrolling overlay there is.
+     (should (> (plist-get (supersonic-art-overlay--context
+                            "art-1" 100 "Some Track" nil
+                            (list #'supersonic-art-overlay-layer-scrim
+                                  #'supersonic-art-overlay-layer-text-scroll))
+                           :text-height)
+                0))
+     ;; Nothing left to sit on at all -- no scrim.
+     (should (= 0 (plist-get (supersonic-art-overlay--context
+                              "art-1" 100 "Some Track" waveform
+                              (list #'supersonic-art-overlay-layer-art))
+                             :scrim-height))))))
+
+(ert-deftest supersonic-tests-list-use-header-line-reaches-the-podcast-modes-too ()
+  "`supersonic-list-use-header-line' seeds `tabulated-list-use-header-line'
+in every mode its docstring claims -- both podcast modes as well as
+both album ones, rather than the album ones only.  Checked for nil as
+well as t because the interesting failure is a mode that never reads
+the variable at all, which shows up as tabulated-list's own default of
+t surviving a nil setting."
+  (dolist (want (list t nil))
+    (let ((supersonic-list-use-header-line want))
+      (dolist (mode '(supersonic-album-mode
+                      supersonic-album-type-mode
+                      supersonic-podcast-mode
+                      supersonic-podcast-episodes-mode))
+        (with-temp-buffer
+          (funcall mode)
+          (should (eq want tabulated-list-use-header-line)))))))
 
 (ert-deftest supersonic-tests-art-scroll-text-width-uses-real-font-metrics-when-available ()
   "`supersonic-art-scroll-text-width' measures TEXT via `string-pixel-width'
@@ -1929,6 +2001,7 @@ needs to actually draw rather than fall back to the label."
 `supersonic-now-playing--scroll-offset' off 0 when the text already
 fits across the art -- there is nothing to reveal by scrolling, so it
 draws once and leaves it alone regardless of how many ticks follow."
+  (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-scroll-overlay "Some Track"
     (with-current-buffer buff
       (should (= 0 (supersonic-art-scroll-max-offset supersonic-now-playing-art-size (supersonic-now-playing--scroll-text))))
@@ -1951,6 +2024,7 @@ overflow rather than relied on to measure some text wide enough to
 overflow for real: the bounce state machine is what this exercises,
 not `supersonic-art-scroll-text-width''s real font metrics, which do
 not mean much rendered under `--batch' anyway."
+  (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-scroll-overlay "Some Track"
     (let ((supersonic-now-playing-scroll-step 1000)
           (supersonic-now-playing-scroll-pause 1)
@@ -2149,21 +2223,21 @@ error does not stop the rest of the list from running -- same isolation
 
 (ert-deftest supersonic-tests-now-playing-render-queue-position-shows-position-and-total ()
   "`supersonic-now-playing-render-queue-position' shows a \"Queue: N/M\"
-row from the QUEUE-POSITION/QUEUE-TOTAL `supersonic-now-playing--render'
-was called with, not from SONG -- neither is part of it."
+row from the QUEUE-PLACE `supersonic-now-playing--render' was called
+with, not from SONG -- the play queue is not part of it."
   (let ((buff (get-buffer-create "*supersonic-tests-now-playing*"))
         (song '(("id" . "t") ("title" . "A Title"))))
     (unwind-protect
         (with-current-buffer buff
           (supersonic-now-playing-mode)
-          (supersonic-now-playing--render buff song nil 0 "t" 4 19)
+          (supersonic-now-playing--render buff song nil 0 "t" '(4 . 19))
           (should (supersonic-tests--buffer-matches buff "Queue: *4/19")))
       (kill-buffer buff))))
 
 (ert-deftest supersonic-tests-now-playing-render-queue-position-omits-row-without-a-queue ()
   "`supersonic-now-playing-render-queue-position' leaves its row out
 entirely once `supersonic-now-playing--render' is called without a
-queue position, the same way every other built-in leaves its row out
+queue place, the same way every other built-in leaves its row out
 for a value SONG does not have."
   (let ((buff (get-buffer-create "*supersonic-tests-now-playing*"))
         (song '(("id" . "t") ("title" . "A Title"))))
@@ -2174,22 +2248,22 @@ for a value SONG does not have."
           (should-not (supersonic-tests--buffer-matches buff "Queue:")))
       (kill-buffer buff))))
 
-(ert-deftest supersonic-tests-now-playing-current-queue-position-finds-the-current-entry ()
-  "`supersonic-now-playing--current-queue-position' returns the
+(ert-deftest supersonic-tests-now-playing-current-queue-place-finds-the-current-entry ()
+  "`supersonic-now-playing--current-queue-place' returns the
 1-based index of QUEUE's `:current' entry alongside QUEUE's length."
   (should
    (equal
     '(2 . 3)
-    (supersonic-now-playing--current-queue-position
+    (supersonic-now-playing--current-queue-place
      (list '(:track-id "1" :current nil) '(:track-id "2" :current t) '(:track-id "3" :current nil))))))
 
-(ert-deftest supersonic-tests-now-playing-current-queue-position-is-nil-without-a-current-entry ()
-  "`supersonic-now-playing--current-queue-position' returns nil for an
+(ert-deftest supersonic-tests-now-playing-current-queue-place-is-nil-without-a-current-entry ()
+  "`supersonic-now-playing--current-queue-place' returns nil for an
 empty queue, and for one where nothing is marked `:current' -- either
-way, there is no position to report."
-  (should-not (supersonic-now-playing--current-queue-position nil))
+way, there is no place to report."
+  (should-not (supersonic-now-playing--current-queue-place nil))
   (should-not
-   (supersonic-now-playing--current-queue-position
+   (supersonic-now-playing--current-queue-place
     (list '(:track-id "1" :current nil) '(:track-id "2" :current nil)))))
 
 (ert-deftest supersonic-tests-now-playing-force-redisplay-is-off-by-default ()
@@ -2656,6 +2730,7 @@ them the way `supersonic-now-playing-waveform-in-overlay' used to.  The
 standalone row is opt-in rather than the default, so this test asks
 for it explicitly rather than relying on it being there."
   (skip-unless (image-type-available-p 'pbm))
+  (skip-unless (image-type-available-p 'svg))
   (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
     (let* ((supersonic-cache-path (expand-file-name (make-temp-name "supersonic-tests-cache-") temporary-file-directory))
            (supersonic-enable-art t)
@@ -2706,6 +2781,7 @@ hands its result through `supersonic-now-playing--maybe-seekable' when
 `supersonic-now-playing--overlay-waveform' returns non-nil, the same
 way `supersonic-waveform-propertize' already makes the standalone
 seekbar clickable."
+  (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-scroll-overlay
    "Some Track"
    (with-current-buffer buff
@@ -2715,6 +2791,63 @@ seekbar clickable."
            (cons "t" (cons (supersonic-tests--bytes '(10 20)) (supersonic-tests--bytes '(5 10)))))
      (supersonic-now-playing-animate-art-overlay-scroll buff 0)
      (should (eq supersonic-waveform-seek-map (supersonic-tests--now-playing-art-keymap buff))))))
+
+(ert-deftest supersonic-tests-now-playing-art-overlay-is-not-seekable-without-the-waveform-layer ()
+  "Cover art that never got a waveform lane is not clickable to seek, even
+with an envelope cached and ready to hand over: dropping
+`supersonic-art-overlay-layer-waveform' from the layer list -- the
+customization the README spells out for moving the seekbar to its own
+row -- leaves nothing under the pointer to seek in, so
+`supersonic-now-playing--maybe-seekable' has to follow the layer list
+rather than the envelope alone.  The default list is exercised in the
+same test, so a keymap going missing for some unrelated reason cannot
+pass this."
+  (skip-unless (image-type-available-p 'svg))
+  (supersonic-tests--with-scroll-overlay
+   "Some Track"
+   (with-current-buffer buff
+     (setq supersonic-now-playing--duration 100)
+     (setq supersonic-now-playing--position 10)
+     (setq supersonic-now-playing--waveform
+           (cons "t" (cons (supersonic-tests--bytes '(10 20)) (supersonic-tests--bytes '(5 10)))))
+     (let ((supersonic-art-overlay-layers
+            (remove #'supersonic-art-overlay-layer-waveform supersonic-art-overlay-layers)))
+       (supersonic-now-playing-animate-art-overlay buff 0)
+       (should-not (supersonic-tests--now-playing-art-keymap buff)))
+     (supersonic-now-playing-animate-art-overlay buff 0)
+     (should (eq supersonic-waveform-seek-map (supersonic-tests--now-playing-art-keymap buff))))))
+
+(ert-deftest supersonic-tests-now-playing-art-overlay-seekability-follows-each-animator-s-own-layer-list ()
+  "Each art animator decides seekability from the layer list it actually
+draws with: `supersonic-now-playing-animate-art-overlay-scroll' from
+`supersonic-art-overlay-scroll-layers' and
+`supersonic-now-playing-animate-art-overlay' from
+`supersonic-art-overlay-layers'.  Dropping the waveform layer from one
+list must not make the other's overlay stop seeking, which is what
+consulting a single hardcoded list for both would do."
+  (skip-unless (image-type-available-p 'svg))
+  (supersonic-tests--with-scroll-overlay
+   "Some Track"
+   (with-current-buffer buff
+     (setq supersonic-now-playing--duration 100)
+     (setq supersonic-now-playing--position 10)
+     (setq supersonic-now-playing--waveform
+           (cons "t" (cons (supersonic-tests--bytes '(10 20)) (supersonic-tests--bytes '(5 10)))))
+     ;; Scroll list emptied of the lane: the scrolling overlay stops
+     ;; seeking, the static one carries on.
+     (let ((supersonic-art-overlay-scroll-layers
+            (remove #'supersonic-art-overlay-layer-waveform supersonic-art-overlay-scroll-layers)))
+       (supersonic-now-playing-animate-art-overlay-scroll buff 0)
+       (should-not (supersonic-tests--now-playing-art-keymap buff))
+       (supersonic-now-playing-animate-art-overlay buff 0)
+       (should (eq supersonic-waveform-seek-map (supersonic-tests--now-playing-art-keymap buff))))
+     ;; And the other way round.
+     (let ((supersonic-art-overlay-layers
+            (remove #'supersonic-art-overlay-layer-waveform supersonic-art-overlay-layers)))
+       (supersonic-now-playing-animate-art-overlay buff 0)
+       (should-not (supersonic-tests--now-playing-art-keymap buff))
+       (supersonic-now-playing-animate-art-overlay-scroll buff 0)
+       (should (eq supersonic-waveform-seek-map (supersonic-tests--now-playing-art-keymap buff)))))))
 
 (ert-deftest supersonic-tests-mpris-sync-announces-live-status-and-metadata ()
   "`supersonic-mpris--sync' pulls the active backend's track id and pause

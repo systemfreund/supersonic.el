@@ -97,8 +97,25 @@ re-download of anything already cached at the old size."
   :group 'supersonic)
 
 (defcustom supersonic-list-use-header-line nil
-  "Whether to show column headers in album and podcast list buffers.
-Set to t to display headers; nil to hide them (the default)."
+  "Where the column headers go in supersonic's album and podcast list buffers.
+Seeded into `tabulated-list-use-header-line' by `supersonic-album-mode',
+`supersonic-album-type-mode', `supersonic-podcast-mode' and
+`supersonic-podcast-episodes-mode', which is the whole of its reach --
+the other list buffers (tracks, artists, search results, the play
+queue) leave that variable at its own default and are unaffected.
+
+This chooses between the two ways tabulated-list can present the column
+names, not between showing and hiding them: non-nil puts them in the
+window's header line, where they stay pinned as the list scrolls; nil
+\(the default) puts them in the buffer itself, as a
+`tabulated-list-fake-header' line above the first row, which scrolls
+away with everything else.  There is no third setting that leaves them
+out altogether.
+
+Read once, when the major mode is turned on.  Changing it does not
+reach list buffers that are already open -- reopen them (`RET' from the
+artist list, `M-x supersonic-albums', ...) for a new value to take
+effect, since only that runs the mode function again."
   :type 'boolean
   :group 'supersonic)
 
@@ -398,8 +415,11 @@ alongside the rest."
         #'supersonic-now-playing-render-format
         #'supersonic-now-playing-render-size)
   "Functions laying out the now-playing buffer's informational text rows.
-Each is called as (FUNCTION BUFF SONG), in list order, right after the
-transport buttons -- SONG is the \"song\" alist
+Each is called as (FUNCTION BUFF SONG), in list order, once every entry
+in `supersonic-now-playing-layout-functions' has had its turn -- so
+these rows always follow that list's output as a block, wherever
+reordering that list has left the individual rows within it.  SONG is
+the \"song\" alist
 `supersonic-now-playing--render' is rendering, the same shape
 `supersonic-now-playing-fetch-and-render' fetched from getSong.view.
 Every built-in inserts nothing at all if its value is missing for the
@@ -416,9 +436,10 @@ which rows exist in the first place, and in what order, each time
 Reordering entries reorders the rows; dropping one drops the row;
 adding a function of your own -- a \"Genre:\" row read off SONG, say --
 inserts it alongside the rest.  Cover art, the label/art overlay, the
-waveform and the transport buttons are not part of this list -- they
-are laid out unconditionally by `supersonic-now-playing--render' itself,
-before this one runs.
+standalone waveform row and the transport buttons are not part of this
+list -- they are `supersonic-now-playing-layout-functions''s rows, run
+before this list and configurable in exactly the same way; the split
+between the two is about ordering, not about which one is fixed.
 
 Seven are built in, and make up the default, in the order they have
 always appeared in: `supersonic-now-playing-render-title',

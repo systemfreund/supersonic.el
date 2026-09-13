@@ -289,19 +289,19 @@ on to a new track, the same way `supersonic-now-playing--scroll-offset' is.")
 Kept around so the position can be re-rendered on its own tick, without
 another round of metadata lookups just to learn what to count towards.")
 
-(defvar-local supersonic-now-playing--queue-position nil
-  "1-based index of the current track within the play queue, or nil.
-Set by `supersonic-now-playing--render' from what
-`supersonic-now-playing-fetch-and-render' fetched via
-`supersonic-playback-queue'; read by
+(defvar-local supersonic-now-playing--queue-place nil
+  "Where the now-playing buffer's track sits in the play queue, or nil.
+A (POSITION . TOTAL) pair: POSITION is the track's 1-based index, TOTAL
+the queue's length.  Set by `supersonic-now-playing--render' from what
+`supersonic-now-playing-fetch-and-render' resolved out of
+`supersonic-playback-queue' via
+`supersonic-now-playing--current-queue-place'; read by
 `supersonic-now-playing-render-queue-position' to show a \"Queue: N/M\"
 row.  Nil whenever the active backend has no queue to report on, the
 same way `supersonic-now-playing--duration' is nil for a track with no
-known duration.")
-
-(defvar-local supersonic-now-playing--queue-total nil
-  "Number of tracks in the play queue the now-playing buffer last saw, or nil.
-See `supersonic-now-playing--queue-position'.")
+known duration.  Kept whole rather than split across a position and a
+total variable because nothing ever wants one half without the other --
+neither half means anything on its own.")
 
 (defvar-local supersonic-now-playing--track-id nil
   "Id of the track the now-playing buffer is currently showing, or nil.
@@ -461,14 +461,20 @@ file needing to track that separately."
      (cdr supersonic-now-playing--waveform)
      (supersonic-now-playing--progress-ratio supersonic-now-playing--position supersonic-now-playing--duration))))
 
-(defun supersonic-now-playing--maybe-seekable (propertized waveform)
-  "Return PROPERTIZED, made clickable-to-seek if WAVEFORM is non-nil.
-`supersonic-art-overlay-propertize'/`-scroll-propertize' only draw a
-waveform lane at all when handed a non-nil WAVEFORM in the first place,
-so this mirrors that same condition to decide whether clicking
-PROPERTIZED (the cover art, in that case) ought to seek -- see
-`supersonic-waveform-seekable'."
-  (if waveform
+(defun supersonic-now-playing--maybe-seekable (propertized waveform layers)
+  "Return PROPERTIZED, made clickable-to-seek if LAYERS drew WAVEFORM into it.
+A waveform lane needs both the envelope and the layer drawing it, and
+so does a click-to-seek surface: there is nothing to seek in on cover
+art that never got a lane, whether because WAVEFORM was nil or because
+LAYERS (the same `supersonic-art-overlay-layers'/`-scroll-layers' the
+caller just handed `supersonic-art-overlay-propertize'/
+`-scroll-propertize', which differ between the two callers) does not
+list `supersonic-art-overlay-layer-waveform'.  Rather than restate that
+condition here and risk drifting out of step with the geometry, this
+asks `supersonic-art-overlay-waveform-lane-p' -- the same predicate
+`supersonic-art-overlay--context' reserves the lane on.  See
+`supersonic-waveform-seekable' for what the click itself then does."
+  (if (supersonic-art-overlay-waveform-lane-p waveform layers)
       (supersonic-waveform-seekable (get-text-property 0 'display propertized))
     propertized))
 
@@ -482,7 +488,9 @@ is nil, or the file for the current track has not landed yet -- the
 same case `supersonic-now-playing--art' draws nothing for.  Also layers
 in the waveform seekbar -- see `supersonic-now-playing--overlay-waveform'
 and `supersonic-art-overlay-layer-waveform' -- and keeps the result
-clickable to seek when it does."
+clickable to seek whenever `supersonic-art-overlay-layers' really did
+draw that lane, but not when it only could have (see
+`supersonic-now-playing--maybe-seekable')."
   (with-current-buffer buff
     (if (and supersonic-now-playing--art-id
              (supersonic-art-available-p)
@@ -495,7 +503,7 @@ clickable to seek when it does."
               (supersonic-art-overlay-propertize
                supersonic-now-playing--art-id supersonic-now-playing-art-size
                (cdr (supersonic-now-playing--current-field)) waveform)
-              waveform))))
+              waveform supersonic-art-overlay-layers))))
       (supersonic-now-playing-animate-label buff delta))))
 
 (defun supersonic-now-playing--scroll-text ()
@@ -588,7 +596,7 @@ than behind it, so it stays put while the text scrolls past above it."
                (supersonic-now-playing--maybe-seekable
                 (supersonic-art-overlay-scroll-propertize
                  supersonic-now-playing--art-id supersonic-now-playing-art-size text 0 waveform)
-                waveform))))
+                waveform supersonic-art-overlay-scroll-layers))))
            (t
             (unless (= delta 0)
               (supersonic-now-playing--advance-scroll delta max-offset))
@@ -598,7 +606,7 @@ than behind it, so it stays put while the text scrolls past above it."
               (supersonic-art-overlay-scroll-propertize
                supersonic-now-playing--art-id supersonic-now-playing-art-size
                text supersonic-now-playing--scroll-offset waveform)
-              waveform)))))
+              waveform supersonic-art-overlay-scroll-layers)))))
       (supersonic-now-playing-animate-label buff delta))))
 
 (defun supersonic-now-playing--start-animation-timer ()
@@ -975,23 +983,25 @@ function ends up putting it.  Built into
 
 (defun supersonic-now-playing-render-queue-position (buff _song)
   "Insert BUFF's \"Queue:\" row, e.g. \"Queue: 4/19\".
-Reads `supersonic-now-playing--queue-position'/`-queue-total' off BUFF
-rather than SONG, since neither is part of it -- see
+Reads `supersonic-now-playing--queue-place' off BUFF rather than SONG,
+since the play queue is not part of it -- see
 `supersonic-now-playing-render-duration' for why the duration row does
-the same.  Leaves the row out entirely once either is nil, the same way
+the same.  Leaves the row out entirely once that is nil, the same way
 every other built-in in `supersonic-now-playing-render-functions' leaves
 its row out for a value SONG does not have."
-  (let ((position (buffer-local-value 'supersonic-now-playing--queue-position buff))
-        (total (buffer-local-value 'supersonic-now-playing--queue-total buff)))
+  (let ((place (buffer-local-value 'supersonic-now-playing--queue-place buff)))
     (supersonic-now-playing--insert-field
-     "Queue" (and position total (format "%d/%d" position total)))))
+     "Queue" (and place (format "%d/%d" (car place) (cdr place))))))
 
-(defun supersonic-now-playing--current-queue-position (queue)
-  "Return (POSITION . TOTAL) for QUEUE, as resolved by `supersonic-playback-queue'.
-POSITION is the 1-based index of QUEUE's `:current' entry among TOTAL,
-QUEUE's length; nil if QUEUE is empty or has no such entry (nothing
-live to be \"current\"), so `supersonic-now-playing-render-queue-position'
-knows to leave its row out rather than show a nonsensical count."
+(defun supersonic-now-playing--current-queue-place (queue)
+  "Return where QUEUE's current track sits, as a (POSITION . TOTAL) pair.
+QUEUE is as resolved by `supersonic-playback-queue'.  POSITION is the
+1-based index of QUEUE's `:current' entry among TOTAL, QUEUE's length;
+nil if QUEUE is empty or has no such entry (nothing live to be
+\"current\"), so `supersonic-now-playing-render-queue-position' knows to
+leave its row out rather than show a nonsensical count.  The two travel
+as one value all the way to `supersonic-now-playing--queue-place' --
+see that variable for why."
   (let ((position 0) found)
     (dolist (entry queue)
       (setq position (1+ position))
@@ -1005,11 +1015,19 @@ Tagged `art' the same way it always was, so
 `supersonic-now-playing-animate-art-overlay'/`-label' can still find
 and replace it via `supersonic-now-playing--update-field' regardless of
 where in `supersonic-now-playing-layout-functions' this ends up.
-Built into the default list; dropping it here also drops it from
-`supersonic-now-playing-animate-label's target and
-`supersonic-now-playing-animate-art-overlay's fallback alike, since
-neither one inserts the row itself -- both only ever patch whatever row
-this one leaves behind."
+Built into the default list; dropping it here leaves
+`supersonic-now-playing-animate-art-overlay'/`-scroll' with nothing to
+patch, since neither one inserts the `art' row itself -- both only ever
+replace whatever row this one left behind.  Their fallback,
+`supersonic-now-playing-animate-label', is unaffected: that one targets
+the `label' row `supersonic-now-playing-layout-label' inserts, which is
+a separate entry in `supersonic-now-playing-layout-functions'.  That
+fallback is chosen on whether cover art is available at all (cached,
+and `supersonic-art-available-p'), never on whether this row is there,
+so dropping this entry on its own leaves the rotating field nowhere to
+show: swap `supersonic-now-playing-animate-art-overlay' for
+`supersonic-now-playing-animate-label' in
+`supersonic-now-playing-animation-functions' at the same time."
   (let ((art (supersonic-now-playing--art song)))
     (when art
       (insert (propertize art 'supersonic-now-playing-field 'art) "\n"))))
@@ -1061,20 +1079,19 @@ variable for why."
   (supersonic-now-playing--insert-button "▶▶" #'supersonic-seek-forward)
   (insert "\n\n"))
 
-(defun supersonic-now-playing--render (buff song paused position track-id &optional queue-position queue-total)
+(defun supersonic-now-playing--render (buff song paused position track-id &optional queue-place)
   "Render SONG into BUFF, marked as paused or playing according to PAUSED.
 POSITION is how many seconds into SONG playback currently is.  SONG is a
 \"song\" alist as returned by getSong.view; if it is nil, BUFF shows a
 placeholder saying that nothing is playing.  TRACK-ID is SONG's track
 id (kept separate from SONG since the fallback placeholder built for a
 failed metadata lookup has no \"id\" field of its own to read it back
-from) -- see `supersonic-now-playing--track-id'.  QUEUE-POSITION and
-QUEUE-TOTAL are the current track's 1-based index within the play queue
-and the queue's length, as computed by
-`supersonic-now-playing--current-queue-position'; both nil when the
-active backend has no queue to report on.  Optional so every existing
-caller passing just the first five arguments -- tests among them --
-still works."
+from) -- see `supersonic-now-playing--track-id'.  QUEUE-PLACE is the
+current track's (POSITION . TOTAL) within the play queue as computed by
+`supersonic-now-playing--current-queue-place', or nil when the active
+backend has no queue to report on.  Optional so every existing caller
+passing just the first five arguments -- tests among them -- still
+works."
   (when (buffer-live-p buff)
     (with-current-buffer buff
       (let* ((inhibit-read-only t)
@@ -1092,8 +1109,7 @@ still works."
         (setq supersonic-now-playing--duration duration)
         (setq supersonic-now-playing--position position)
         (setq supersonic-now-playing--track-id track-id)
-        (setq supersonic-now-playing--queue-position queue-position)
-        (setq supersonic-now-playing--queue-total queue-total)
+        (setq supersonic-now-playing--queue-place queue-place)
         (setq supersonic-now-playing--title (and song (assoc-default "title" song)))
         (setq supersonic-now-playing--artist (and song (assoc-default "artist" song)))
         (setq supersonic-now-playing--album (and song (assoc-default "album" song)))
@@ -1194,9 +1210,9 @@ leaving nothing behind but a buffer that quietly stopped updating."
                      (queue-promise (supersonic-playback-queue))
                      (position (aio-await position-promise))
                      (paused (aio-await paused-promise))
-                     (queue-position (supersonic-now-playing--current-queue-position (aio-await queue-promise))))
+                     (queue-place (supersonic-now-playing--current-queue-place (aio-await queue-promise))))
                 (supersonic-now-playing--render
-                 buff song paused position track-id (car queue-position) (cdr queue-position))
+                 buff song paused position track-id queue-place)
                 (supersonic-now-playing-maybe-fetch-waveform buff position)))
           (supersonic-now-playing--render buff nil nil nil nil)))
     (supersonic-now-playing--render buff nil nil nil nil))))
@@ -1756,6 +1772,7 @@ the response at the wrong key."
  "Major mode for the podcast channel list opened by `supersonic-podcasts'."
  (setq tabulated-list-format [("Podcasts" 30 t) ("Art" 20 nil)])
  (setq tabulated-list-padding 2)
+ (setq tabulated-list-use-header-line supersonic-list-use-header-line)
  (tabulated-list-init-header))
 
 ;;;
@@ -1834,6 +1851,7 @@ the response at the wrong key."
 Opened by `supersonic-podcast-episodes'."
  (setq tabulated-list-format [("Title" 50 t) ("Duration" 10 t) ("Status" 24 t)])
  (setq tabulated-list-padding 2)
+ (setq tabulated-list-use-header-line supersonic-list-use-header-line)
  (tabulated-list-init-header))
 
 ;;;###autoload (autoload 'supersonic "supersonic" nil t)

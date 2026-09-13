@@ -99,12 +99,45 @@ installed wherever the SVG image is actually rendered."
 
 (defun supersonic-art-overlay-waveform-lane-height (size)
   "Return how tall the waveform lane below the text row is, at SIZE.
-Only added to the scrim at all when the overlay propertize functions
-are actually given a WAVEFORM argument -- independent of
+Only added to the scrim at all when there is going to be a lane in the
+first place -- see `supersonic-art-overlay-waveform-lane-p' for the two
+halves of that -- and independent of
 `supersonic-art-overlay-font-size', so a track's text sits at the same
 size whether or not a waveform lane is drawn below it, just higher up
 in the (now taller) scrim to make room."
   (round (* size 0.16)))
+
+(defun supersonic-art-overlay-waveform-lane-p (waveform layers)
+  "Return non-nil if LAYERS will actually draw WAVEFORM as a lane in the scrim.
+Both halves have to hold: WAVEFORM itself must be non-nil (there is an
+envelope to draw at all) and `supersonic-art-overlay-layer-waveform'
+must be a member of LAYERS (the caller's resolved
+`supersonic-art-overlay-layers'/`-scroll-layers', whichever list is
+about to be run) -- the layer draws nothing without the data, and the
+data draws nothing without the layer.
+
+The single answer everything that has to agree about the lane asks:
+`supersonic-art-overlay--context' for whether to reserve room for it,
+and `supersonic-now-playing--maybe-seekable' for whether the finished
+image is worth making clickable to seek.  Those two used to test the
+condition separately, which is exactly how they came apart -- a
+customization that dropped the layer kept handing back cover art that
+still seeked on click, with no lane under the pointer to seek in."
+  (and waveform (memq #'supersonic-art-overlay-layer-waveform layers) t))
+
+(defun supersonic-art-overlay-text-row-p (layers)
+  "Return non-nil if LAYERS will actually draw a text row in the scrim.
+True for either of the two built-in text layers --
+`supersonic-art-overlay-layer-text' (in `supersonic-art-overlay-layers')
+and `supersonic-art-overlay-layer-text-scroll' (in
+`-scroll-layers') -- since LAYERS is whichever of the two lists is
+about to be run, and each carries its own variant of the same row.
+The text counterpart to `supersonic-art-overlay-waveform-lane-p', and
+read for the same reason: `supersonic-art-overlay--context' reserves
+the text row's height only when something is going to draw in it."
+  (and (or (memq #'supersonic-art-overlay-layer-text layers)
+           (memq #'supersonic-art-overlay-layer-text-scroll layers))
+       t))
 
 (defun supersonic-art-scroll-text-width (text font-size)
   "Measure TEXT's rendered width in pixels at FONT-SIZE.
@@ -162,22 +195,27 @@ read these, never derive them from what some other layer already drew,
 so the same CTX produces the same picture whatever order
 `supersonic-art-overlay-layers' lists them in.
 
-Reserving room for WAVEFORM in the scrim requires both WAVEFORM itself
-to be non-nil and `supersonic-art-overlay-layer-waveform' to actually
-be a member of LAYERS (the caller's resolved
-`supersonic-art-overlay-layers'/`-scroll-layers') -- dropping that
-layer reclaims its space instead of leaving an empty gap, the same way
-dropping any other layer leaves no trace of it.  A custom replacement
-layer under a different name is not recognized for this and gets no
-lane reserved for it; write one that reserves its own room via a
-:before-ish layer earlier in LAYERS if that matters.
+The scrim's height is presence-driven rather than order-driven: it is
+the text row plus the waveform lane, counting only the ones LAYERS is
+actually going to draw (see `supersonic-art-overlay-text-row-p' and
+`supersonic-art-overlay-waveform-lane-p' for what each of those two
+takes).  Dropping either layer reclaims its share of the scrim instead
+of leaving a permanently empty band behind, the same way dropping any
+other layer leaves no trace of it; dropping both leaves no scrim at
+all.  A custom replacement layer under a different name is not
+recognized for this and gets no room reserved for it; write one that
+reserves its own space via a :before-ish layer earlier in LAYERS if
+that matters.
 
 OFFSET is only meaningful to `supersonic-art-overlay-layer-text-scroll'
 and defaults to 0 for the static variant, which never reads it."
   (let* ((file (supersonic-art-cache-file id size))
-         (text-height (round (* size 0.22)))
+         (text-height
+          (if (supersonic-art-overlay-text-row-p layers)
+              (round (* size 0.22))
+            0))
          (lane-height
-          (if (and waveform (memq #'supersonic-art-overlay-layer-waveform layers))
+          (if (supersonic-art-overlay-waveform-lane-p waveform layers)
               (supersonic-art-overlay-waveform-lane-height size)
             0))
          (scrim-height (+ text-height lane-height))
@@ -204,8 +242,10 @@ altogether."
 
 (defun supersonic-art-overlay-layer-scrim (ctx)
   "Draw the semi-opaque scrim CTX's text and waveform lane sit on.
-Sized to CTX's `:scrim-height', which already accounts for whether a
-waveform lane is reserved -- see `supersonic-art-overlay--context'."
+Sized to CTX's `:scrim-height', which already accounts for which of
+those two are actually going to be drawn -- see
+`supersonic-art-overlay--context'.  Left with nothing to cover, and so
+drawn at zero height, when neither is."
   (svg-rectangle (plist-get ctx :svg) 0 (plist-get ctx :scrim-y)
                  (plist-get ctx :size) (plist-get ctx :scrim-height)
                  :fill "black" :fill-opacity 0.55))
