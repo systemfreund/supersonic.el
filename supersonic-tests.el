@@ -902,6 +902,23 @@ every layer reads its geometry from."
                               (list #'supersonic-art-overlay-layer-art))
                              :scrim-height))))))
 
+(ert-deftest supersonic-tests-list-use-header-line-reaches-the-podcast-modes-too ()
+  "`supersonic-list-use-header-line' seeds `tabulated-list-use-header-line'
+in every mode its docstring claims -- both podcast modes as well as
+both album ones, rather than the album ones only.  Checked for nil as
+well as t because the interesting failure is a mode that never reads
+the variable at all, which shows up as tabulated-list's own default of
+t surviving a nil setting."
+  (dolist (want (list t nil))
+    (let ((supersonic-list-use-header-line want))
+      (dolist (mode '(supersonic-album-mode
+                      supersonic-album-type-mode
+                      supersonic-podcast-mode
+                      supersonic-podcast-episodes-mode))
+        (with-temp-buffer
+          (funcall mode)
+          (should (eq want tabulated-list-use-header-line)))))))
+
 (ert-deftest supersonic-tests-art-scroll-text-width-uses-real-font-metrics-when-available ()
   "`supersonic-art-scroll-text-width' measures TEXT via `string-pixel-width'
 rather than a flat per-character guess whenever that function exists.

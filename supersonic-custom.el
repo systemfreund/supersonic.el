@@ -97,8 +97,25 @@ re-download of anything already cached at the old size."
   :group 'supersonic)
 
 (defcustom supersonic-list-use-header-line nil
-  "Whether to show column headers in album and podcast list buffers.
-Set to t to display headers; nil to hide them (the default)."
+  "Where the column headers go in supersonic's album and podcast list buffers.
+Seeded into `tabulated-list-use-header-line' by `supersonic-album-mode',
+`supersonic-album-type-mode', `supersonic-podcast-mode' and
+`supersonic-podcast-episodes-mode', which is the whole of its reach --
+the other list buffers (tracks, artists, search results, the play
+queue) leave that variable at its own default and are unaffected.
+
+This chooses between the two ways tabulated-list can present the column
+names, not between showing and hiding them: non-nil puts them in the
+window's header line, where they stay pinned as the list scrolls; nil
+\(the default) puts them in the buffer itself, as a
+`tabulated-list-fake-header' line above the first row, which scrolls
+away with everything else.  There is no third setting that leaves them
+out altogether.
+
+Read once, when the major mode is turned on.  Changing it does not
+reach list buffers that are already open -- reopen them (`RET' from the
+artist list, `M-x supersonic-albums', ...) for a new value to take
+effect, since only that runs the mode function again."
   :type 'boolean
   :group 'supersonic)
 

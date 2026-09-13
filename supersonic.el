@@ -1764,6 +1764,7 @@ the response at the wrong key."
  "Major mode for the podcast channel list opened by `supersonic-podcasts'."
  (setq tabulated-list-format [("Podcasts" 30 t) ("Art" 20 nil)])
  (setq tabulated-list-padding 2)
+ (setq tabulated-list-use-header-line supersonic-list-use-header-line)
  (tabulated-list-init-header))
 
 ;;;
@@ -1842,6 +1843,7 @@ the response at the wrong key."
 Opened by `supersonic-podcast-episodes'."
  (setq tabulated-list-format [("Title" 50 t) ("Duration" 10 t) ("Status" 24 t)])
  (setq tabulated-list-padding 2)
+ (setq tabulated-list-use-header-line supersonic-list-use-header-line)
  (tabulated-list-init-header))
 
 ;;;###autoload (autoload 'supersonic "supersonic" nil t)
