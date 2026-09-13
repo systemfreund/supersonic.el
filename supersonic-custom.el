@@ -89,7 +89,7 @@ art it can draw -- see `supersonic-art-available-p'."
   :type 'boolean
   :group 'supersonic)
 
-(defcustom supersonic-list-art-size 400
+(defcustom supersonic-list-art-size 250
   "Height in pixels of the cover art in the album and podcast lists.
 The art is also downloaded at this size, so raising it costs a
 re-download of anything already cached at the old size."
