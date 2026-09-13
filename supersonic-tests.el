@@ -676,6 +676,7 @@ right MIME type to embed the file as."
 an `svg' image rather than the plain file `supersonic-image-propertize'
 shows -- the whole point being that the text is composited into the
 image itself instead of shown as a separate string beside it."
+  (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-cached-art
    "art-1" 100
    (let ((spec (get-text-property 0 'display (supersonic-art-overlay-propertize "art-1" 100 "Some Track"))))
@@ -687,6 +688,7 @@ image itself instead of shown as a separate string beside it."
 from an `svg' image, the same as `supersonic-art-overlay-propertize' --
 the crawl is a difference in how the text is laid out within that image,
 not in what kind of display spec comes back."
+  (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-cached-art
    "art-1" 100
    (let ((spec
@@ -699,6 +701,7 @@ not in what kind of display spec comes back."
   "`supersonic-art-overlay-propertize' draws extra rectangles for a
 WAVEFORM argument's bars, on top of its usual single scrim rectangle --
 the same image otherwise, whether or not one is given."
+  (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-cached-art
    "art-1" 100
    (let* ((envelope (cons (supersonic-tests--bytes '(255 0)) (supersonic-tests--bytes '(200 0))))
@@ -713,6 +716,7 @@ the same image otherwise, whether or not one is given."
   "`supersonic-art-overlay-scroll-propertize' draws the same extra
 waveform rectangles `supersonic-art-overlay-propertize' does when given
 a WAVEFORM argument, above its own clip rectangle and text."
+  (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-cached-art
    "art-1" 100
    (let* ((envelope (cons (supersonic-tests--bytes '(255 0)) (supersonic-tests--bytes '(200 0))))
@@ -729,6 +733,7 @@ a WAVEFORM argument, above its own clip rectangle and text."
 `supersonic-now-playing-art-overlay-label's `:weight'/`:family'/`:foreground',
 not the hardcoded bold white it used to be baked in with -- so
 customizing that face actually reaches the SVG text."
+  (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-cached-art
    "art-1" 100
    (let ((weight (face-attribute 'supersonic-now-playing-art-overlay-label :weight))
@@ -751,6 +756,7 @@ customizing that face actually reaches the SVG text."
 when `supersonic-now-playing-art-overlay-label' does not set `:family',
 rather than passing on whatever `face-attribute' would otherwise resolve
 an unset family to."
+  (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-cached-art
    "art-1" 100
    (should (= 0 (supersonic-tests--count-substring
@@ -778,6 +784,7 @@ presence of a matching argument by itself. Compared against the same
 call with `supersonic-art-overlay-layers' left at its default, the way
 `supersonic-tests-art-overlay-propertize-draws-a-waveform-lane-when-given-one'
 compares against a call with WAVEFORM left out."
+  (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-cached-art
    "art-1" 100
    (let* ((envelope (cons (supersonic-tests--bytes '(255 0)) (supersonic-tests--bytes '(200 0))))
@@ -798,6 +805,7 @@ compares against a call with WAVEFORM left out."
 on top -- moving `supersonic-art-overlay-layer-text' ahead of
 `supersonic-art-overlay-layer-waveform' draws the waveform bars over
 the text instead of below it, the reverse of the default order."
+  (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-cached-art
    "art-1" 100
    (let* ((envelope (cons (supersonic-tests--bytes '(255 0)) (supersonic-tests--bytes '(200 0))))
@@ -821,6 +829,7 @@ the text instead of below it, the reverse of the default order."
 `supersonic-art-overlay-layers' leaves the cover art itself out of the
 composited image -- the layer list governs every element, not just the
 scrim/waveform/text stacked on top of it."
+  (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-cached-art
    "art-1" 100
    (let* ((supersonic-art-overlay-layers
@@ -836,6 +845,7 @@ scrim/waveform/text stacked on top of it."
 separately from it -- dropping the scroll variant's waveform layer
 leaves the static variant's default list, and its own drawing,
 untouched."
+  (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-cached-art
    "art-1" 100
    (let* ((envelope (cons (supersonic-tests--bytes '(255 0)) (supersonic-tests--bytes '(200 0))))
@@ -1991,6 +2001,7 @@ needs to actually draw rather than fall back to the label."
 `supersonic-now-playing--scroll-offset' off 0 when the text already
 fits across the art -- there is nothing to reveal by scrolling, so it
 draws once and leaves it alone regardless of how many ticks follow."
+  (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-scroll-overlay "Some Track"
     (with-current-buffer buff
       (should (= 0 (supersonic-art-scroll-max-offset supersonic-now-playing-art-size (supersonic-now-playing--scroll-text))))
@@ -2013,6 +2024,7 @@ overflow rather than relied on to measure some text wide enough to
 overflow for real: the bounce state machine is what this exercises,
 not `supersonic-art-scroll-text-width''s real font metrics, which do
 not mean much rendered under `--batch' anyway."
+  (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-scroll-overlay "Some Track"
     (let ((supersonic-now-playing-scroll-step 1000)
           (supersonic-now-playing-scroll-pause 1)
@@ -2718,6 +2730,7 @@ them the way `supersonic-now-playing-waveform-in-overlay' used to.  The
 standalone row is opt-in rather than the default, so this test asks
 for it explicitly rather than relying on it being there."
   (skip-unless (image-type-available-p 'pbm))
+  (skip-unless (image-type-available-p 'svg))
   (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
     (let* ((supersonic-cache-path (expand-file-name (make-temp-name "supersonic-tests-cache-") temporary-file-directory))
            (supersonic-enable-art t)
@@ -2768,6 +2781,7 @@ hands its result through `supersonic-now-playing--maybe-seekable' when
 `supersonic-now-playing--overlay-waveform' returns non-nil, the same
 way `supersonic-waveform-propertize' already makes the standalone
 seekbar clickable."
+  (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-scroll-overlay
    "Some Track"
    (with-current-buffer buff
@@ -2788,6 +2802,7 @@ row -- leaves nothing under the pointer to seek in, so
 rather than the envelope alone.  The default list is exercised in the
 same test, so a keymap going missing for some unrelated reason cannot
 pass this."
+  (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-scroll-overlay
    "Some Track"
    (with-current-buffer buff
@@ -2810,6 +2825,7 @@ draws with: `supersonic-now-playing-animate-art-overlay-scroll' from
 `supersonic-art-overlay-layers'.  Dropping the waveform layer from one
 list must not make the other's overlay stop seeking, which is what
 consulting a single hardcoded list for both would do."
+  (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-scroll-overlay
    "Some Track"
    (with-current-buffer buff
