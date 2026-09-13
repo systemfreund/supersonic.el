@@ -1413,7 +1413,9 @@ the response at the wrong key."
            (lambda (album)
              (list
               (supersonic-get-id-as-string album)
-              (vector (format "%d" (or (assoc-default "year" album) 0)) (assoc-default "name" album) "")))
+              (vector (format "%d" (or (assoc-default "year" album) 0))
+                      (propertize (assoc-default "name" album) 'face 'supersonic-albums-name)
+                      "")))
            albums)))
     result))
 
@@ -1425,7 +1427,9 @@ the response at the wrong key."
            (lambda (album)
              (list
               (supersonic-get-id-as-string album)
-              (vector (assoc-default "name" album) (assoc-default "artist" album) "")))
+              (vector (propertize (assoc-default "name" album) 'face 'supersonic-albums-name)
+                      (propertize (assoc-default "artist" album) 'face 'supersonic-albums-artist)
+                      "")))
            albums)))
     result))
 

@@ -492,5 +492,19 @@ scaling off whatever face this is displayed alongside, e.g.
 fixed point size that would stop tracking it."
   :group 'supersonic)
 
+(defface supersonic-albums-name
+  '((t :inherit bold))
+  "Face for album names in *supersonic-albums* and *supersonic-artist-albums*.
+Customize this to change the font size, weight, or typeface of album
+listings, e.g. via `M-x customize-face'."
+  :group 'supersonic)
+
+(defface supersonic-albums-artist
+  '((t :inherit supersonic-albums-name))
+  "Face for artist names in *supersonic-albums* and *supersonic-artist-albums*.
+Inherits from `supersonic-albums-name' but can be customized separately
+to distinguish artists from album names."
+  :group 'supersonic)
+
 (provide 'supersonic-custom)
 ;;; supersonic-custom.el ends here
