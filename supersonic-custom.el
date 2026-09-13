@@ -261,7 +261,6 @@ consulted."
 
 (defcustom supersonic-now-playing-layout-functions
   (list #'supersonic-now-playing-layout-art
-        #'supersonic-now-playing-layout-waveform
         #'supersonic-now-playing-layout-label
         #'supersonic-now-playing-layout-buttons)
   "Functions laying out the now-playing buffer's primary rows, in order.
@@ -273,26 +272,29 @@ own rows (see its docstring for where this list's output ends and that
 one's begins).  Each built-in inserts its own row(s), including
 whatever blank line separates it from what comes after, so
 reordering this list reorders the rows cleanly; dropping one drops the
-row entirely, e.g. removing `supersonic-now-playing-layout-waveform'
-turns off the standalone waveform seekbar's row without affecting
-whether a waveform is also layered into the art overlay via
-`supersonic-art-overlay-layers'/`-scroll-layers' -- the two are
-independent consumers of the same cached envelope, not alternatives to
-pick between (see `supersonic-now-playing-layout-waveform's own
-docstring).  Same per-function error isolation as
+row entirely.  Same per-function error isolation as
 `supersonic-now-playing-animation-functions'.
 
-Four are built in, and make up the default, in the order they have
+Four are built in; three make up the default, in the order they have
 always appeared in:
 
 - `supersonic-now-playing-layout-art': SONG's cover art, if it has any.
-- `supersonic-now-playing-layout-waveform': a placeholder row for the
-  standalone waveform seekbar, left out entirely when
-  `supersonic-waveform-available-p' is nil.
 - `supersonic-now-playing-layout-label': a placeholder row for whichever
   field `supersonic-now-playing-animation-functions' cycles through,
   unconditional even when nothing has been drawn there yet.
 - `supersonic-now-playing-layout-buttons': the transport button row.
+
+The fourth, `supersonic-now-playing-layout-waveform', is not in the
+default list -- a placeholder row for the standalone waveform seekbar,
+left out entirely when `supersonic-waveform-available-p' is nil.  Add
+it (in whatever position) for a standalone row alongside, or instead
+of, whatever `supersonic-art-overlay-layers'/`-scroll-layers' are
+drawing into the cover art overlay -- the two are independent
+consumers of the same cached envelope, not alternatives that pick one
+another out (see `supersonic-now-playing-layout-waveform's own
+docstring), so adding this back does not disturb the overlay's own
+waveform lane, and dropping `supersonic-art-overlay-layer-waveform'
+from the overlay layers does not disturb this row either.
 
 Adding a function of your own -- a second cover art at a different
 size, say -- inserts it alongside the rest; it can read BUFF's

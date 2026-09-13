@@ -2252,6 +2252,11 @@ track, without disturbing anything else already rendered."
               (lambda (_endpoint _extra-query) "av://lavfi:sine=frequency=440:duration=30"))
              ((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
      (let ((supersonic-enable-waveform t)
+           ;; The standalone row is opt-in, not the default, now that it
+           ;; and the art overlay's waveform lane are independent --
+           ;; this test is about the row itself, so ask for it explicitly.
+           (supersonic-now-playing-layout-functions
+            (append supersonic-now-playing-layout-functions (list #'supersonic-now-playing-layout-waveform)))
            (supersonic-cache-path (make-temp-file "supersonic-tests-wf-cache-" t))
            (supersonic-waveform-buckets 4)
            (buff (get-buffer-create supersonic-now-playing-buffer-name)))
@@ -2559,6 +2564,10 @@ left a gap where the image had been until something else redrew it."
   (skip-unless (image-type-available-p 'pbm))
   (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
     (let ((supersonic-enable-waveform t)
+          ;; Same reason as `supersonic-tests-now-playing-buffer-shows-waveform-once-ready':
+          ;; the standalone row is opt-in now, and this test is about it.
+          (supersonic-now-playing-layout-functions
+           (append supersonic-now-playing-layout-functions (list #'supersonic-now-playing-layout-waveform)))
           (supersonic-waveform-buckets 4)
           (buff (get-buffer-create "*supersonic-tests-now-playing*"))
           (song '(("id" . "track-1") ("title" . "Song") ("duration" . 100))))
@@ -2617,20 +2626,42 @@ crosses into another bucket -- once every twelve seconds for a
               (should (= 1 redraws))))
         (kill-buffer buff)))))
 
+(ert-deftest supersonic-tests-now-playing-layout-functions-default-omits-the-standalone-waveform-row ()
+  "`supersonic-now-playing-layout-functions''s default list leaves
+`supersonic-now-playing-layout-waveform' out, so a track with waveforms
+available and nothing else configured shows the seekbar layered onto
+the cover art overlay only, not a second standalone row below it too --
+the same look `supersonic-now-playing-waveform-in-overlay' being on
+used to be the only way to get, now the default without it."
+  (skip-unless (image-type-available-p 'pbm))
+  (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
+    (let ((supersonic-enable-waveform t)
+          (buff (get-buffer-create "*supersonic-tests-now-playing*"))
+          (song '(("id" . "t") ("title" . "Song") ("duration" . 100))))
+      (unwind-protect
+          (with-current-buffer buff
+            (supersonic-now-playing-mode)
+            (supersonic-now-playing--render buff song nil 0 "t")
+            (should-not (supersonic-tests--waveform-field-present-p buff)))
+        (kill-buffer buff)))))
+
 (ert-deftest supersonic-tests-now-playing-waveform-standalone-row-and-overlay-lane-coexist ()
   "The standalone `waveform' row (`supersonic-now-playing-layout-waveform')
 and the cover art overlay's waveform lane
 (`supersonic-art-overlay-layer-waveform', via
 `supersonic-now-playing-animate-art-overlay') are independent consumers
-of the same cached envelope -- both show at once by default now, driven
-purely by their own list membership, with nothing left to force a
-choice between them the way `supersonic-now-playing-waveform-in-overlay'
-used to."
+of the same cached envelope -- both can show at once, driven purely by
+their own list membership, with nothing left to force a choice between
+them the way `supersonic-now-playing-waveform-in-overlay' used to.  The
+standalone row is opt-in rather than the default, so this test asks
+for it explicitly rather than relying on it being there."
   (skip-unless (image-type-available-p 'pbm))
   (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
     (let* ((supersonic-cache-path (expand-file-name (make-temp-name "supersonic-tests-cache-") temporary-file-directory))
            (supersonic-enable-art t)
            (supersonic-enable-waveform t)
+           (supersonic-now-playing-layout-functions
+            (append supersonic-now-playing-layout-functions (list #'supersonic-now-playing-layout-waveform)))
            (buff (get-buffer-create "*supersonic-tests-now-playing*"))
            (song '(("id" . "t") ("title" . "Song") ("coverArt" . "art-1") ("duration" . 100))))
       (unwind-protect
