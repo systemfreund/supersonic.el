@@ -274,21 +274,21 @@ one's begins).  Each built-in inserts its own row(s), including
 whatever blank line separates it from what comes after, so
 reordering this list reorders the rows cleanly; dropping one drops the
 row entirely, e.g. removing `supersonic-now-playing-layout-waveform'
-turns off the standalone waveform seekbar's row the same way
-`supersonic-enable-waveform' being nil does, but without giving up
-waveforms layered into the art overlay via
-`supersonic-now-playing-waveform-in-overlay'.  Same per-function error
-isolation as `supersonic-now-playing-animation-functions'.
+turns off the standalone waveform seekbar's row without affecting
+whether a waveform is also layered into the art overlay via
+`supersonic-art-overlay-layers'/`-scroll-layers' -- the two are
+independent consumers of the same cached envelope, not alternatives to
+pick between (see `supersonic-now-playing-layout-waveform's own
+docstring).  Same per-function error isolation as
+`supersonic-now-playing-animation-functions'.
 
 Four are built in, and make up the default, in the order they have
 always appeared in:
 
 - `supersonic-now-playing-layout-art': SONG's cover art, if it has any.
 - `supersonic-now-playing-layout-waveform': a placeholder row for the
-  standalone waveform seekbar, if
-  `supersonic-now-playing--waveform-standalone-p' -- left out entirely
-  when waveforms are off, or when `supersonic-now-playing-waveform-in-overlay'
-  is layering one onto the art instead.
+  standalone waveform seekbar, left out entirely when
+  `supersonic-waveform-available-p' is nil.
 - `supersonic-now-playing-layout-label': a placeholder row for whichever
   field `supersonic-now-playing-animation-functions' cycles through,
   unconditional even when nothing has been drawn there yet.
@@ -448,22 +448,20 @@ whenever the active backend has no queue to report on), `-format' and
   "Layers composited into `supersonic-art-overlay-propertize's SVG, in order.
 Each is called as (FUNCTION CTX), CTX being the shared layout context
 `supersonic-art-overlay--context' builds once per call -- geometry
-(scrim height, text baseline, waveform lane) is decided there from
-what is present (WAVEFORM non-nil or not), not from where in this list
-a layer happens to sit, so reordering this list changes stacking
-without changing layout.  First in the list draws first, so ends up on
-the bottom; the default order -- art, then the scrim, then the
-waveform lane, then text -- is what always drew, before this existed
-to be configurable.
+(scrim height, text baseline, whether a waveform lane is reserved at
+all) is decided there from what is present in this list and passed in,
+not from where in the list a layer happens to sit, so reordering this
+list changes stacking without changing layout.  First in the list
+draws first, so ends up on the bottom; the default order -- art, then
+the scrim, then the waveform lane, then text -- is what always drew,
+before this existed to be configurable.
 
 Reordering this list moves a layer's position in the final image, e.g.
 listing `supersonic-art-overlay-layer-text' ahead of
 `supersonic-art-overlay-layer-waveform' to draw the waveform lane over
 the label rather than below it.  Dropping a layer removes it from the
-image entirely, though `supersonic-art-overlay-layer-scrim' still
-reserves room for a dropped waveform layer as long as WAVEFORM itself
-is non-nil -- see `supersonic-art-overlay--context' and
-`supersonic-now-playing-waveform-in-overlay' to reclaim that space too.
+image entirely, including the room `supersonic-art-overlay-layer-scrim'
+would otherwise reserve for it -- see `supersonic-art-overlay--context'.
 Adding a function of your own -- a border, a gradient -- draws it
 alongside the rest, reading CTX's `:svg' and whichever other keys it
 needs.
@@ -489,29 +487,6 @@ applies here identically, the one difference being the last entry:
 `-layer-text', which is the one layer function this list draws with
 that the other one has no equivalent of."
   :type '(repeat function)
-  :group 'supersonic)
-
-(defcustom supersonic-now-playing-waveform-in-overlay t
-  "Layer the waveform seekbar onto the cover art instead of below it.
-Requires both `supersonic-enable-art' and `supersonic-enable-waveform'
-to actually show anything -- see
-`supersonic-now-playing-animate-art-overlay'/`-scroll', which draw the
-waveform into a lane below their text once this is on, the same way
-they already draw that text onto the art instead of beside it.  The
-combined image stays clickable to seek, exactly like the standalone
-seekbar this replaces.
-
-Only takes effect together with `supersonic-now-playing-animate-art-overlay'
-or `-scroll' in `supersonic-now-playing-animation-functions': with
-`supersonic-now-playing-animate-label', or for a track with no cover
-art cached, nothing draws a waveform onto anything, and this option
-just told `supersonic-now-playing--render' not to reserve a standalone
-line for one either -- so the waveform would not appear anywhere at
-all.  `supersonic-waveform-width'/`supersonic-waveform-height' do not
-apply to the composited lane either; it is sized off
-`supersonic-now-playing-art-size' instead, the same as the text scrim
-is."
-  :type 'boolean
   :group 'supersonic)
 
 (defcustom supersonic-album-list-count 50

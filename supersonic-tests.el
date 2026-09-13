@@ -2073,7 +2073,6 @@ already covers the informational rows below them."
   (skip-unless (image-type-available-p 'pbm))
   (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
     (let ((supersonic-enable-waveform t)
-          (supersonic-now-playing-waveform-in-overlay nil)
           (buff (get-buffer-create "*supersonic-tests-now-playing*"))
           (song '(("id" . "t") ("title" . "A Title") ("duration" . 100))))
       (unwind-protect
@@ -2253,7 +2252,6 @@ track, without disturbing anything else already rendered."
               (lambda (_endpoint _extra-query) "av://lavfi:sine=frequency=440:duration=30"))
              ((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
      (let ((supersonic-enable-waveform t)
-           (supersonic-now-playing-waveform-in-overlay nil)
            (supersonic-cache-path (make-temp-file "supersonic-tests-wf-cache-" t))
            (supersonic-waveform-buckets 4)
            (buff (get-buffer-create supersonic-now-playing-buffer-name)))
@@ -2561,7 +2559,6 @@ left a gap where the image had been until something else redrew it."
   (skip-unless (image-type-available-p 'pbm))
   (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
     (let ((supersonic-enable-waveform t)
-          (supersonic-now-playing-waveform-in-overlay nil)
           (supersonic-waveform-buckets 4)
           (buff (get-buffer-create "*supersonic-tests-now-playing*"))
           (song '(("id" . "track-1") ("title" . "Song") ("duration" . 100))))
@@ -2594,7 +2591,6 @@ crosses into another bucket -- once every twelve seconds for a
   (skip-unless (image-type-available-p 'pbm))
   (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
     (let ((supersonic-enable-waveform t)
-          (supersonic-now-playing-waveform-in-overlay nil)
           (supersonic-waveform-buckets 4)
           (redraws 0)
           (buff (get-buffer-create "*supersonic-tests-now-playing*")))
@@ -2621,59 +2617,56 @@ crosses into another bucket -- once every twelve seconds for a
               (should (= 1 redraws))))
         (kill-buffer buff)))))
 
-(ert-deftest supersonic-tests-now-playing-waveform-in-overlay-suppresses-standalone-field ()
-  "`supersonic-now-playing--render' reserves no standalone `waveform'
-field at all once `supersonic-now-playing-waveform-in-overlay' is on --
-there is nothing left to show there once the seekbar is drawn onto the
-cover art instead (see `supersonic-now-playing-animate-art-overlay'/
-`-scroll')."
+(ert-deftest supersonic-tests-now-playing-waveform-standalone-row-and-overlay-lane-coexist ()
+  "The standalone `waveform' row (`supersonic-now-playing-layout-waveform')
+and the cover art overlay's waveform lane
+(`supersonic-art-overlay-layer-waveform', via
+`supersonic-now-playing-animate-art-overlay') are independent consumers
+of the same cached envelope -- both show at once by default now, driven
+purely by their own list membership, with nothing left to force a
+choice between them the way `supersonic-now-playing-waveform-in-overlay'
+used to."
   (skip-unless (image-type-available-p 'pbm))
   (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
-    (let ((supersonic-enable-waveform t)
-          (buff (get-buffer-create "*supersonic-tests-now-playing*"))
-          (song '(("id" . "t") ("title" . "Song") ("duration" . 100))))
+    (let* ((supersonic-cache-path (expand-file-name (make-temp-name "supersonic-tests-cache-") temporary-file-directory))
+           (supersonic-enable-art t)
+           (supersonic-enable-waveform t)
+           (buff (get-buffer-create "*supersonic-tests-now-playing*"))
+           (song '(("id" . "t") ("title" . "Song") ("coverArt" . "art-1") ("duration" . 100))))
       (unwind-protect
-          (with-current-buffer buff
-            (supersonic-now-playing-mode)
-            (let ((supersonic-now-playing-waveform-in-overlay nil))
+          (progn
+            (mkdir supersonic-cache-path)
+            (let ((coding-system-for-write 'no-conversion))
+              (write-region
+               (base64-decode-string
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+               nil (supersonic-art-cache-file "art-1" supersonic-now-playing-art-size)))
+            (with-current-buffer buff
+              (supersonic-now-playing-mode)
               (supersonic-now-playing--render buff song nil 0 "t")
-              (should (supersonic-tests--waveform-field-present-p buff)))
-            (let ((supersonic-now-playing-waveform-in-overlay t))
-              (supersonic-now-playing--render buff song nil 0 "t2")
-              (should-not (supersonic-tests--waveform-field-present-p buff))))
-        (kill-buffer buff)))))
-
-(ert-deftest supersonic-tests-now-playing-recolor-waveform-redraws-art-overlay-when-configured ()
-  "With `supersonic-now-playing-waveform-in-overlay' on, a bucket change
-re-runs `supersonic-now-playing-animation-functions' (DELTA 0) instead
-of touching a standalone `waveform' field -- there is none to touch,
-and it is those functions that know how to draw the waveform onto the
-art, not `supersonic-now-playing-recolor-waveform' itself."
-  (skip-unless (image-type-available-p 'pbm))
-  (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
-    (let ((supersonic-enable-waveform t)
-          (supersonic-waveform-buckets 4)
-          (supersonic-now-playing-waveform-in-overlay t)
-          (repaints 0)
-          (buff (get-buffer-create "*supersonic-tests-now-playing*")))
-      (unwind-protect
-          (with-current-buffer buff
-            (supersonic-now-playing-mode)
-            (let ((supersonic-now-playing-animation-functions
-                   (list (lambda (_buff delta) (when (= delta 0) (cl-incf repaints))))))
-              (supersonic-now-playing--render buff '(("id" . "t") ("duration" . 100)) nil 0 "t")
-              (setq repaints 0)
+              ;; The standalone row exists before there is even an
+              ;; envelope to show in it -- `supersonic-now-playing-layout-waveform'
+              ;; only asks whether waveforms are available at all.
+              (should (supersonic-tests--waveform-field-present-p buff))
               (supersonic-now-playing--show-waveform
                buff "t"
                (cons (supersonic-tests--bytes '(10 20 30 40)) (supersonic-tests--bytes '(5 10 15 20))))
-              ;; Four buckets over 100 seconds: 0-24s is all bucket 0, no
-              ;; redraw due yet; 25s crosses into bucket 1.
-              (supersonic-now-playing-recolor-waveform buff 1)
-              (should (= 0 repaints))
-              (supersonic-now-playing-recolor-waveform buff 25)
-              (should (= 1 repaints))
-              (should-not (supersonic-tests--waveform-field-present-p buff))))
-        (kill-buffer buff)))))
+              (should (supersonic-tests--waveform-image-shown-p buff))
+              ;; Force a fresh overlay draw now that an envelope exists --
+              ;; the same repaint `supersonic-now-playing-recolor-waveform'
+              ;; triggers unconditionally on the next bucket change.
+              (supersonic-now-playing-animate-art-overlay buff 0)
+              (let* ((match
+                      (save-excursion
+                        (goto-char (point-min))
+                        (text-property-search-forward 'supersonic-now-playing-field 'art t)))
+                     (spec (get-text-property (prop-match-beginning match) 'display))
+                     (data (plist-get (cdr spec) :data)))
+                ;; More than the scrim's own one rectangle -- the waveform
+                ;; bars are in there too, alongside the standalone row.
+                (should (> (supersonic-tests--count-substring "<rect" data) 1)))))
+        (kill-buffer buff)
+        (delete-directory supersonic-cache-path t)))))
 
 (ert-deftest supersonic-tests-now-playing-art-overlay-waveform-is-seekable ()
   "The cover art overlay stays clickable to seek once a waveform is
@@ -2682,16 +2675,15 @@ hands its result through `supersonic-now-playing--maybe-seekable' when
 `supersonic-now-playing--overlay-waveform' returns non-nil, the same
 way `supersonic-waveform-propertize' already makes the standalone
 seekbar clickable."
-  (let ((supersonic-now-playing-waveform-in-overlay t))
-    (supersonic-tests--with-scroll-overlay
-     "Some Track"
-     (with-current-buffer buff
-       (setq supersonic-now-playing--duration 100)
-       (setq supersonic-now-playing--position 10)
-       (setq supersonic-now-playing--waveform
-             (cons "t" (cons (supersonic-tests--bytes '(10 20)) (supersonic-tests--bytes '(5 10)))))
-       (supersonic-now-playing-animate-art-overlay-scroll buff 0)
-       (should (eq supersonic-waveform-seek-map (supersonic-tests--now-playing-art-keymap buff)))))))
+  (supersonic-tests--with-scroll-overlay
+   "Some Track"
+   (with-current-buffer buff
+     (setq supersonic-now-playing--duration 100)
+     (setq supersonic-now-playing--position 10)
+     (setq supersonic-now-playing--waveform
+           (cons "t" (cons (supersonic-tests--bytes '(10 20)) (supersonic-tests--bytes '(5 10)))))
+     (supersonic-now-playing-animate-art-overlay-scroll buff 0)
+     (should (eq supersonic-waveform-seek-map (supersonic-tests--now-playing-art-keymap buff))))))
 
 (ert-deftest supersonic-tests-mpris-sync-announces-live-status-and-metadata ()
   "`supersonic-mpris--sync' pulls the active backend's track id and pause

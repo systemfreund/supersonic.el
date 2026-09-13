@@ -152,7 +152,7 @@ back."
          (available (- size (* 2 (supersonic-art-scroll-pad size)))))
     (max 0 (round (- (supersonic-art-scroll-text-width text font-size) available)))))
 
-(defun supersonic-art-overlay--context (id size text waveform &optional offset)
+(defun supersonic-art-overlay--context (id size text waveform layers &optional offset)
   "Build the layout CTX `supersonic-art-overlay-layers'/`-scroll-layers' draw from.
 Every geometry figure a layer might need -- the scrim's height and top
 edge, the text row's baseline, the waveform lane's height, the
@@ -162,23 +162,24 @@ read these, never derive them from what some other layer already drew,
 so the same CTX produces the same picture whatever order
 `supersonic-art-overlay-layers' lists them in.
 
-Reserving room for WAVEFORM in the scrim is driven by whether WAVEFORM
-itself is non-nil, not by whether a waveform layer is actually present
-in the configured layer list -- the list only decides whether bars get
-drawn into that room, the same way it was already true before layers
-existed that `supersonic-now-playing-waveform-in-overlay' being off
-made WAVEFORM nil in the first place, upstream of this function
-entirely (see `supersonic-now-playing--overlay-waveform').  Dropping
-the waveform layer from the list while WAVEFORM is still non-nil
-therefore leaves its lane's space reserved in the scrim, just empty;
-turning `supersonic-now-playing-waveform-in-overlay' off instead
-reclaims that space too.
+Reserving room for WAVEFORM in the scrim requires both WAVEFORM itself
+to be non-nil and `supersonic-art-overlay-layer-waveform' to actually
+be a member of LAYERS (the caller's resolved
+`supersonic-art-overlay-layers'/`-scroll-layers') -- dropping that
+layer reclaims its space instead of leaving an empty gap, the same way
+dropping any other layer leaves no trace of it.  A custom replacement
+layer under a different name is not recognized for this and gets no
+lane reserved for it; write one that reserves its own room via a
+:before-ish layer earlier in LAYERS if that matters.
 
 OFFSET is only meaningful to `supersonic-art-overlay-layer-text-scroll'
 and defaults to 0 for the static variant, which never reads it."
   (let* ((file (supersonic-art-cache-file id size))
          (text-height (round (* size 0.22)))
-         (lane-height (if waveform (supersonic-art-overlay-waveform-lane-height size) 0))
+         (lane-height
+          (if (and waveform (memq #'supersonic-art-overlay-layer-waveform layers))
+              (supersonic-art-overlay-waveform-lane-height size)
+            0))
          (scrim-height (+ text-height lane-height))
          (scrim-y (- size scrim-height)))
     (list :svg (svg-create size size)
@@ -212,7 +213,9 @@ waveform lane is reserved -- see `supersonic-art-overlay--context'."
 (defun supersonic-art-overlay-layer-waveform (ctx)
   "Draw CTX's waveform bars into the lane reserved for them, if CTX has any.
 No-op when CTX's `:waveform' is nil -- see `supersonic-art-overlay--context'
-for what reserves the lane in the first place."
+for what reserves the lane in the first place.  `supersonic-waveform-width'/
+`-height' do not apply to this lane; it is sized off
+`supersonic-now-playing-art-size' instead, the same as the scrim is."
   (let ((waveform (plist-get ctx :waveform))
         (size (plist-get ctx :size))
         (lane-height (plist-get ctx :lane-height)))
@@ -275,7 +278,7 @@ default `supersonic-art-overlay-layers') draws a lane of waveform bars
 \(`supersonic-waveform-svg-bars') below TEXT, right at the bottom edge
 of the art, extending the scrim by `supersonic-art-overlay-waveform-lane-height'
 to fit it."
-  (let ((ctx (supersonic-art-overlay--context id size text waveform)))
+  (let ((ctx (supersonic-art-overlay--context id size text waveform supersonic-art-overlay-layers)))
     (dolist (layer supersonic-art-overlay-layers)
       (funcall layer ctx))
     (propertize " " 'display (svg-image (plist-get ctx :svg)))))
@@ -295,7 +298,8 @@ Delegates to `supersonic-art-overlay-scroll-layers' the same way
 -- see that function's docstring.
 
 WAVEFORM is as in `supersonic-art-overlay-propertize'."
-  (let ((ctx (supersonic-art-overlay--context id size text waveform offset)))
+  (let ((ctx (supersonic-art-overlay--context
+              id size text waveform supersonic-art-overlay-scroll-layers offset)))
     (dolist (layer supersonic-art-overlay-scroll-layers)
       (funcall layer ctx))
     (propertize " " 'display (svg-image (plist-get ctx :svg)))))

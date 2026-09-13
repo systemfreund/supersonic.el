@@ -442,16 +442,21 @@ rotated field did before that variable existed."
 
 (defun supersonic-now-playing--overlay-waveform ()
   "Return (ENVELOPE . PROGRESS) for the cover art overlay to layer in, or nil.
-Nil unless `supersonic-now-playing-waveform-in-overlay' is on and a
-waveform envelope is already cached for the current track
+Nil unless a waveform envelope is already cached for the current track
 (`supersonic-now-playing--waveform') -- the same absence
 `supersonic-now-playing-animate-art-overlay'/`-scroll' already tolerate
 for the cover art itself, here extended to the waveform layered onto
-it.  Read by those two functions on every redraw rather than cached,
-so a bucket change `supersonic-now-playing-recolor-waveform' notices
-shows up the next time either of them repaints, without this file
-needing to track that separately."
-  (when (and supersonic-now-playing-waveform-in-overlay supersonic-now-playing--waveform)
+it.  Whether that envelope actually ends up drawn is then entirely
+`supersonic-art-overlay-layers'/`-scroll-layers''s call -- this
+function hands the data over unconditionally, independent of whatever
+else the current track's waveform is also being shown as (see
+`supersonic-now-playing-layout-waveform' for the standalone row, a
+separate and equally unconditional consumer of the same envelope).
+Read by those two animate functions on every redraw rather than
+cached, so a bucket change `supersonic-now-playing-recolor-waveform'
+notices shows up the next time either of them repaints, without this
+file needing to track that separately."
+  (when supersonic-now-playing--waveform
     (cons
      (cdr supersonic-now-playing--waveform)
      (supersonic-now-playing--progress-ratio supersonic-now-playing--position supersonic-now-playing--duration))))
@@ -476,8 +481,8 @@ there is no cached art to layer text onto -- `supersonic-art-available-p'
 is nil, or the file for the current track has not landed yet -- the
 same case `supersonic-now-playing--art' draws nothing for.  Also layers
 in the waveform seekbar -- see `supersonic-now-playing--overlay-waveform'
-and `supersonic-now-playing-waveform-in-overlay' -- and keeps the
-result clickable to seek when it does."
+and `supersonic-art-overlay-layer-waveform' -- and keeps the result
+clickable to seek when it does."
   (with-current-buffer buff
     (if (and supersonic-now-playing--art-id
              (supersonic-art-available-p)
@@ -830,23 +835,31 @@ whatever the active backend most recently reported, read there off
    (supersonic-now-playing--position position (buffer-local-value 'supersonic-now-playing--duration buff))))
 
 (defun supersonic-now-playing-recolor-waveform (buff position)
-  "Redraw BUFF's waveform seekbar with POSITION as the new played/unplayed split.
-No-op unless a waveform is already showing for BUFF's current track --
+  "Redraw BUFF's waveform seekbar(s) with POSITION as the new played/unplayed
+split.  No-op unless a waveform is already showing for BUFF's current track --
 there's nothing to recolor before `supersonic-waveform-ensure''s
 callback has delivered the first envelope -- and no-op too while the
 split still falls within the bucket it was last drawn in, which is
 most ticks (see `supersonic-now-playing--progress-bucket').  Built into
 `supersonic-now-playing-position-functions'.
 
-When `supersonic-now-playing-waveform-in-overlay' is on, a bucket
-change redraws the cover art overlay instead of a standalone seekbar
-field: `supersonic-now-playing-animation-functions' is re-run with a
-DELTA of 0, the same \"repaint now, do not advance anything\" signal
-`supersonic-now-playing--render' uses for the very first paint, so
+A bucket change patches the standalone `waveform' field, if
+`supersonic-now-playing-layout-waveform' put one in the buffer, and
+separately re-runs `supersonic-now-playing-animation-functions' with a
+DELTA of 0 -- the same \"repaint now, do not advance anything\" signal
+`supersonic-now-playing--render' uses for the very first paint -- so
 whichever of `supersonic-now-playing-animate-art-overlay'/`-scroll' is
 configured picks the fresh envelope/progress back up off
-`supersonic-now-playing--waveform' the next time it draws, rather than
-this function knowing how to draw an art overlay itself."
+`supersonic-now-playing--waveform' the next time it draws.  Both run
+unconditionally, independent of each other:
+`supersonic-now-playing--update-field' is already a no-op when the
+`waveform' field it looks for is not there, and re-running
+`supersonic-now-playing-animation-functions'
+costs a redraw with nothing new to show whenever none of them target
+the art overlay, the same small, unavoidable price
+`supersonic-now-playing-animate-label' already pays for every bucket
+change once a waveform is showing anywhere in the buffer, standalone
+or not."
   (when (buffer-live-p buff)
     (with-current-buffer buff
       (when supersonic-now-playing--waveform
@@ -855,10 +868,9 @@ this function knowing how to draw an art overlay itself."
                (bucket (supersonic-now-playing--progress-bucket envelope progress)))
           (unless (eql bucket supersonic-now-playing--waveform-bucket)
             (setq supersonic-now-playing--waveform-bucket bucket)
-            (if supersonic-now-playing-waveform-in-overlay
-                (supersonic-now-playing--run-field-functions supersonic-now-playing-animation-functions buff 0)
-              (supersonic-now-playing--update-field
-               buff 'waveform (supersonic-waveform-propertize envelope progress)))))))))
+            (supersonic-now-playing--update-field
+             buff 'waveform (supersonic-waveform-propertize envelope progress))
+            (supersonic-now-playing--run-field-functions supersonic-now-playing-animation-functions buff 0)))))))
 
 (defun supersonic-now-playing--insert-button (label command)
   "Insert a boxed button reading LABEL that runs COMMAND when activated.
@@ -916,23 +928,6 @@ renders."
                art-id
                (file-exists-p (supersonic-art-cache-file art-id supersonic-now-playing-art-size)))
       (supersonic-image-propertize art-id supersonic-now-playing-art-size))))
-
-(defun supersonic-now-playing--waveform-standalone-p ()
-  "Return non-nil if the current track's waveform gets its own buffer field.
-Nil when `supersonic-now-playing-waveform-in-overlay' asks for it to be
-layered onto the cover art instead -- see
-`supersonic-now-playing-animate-art-overlay'/`-scroll' -- in which case
-`supersonic-now-playing--render' does not reserve a line for it at all.
-Decided once per render from configuration alone, not from whether an
-art overlay is actually configured to draw one on: this file has no
-reliable way to know that before `supersonic-now-playing-animation-functions'
-runs, and by the time it has, the buffer's layout already needs to have
-been decided.  Misconfigured -- this on with
-`supersonic-now-playing-animate-label', or a track with no cover art
-cached -- simply drops the waveform rather than showing it somewhere
-unexpected; see `supersonic-now-playing-waveform-in-overlay''s
-docstring."
-  (and (supersonic-waveform-available-p) (not supersonic-now-playing-waveform-in-overlay)))
 
 (defun supersonic-now-playing-render-title (_buff song)
   "Insert SONG's \"Title:\" row, if it has one.  Built into
@@ -1021,16 +1016,19 @@ this one leaves behind."
 
 (defun supersonic-now-playing-layout-waveform (_buff _song)
   "Insert a placeholder row for the standalone waveform seekbar, if any.
-Nothing is inserted at all when
-`supersonic-now-playing--waveform-standalone-p' is nil -- either
-waveforms are off, or `supersonic-now-playing-waveform-in-overlay' is
-layering one onto the art instead (see
-`supersonic-now-playing-layout-art') -- the same condition that always
-gated this row, before it moved into its own function.  Whether there
-is an image to put in the placeholder yet is settled separately, at
-the end of `supersonic-now-playing--render', via
-`supersonic-now-playing--show-waveform'."
-  (when (supersonic-now-playing--waveform-standalone-p)
+Nothing is inserted when `supersonic-waveform-available-p' is nil --
+waveforms are off, or the frame cannot draw one at all.  Unconditional
+otherwise: whether a waveform also ends up layered onto the cover art
+is entirely `supersonic-art-overlay-layers'/`-scroll-layers''s call
+(via `supersonic-now-playing-animate-art-overlay'/`-scroll'), a
+decision this function neither makes nor needs to know about -- both
+consume the same `supersonic-now-playing--waveform' independently, so
+dropping this entry from `supersonic-now-playing-layout-functions'
+only ever affects this row, never whether the art overlay also draws
+one.  Whether there is an image to put in the placeholder yet is
+settled separately, at the end of `supersonic-now-playing--render',
+via `supersonic-now-playing--show-waveform'."
+  (when (supersonic-waveform-available-p)
     (insert (propertize " " 'supersonic-now-playing-field 'waveform) "\n")))
 
 (defun supersonic-now-playing-layout-label (_buff _song)
