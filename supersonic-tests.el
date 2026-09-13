@@ -770,6 +770,93 @@ text only understands \"bold\"/\"normal\"."
           (should (equal "bold" (supersonic-art-overlay-font-weight))))
       (set-face-attribute 'supersonic-now-playing-art-overlay-label nil :weight weight))))
 
+(ert-deftest supersonic-tests-art-overlay-layers-dropping-one-omits-it ()
+  "Dropping a layer from `supersonic-art-overlay-layers' omits it from the
+image even when the data that would feed it (a WAVEFORM argument) is
+still given -- the list decides whether anything gets drawn, not the
+presence of a matching argument by itself. Compared against the same
+call with `supersonic-art-overlay-layers' left at its default, the way
+`supersonic-tests-art-overlay-propertize-draws-a-waveform-lane-when-given-one'
+compares against a call with WAVEFORM left out."
+  (supersonic-tests--with-cached-art
+   "art-1" 100
+   (let* ((envelope (cons (supersonic-tests--bytes '(255 0)) (supersonic-tests--bytes '(200 0))))
+          (plain (get-text-property 0 'display (supersonic-art-overlay-propertize "art-1" 100 "Some Track")))
+          (supersonic-art-overlay-layers
+           (list #'supersonic-art-overlay-layer-art
+                 #'supersonic-art-overlay-layer-scrim
+                 #'supersonic-art-overlay-layer-text))
+          (without-waveform-layer
+           (get-text-property
+            0 'display (supersonic-art-overlay-propertize "art-1" 100 "Some Track" (cons envelope 0.5)))))
+     (should
+      (= (supersonic-tests--count-substring "<rect" (plist-get (cdr without-waveform-layer) :data))
+         (supersonic-tests--count-substring "<rect" (plist-get (cdr plain) :data)))))))
+
+(ert-deftest supersonic-tests-art-overlay-layers-reordering-changes-the-stacking ()
+  "Reordering `supersonic-art-overlay-layers' changes which element ends up
+on top -- moving `supersonic-art-overlay-layer-text' ahead of
+`supersonic-art-overlay-layer-waveform' draws the waveform bars over
+the text instead of below it, the reverse of the default order."
+  (supersonic-tests--with-cached-art
+   "art-1" 100
+   (let* ((envelope (cons (supersonic-tests--bytes '(255 0)) (supersonic-tests--bytes '(200 0))))
+          (supersonic-art-overlay-layers
+           (list #'supersonic-art-overlay-layer-art
+                 #'supersonic-art-overlay-layer-scrim
+                 #'supersonic-art-overlay-layer-text
+                 #'supersonic-art-overlay-layer-waveform))
+          (spec
+           (get-text-property
+            0 'display (supersonic-art-overlay-propertize "art-1" 100 "Some Track" (cons envelope 0.5))))
+          (data (plist-get (cdr spec) :data))
+          (after-text (substring data (string-match "<text" data))))
+     ;; With text drawn before the waveform, at least one of the bar
+     ;; rectangles now falls after "<text" in the SVG -- with the default
+     ;; order, every rectangle (scrim and bars alike) precedes it instead.
+     (should (> (supersonic-tests--count-substring "<rect" after-text) 0)))))
+
+(ert-deftest supersonic-tests-art-overlay-layers-dropping-art-omits-the-image ()
+  "Dropping `supersonic-art-overlay-layer-art' from
+`supersonic-art-overlay-layers' leaves the cover art itself out of the
+composited image -- the layer list governs every element, not just the
+scrim/waveform/text stacked on top of it."
+  (supersonic-tests--with-cached-art
+   "art-1" 100
+   (let* ((supersonic-art-overlay-layers
+           (list #'supersonic-art-overlay-layer-scrim #'supersonic-art-overlay-layer-text))
+          (spec (get-text-property 0 'display (supersonic-art-overlay-propertize "art-1" 100 "Some Track")))
+          (data (plist-get (cdr spec) :data)))
+     (should (= 0 (supersonic-tests--count-substring "<image" data))))))
+
+(ert-deftest supersonic-tests-art-overlay-scroll-layers-are-configurable-independently ()
+  "`supersonic-art-overlay-scroll-layers' governs
+`supersonic-art-overlay-scroll-propertize' the same way
+`supersonic-art-overlay-layers' governs the static variant, and
+separately from it -- dropping the scroll variant's waveform layer
+leaves the static variant's default list, and its own drawing,
+untouched."
+  (supersonic-tests--with-cached-art
+   "art-1" 100
+   (let* ((envelope (cons (supersonic-tests--bytes '(255 0)) (supersonic-tests--bytes '(200 0))))
+          (plain
+           (get-text-property 0 'display (supersonic-art-overlay-scroll-propertize "art-1" 100 "Some Track" 0)))
+          (supersonic-art-overlay-scroll-layers
+           (list #'supersonic-art-overlay-layer-art
+                 #'supersonic-art-overlay-layer-scrim
+                 #'supersonic-art-overlay-layer-text-scroll))
+          (without-waveform-layer
+           (get-text-property
+            0 'display
+            (supersonic-art-overlay-scroll-propertize "art-1" 100 "Some Track" 0 (cons envelope 0.5)))))
+     (should
+      (= (supersonic-tests--count-substring "<rect" (plist-get (cdr without-waveform-layer) :data))
+         (supersonic-tests--count-substring "<rect" (plist-get (cdr plain) :data))))
+     ;; The default list -- checked here rather than assumed -- still has
+     ;; the waveform layer, confirming the binding above only shadowed the
+     ;; scroll variant's list, not both.
+     (should (memq #'supersonic-art-overlay-layer-waveform supersonic-art-overlay-layers)))))
+
 (ert-deftest supersonic-tests-art-scroll-text-width-uses-real-font-metrics-when-available ()
   "`supersonic-art-scroll-text-width' measures TEXT via `string-pixel-width'
 rather than a flat per-character guess whenever that function exists.

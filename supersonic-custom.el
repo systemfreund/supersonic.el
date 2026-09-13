@@ -383,6 +383,66 @@ whenever the active backend has no queue to report on), `-format' and
   :type '(repeat function)
   :group 'supersonic)
 
+;; Defined in supersonic-art.el, which requires this file rather than
+;; the other way around (see the Commentary above) -- declared here for
+;; the same reason the now-playing animation functions above are.
+(declare-function supersonic-art-overlay-layer-art "supersonic-art")
+(declare-function supersonic-art-overlay-layer-scrim "supersonic-art")
+(declare-function supersonic-art-overlay-layer-waveform "supersonic-art")
+(declare-function supersonic-art-overlay-layer-text "supersonic-art")
+(declare-function supersonic-art-overlay-layer-text-scroll "supersonic-art")
+
+(defcustom supersonic-art-overlay-layers
+  (list #'supersonic-art-overlay-layer-art
+        #'supersonic-art-overlay-layer-scrim
+        #'supersonic-art-overlay-layer-waveform
+        #'supersonic-art-overlay-layer-text)
+  "Layers composited into `supersonic-art-overlay-propertize's SVG, in order.
+Each is called as (FUNCTION CTX), CTX being the shared layout context
+`supersonic-art-overlay--context' builds once per call -- geometry
+(scrim height, text baseline, waveform lane) is decided there from
+what is present (WAVEFORM non-nil or not), not from where in this list
+a layer happens to sit, so reordering this list changes stacking
+without changing layout.  First in the list draws first, so ends up on
+the bottom; the default order -- art, then the scrim, then the
+waveform lane, then text -- is what always drew, before this existed
+to be configurable.
+
+Reordering this list moves a layer's position in the final image, e.g.
+listing `supersonic-art-overlay-layer-text' ahead of
+`supersonic-art-overlay-layer-waveform' to draw the waveform lane over
+the label rather than below it.  Dropping a layer removes it from the
+image entirely, though `supersonic-art-overlay-layer-scrim' still
+reserves room for a dropped waveform layer as long as WAVEFORM itself
+is non-nil -- see `supersonic-art-overlay--context' and
+`supersonic-now-playing-waveform-in-overlay' to reclaim that space too.
+Adding a function of your own -- a border, a gradient -- draws it
+alongside the rest, reading CTX's `:svg' and whichever other keys it
+needs.
+
+See `supersonic-art-overlay-scroll-layers' for the scrolling variant's
+counterpart, used instead whenever
+`supersonic-now-playing-animate-art-overlay-scroll' is the one drawing."
+  :type '(repeat function)
+  :group 'supersonic)
+
+(defcustom supersonic-art-overlay-scroll-layers
+  (list #'supersonic-art-overlay-layer-art
+        #'supersonic-art-overlay-layer-scrim
+        #'supersonic-art-overlay-layer-waveform
+        #'supersonic-art-overlay-layer-text-scroll)
+  "Layers composited into `supersonic-art-overlay-scroll-propertize's SVG.
+The scrolling variant of `supersonic-art-overlay-layers', used whenever
+`supersonic-now-playing-animate-art-overlay-scroll' is the one drawing
+rather than `supersonic-now-playing-animate-art-overlay' -- everything
+that variable's docstring says about reordering and dropping layers
+applies here identically, the one difference being the last entry:
+`supersonic-art-overlay-layer-text-scroll' instead of
+`-layer-text', which is the one layer function this list draws with
+that the other one has no equivalent of."
+  :type '(repeat function)
+  :group 'supersonic)
+
 (defcustom supersonic-now-playing-waveform-in-overlay t
   "Layer the waveform seekbar onto the cover art instead of below it.
 Requires both `supersonic-enable-art' and `supersonic-enable-waveform'
