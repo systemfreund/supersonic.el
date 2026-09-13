@@ -12,4 +12,3 @@ Single-context layout — `CONTEXT.md` + `docs/adr/` at repo root. See `docs/age
 
 This repo is developed live on stream — using the `emacs` MCP server to work
 through the visible Emacs session is expressly wanted, not optional tooling.
-See `docs/agents/emacs-integration.md`.
