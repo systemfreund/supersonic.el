@@ -106,47 +106,6 @@ size whether or not a waveform lane is drawn below it, just higher up
 in the (now taller) scrim to make room."
   (round (* size 0.16)))
 
-(defun supersonic-art-overlay-propertize (id size text &optional waveform)
-  "Generate a property displaying cover art ID at SIZE with TEXT layered over it.
-TEXT sits in a semi-opaque scrim across the bottom, composited in with
-`svg.el' rather than shown as a string alongside the art the way
-`supersonic-image-propertize' is used for -- the point of this one is
-text that reads as part of the cover itself, the way a lock-screen
-\"now playing\" widget overlays a track name on the art instead of
-setting it beside it.  Like `supersonic-image-propertize', expects the
-art to be cached at SIZE already.
-
-WAVEFORM, if given, is (ENVELOPE . PROGRESS) as `supersonic-waveform-propertize'
-takes them; when given, a lane of waveform bars
-\(`supersonic-waveform-svg-bars') is drawn below TEXT, right at the
-bottom edge of the art, extending the scrim by
-`supersonic-art-overlay-waveform-lane-height' to fit it -- the result
-reads as art, then text, then waveform, stacked in that order (a
-headline over a seekbar, the way most \"now playing\" widgets lay
-themselves out), instead of TEXT sitting at the very bottom of the
-scrim the way it does without one."
-  (let* ((file (supersonic-art-cache-file id size))
-         (mime (format "image/%s" (image-type-from-file-header file)))
-         (svg (svg-create size size))
-         (text-height (round (* size 0.22)))
-         (lane-height (if waveform (supersonic-art-overlay-waveform-lane-height size) 0))
-         (scrim-height (+ text-height lane-height))
-         (scrim-y (- size scrim-height))
-         (font-size (supersonic-art-overlay-font-size size)))
-    (svg-embed svg file mime nil :width size :height size)
-    (svg-rectangle svg 0 scrim-y size scrim-height :fill "black" :fill-opacity 0.55)
-    (when waveform
-      (supersonic-waveform-svg-bars
-       svg (supersonic-waveform-bars (car waveform) (cdr waveform) size lane-height) (- size lane-height)
-       lane-height))
-    (let ((family (supersonic-art-overlay-font-family)))
-      (apply #'svg-text svg text
-             :x (/ size 2) :y (+ scrim-y (/ text-height 2))
-             :fill (supersonic-art-overlay-fill) :font-size font-size :font-weight (supersonic-art-overlay-font-weight)
-             :text-anchor "middle" :dominant-baseline "middle"
-             (and family (list :font-family family))))
-    (propertize " " 'display (svg-image svg))))
-
 (defun supersonic-art-scroll-text-width (text font-size)
   "Measure TEXT's rendered width in pixels at FONT-SIZE.
 `svg.el' has no way to ask the image back how wide TEXT came out once
@@ -193,45 +152,157 @@ back."
          (available (- size (* 2 (supersonic-art-scroll-pad size)))))
     (max 0 (round (- (supersonic-art-scroll-text-width text font-size) available)))))
 
+(defun supersonic-art-overlay--context (id size text waveform layers &optional offset)
+  "Build the layout CTX `supersonic-art-overlay-layers'/`-scroll-layers' draw from.
+Every geometry figure a layer might need -- the scrim's height and top
+edge, the text row's baseline, the waveform lane's height, the
+scrolling variant's left padding -- is computed once here, up front,
+rather than by whichever layer happens to run first: layers only ever
+read these, never derive them from what some other layer already drew,
+so the same CTX produces the same picture whatever order
+`supersonic-art-overlay-layers' lists them in.
+
+Reserving room for WAVEFORM in the scrim requires both WAVEFORM itself
+to be non-nil and `supersonic-art-overlay-layer-waveform' to actually
+be a member of LAYERS (the caller's resolved
+`supersonic-art-overlay-layers'/`-scroll-layers') -- dropping that
+layer reclaims its space instead of leaving an empty gap, the same way
+dropping any other layer leaves no trace of it.  A custom replacement
+layer under a different name is not recognized for this and gets no
+lane reserved for it; write one that reserves its own room via a
+:before-ish layer earlier in LAYERS if that matters.
+
+OFFSET is only meaningful to `supersonic-art-overlay-layer-text-scroll'
+and defaults to 0 for the static variant, which never reads it."
+  (let* ((file (supersonic-art-cache-file id size))
+         (text-height (round (* size 0.22)))
+         (lane-height
+          (if (and waveform (memq #'supersonic-art-overlay-layer-waveform layers))
+              (supersonic-art-overlay-waveform-lane-height size)
+            0))
+         (scrim-height (+ text-height lane-height))
+         (scrim-y (- size scrim-height)))
+    (list :svg (svg-create size size)
+          :size size :text text :waveform waveform :offset (or offset 0)
+          :file file :mime (format "image/%s" (image-type-from-file-header file))
+          :text-height text-height :lane-height lane-height
+          :scrim-height scrim-height :scrim-y scrim-y
+          :font-size (supersonic-art-overlay-font-size size)
+          :baseline-y (+ scrim-y (/ text-height 2))
+          :pad (supersonic-art-scroll-pad size))))
+
+(defun supersonic-art-overlay-layer-art (ctx)
+  "Draw CTX's cached cover art, filling the whole canvas.
+The one layer every other built-in layer implicitly draws on top of --
+first in both `supersonic-art-overlay-layers' and `-scroll-layers' by
+default -- but a layer like any other, so a customization is free to
+list something ahead of it (a background color showing through where
+`supersonic-art-overlay-layer-scrim' isn't opaque, say) or drop it
+altogether."
+  (svg-embed (plist-get ctx :svg) (plist-get ctx :file) (plist-get ctx :mime) nil
+             :width (plist-get ctx :size) :height (plist-get ctx :size)))
+
+(defun supersonic-art-overlay-layer-scrim (ctx)
+  "Draw the semi-opaque scrim CTX's text and waveform lane sit on.
+Sized to CTX's `:scrim-height', which already accounts for whether a
+waveform lane is reserved -- see `supersonic-art-overlay--context'."
+  (svg-rectangle (plist-get ctx :svg) 0 (plist-get ctx :scrim-y)
+                 (plist-get ctx :size) (plist-get ctx :scrim-height)
+                 :fill "black" :fill-opacity 0.55))
+
+(defun supersonic-art-overlay-layer-waveform (ctx)
+  "Draw CTX's waveform bars into the lane reserved for them, if CTX has any.
+No-op when CTX's `:waveform' is nil -- see `supersonic-art-overlay--context'
+for what reserves the lane in the first place.  `supersonic-waveform-width'/
+`-height' do not apply to this lane; it is sized off
+`supersonic-now-playing-art-size' instead, the same as the scrim is."
+  (let ((waveform (plist-get ctx :waveform))
+        (size (plist-get ctx :size))
+        (lane-height (plist-get ctx :lane-height)))
+    (when waveform
+      (supersonic-waveform-svg-bars
+       (plist-get ctx :svg) (supersonic-waveform-bars (car waveform) (cdr waveform) size lane-height)
+       (- size lane-height) lane-height))))
+
+(defun supersonic-art-overlay-layer-text (ctx)
+  "Draw CTX's text centered in its text row.
+The static counterpart to `supersonic-art-overlay-layer-text-scroll',
+used by `supersonic-art-overlay-layers'."
+  (let ((family (supersonic-art-overlay-font-family)))
+    (apply #'svg-text (plist-get ctx :svg) (plist-get ctx :text)
+           :x (/ (plist-get ctx :size) 2) :y (plist-get ctx :baseline-y)
+           :fill (supersonic-art-overlay-fill) :font-size (plist-get ctx :font-size)
+           :font-weight (supersonic-art-overlay-font-weight)
+           :text-anchor "middle" :dominant-baseline "middle"
+           (and family (list :font-family family)))))
+
+(defun supersonic-art-overlay-layer-text-scroll (ctx)
+  "Draw CTX's text left-aligned, shifted by CTX's `:offset', clipped to its row.
+The scrolling counterpart to `supersonic-art-overlay-layer-text', used
+by `supersonic-art-overlay-scroll-layers' -- see
+`supersonic-art-overlay-scroll-propertize' for what feeds `:offset'.
+Clipped to its own text row so text never draws outside of it,
+whichever edge is currently cut off; a waveform lane below that row, if
+CTX has one, is left unclipped, since nothing ever scrolls there."
+  (let* ((svg (plist-get ctx :svg))
+         (size (plist-get ctx :size))
+         (clip (svg-clip-path svg :id "supersonic-art-scroll-clip"))
+         (family (supersonic-art-overlay-font-family)))
+    (svg-rectangle clip 0 (plist-get ctx :scrim-y) size (plist-get ctx :text-height))
+    (apply #'svg-text svg (plist-get ctx :text)
+           :x (- (plist-get ctx :pad) (plist-get ctx :offset)) :y (plist-get ctx :baseline-y)
+           :fill (supersonic-art-overlay-fill) :font-size (plist-get ctx :font-size)
+           :font-weight (supersonic-art-overlay-font-weight)
+           :text-anchor "start" :dominant-baseline "middle"
+           :clip-path "url(#supersonic-art-scroll-clip)"
+           (and family (list :font-family family)))))
+
+(defun supersonic-art-overlay-propertize (id size text &optional waveform)
+  "Generate a property displaying cover art ID at SIZE with TEXT layered over it.
+TEXT sits in a semi-opaque scrim across the bottom, composited in with
+`svg.el' rather than shown as a string alongside the art the way
+`supersonic-image-propertize' is used for -- the point of this one is
+text that reads as part of the cover itself, the way a lock-screen
+\"now playing\" widget overlays a track name on the art instead of
+setting it beside it.  Like `supersonic-image-propertize', expects the
+art to be cached at SIZE already.
+
+The actual drawing is delegated to `supersonic-art-overlay-layers', run
+in order over a shared context built by `supersonic-art-overlay--context'
+-- this function only builds that context and unwraps the finished SVG
+into a display property afterwards.
+
+WAVEFORM, if given, is (ENVELOPE . PROGRESS) as `supersonic-waveform-propertize'
+takes them; when given, `supersonic-art-overlay-layer-waveform' (in the
+default `supersonic-art-overlay-layers') draws a lane of waveform bars
+\(`supersonic-waveform-svg-bars') below TEXT, right at the bottom edge
+of the art, extending the scrim by `supersonic-art-overlay-waveform-lane-height'
+to fit it."
+  (let ((ctx (supersonic-art-overlay--context id size text waveform supersonic-art-overlay-layers)))
+    (dolist (layer supersonic-art-overlay-layers)
+      (funcall layer ctx))
+    (propertize " " 'display (svg-image (plist-get ctx :svg)))))
+
 (defun supersonic-art-overlay-scroll-propertize (id size text offset &optional waveform)
-  "Generate a property showing TEXT across cover art ID at SIZE, OFFSET pixels in.
-Like `supersonic-art-overlay-propertize', but left-aligned and shifted
+  "Generate a property showing TEXT over cover art ID at SIZE, OFFSET pixels in.
+Like `supersonic-art-overlay-propertize', but left-aligned and
 left by OFFSET pixels instead of centered and fixed in place --
 `supersonic-now-playing-animate-art-overlay-scroll' bounces OFFSET
 between 0 and `supersonic-art-scroll-max-offset' (see that function) to
 reveal TEXT a little at a time when it does not fit in one line; this
 function only ever draws the single frame it is given for whatever
-OFFSET that is.  Clipped to its own text row so TEXT never draws
-outside of it, whichever edge is currently cut off -- WAVEFORM's lane
-below that row, if there is one, is left unclipped, since nothing ever
-scrolls there.
+OFFSET that is.
+
+Delegates to `supersonic-art-overlay-scroll-layers' the same way
+`supersonic-art-overlay-propertize' delegates to `supersonic-art-overlay-layers'
+-- see that function's docstring.
 
 WAVEFORM is as in `supersonic-art-overlay-propertize'."
-  (let* ((file (supersonic-art-cache-file id size))
-         (mime (format "image/%s" (image-type-from-file-header file)))
-         (svg (svg-create size size))
-         (text-height (round (* size 0.22)))
-         (lane-height (if waveform (supersonic-art-overlay-waveform-lane-height size) 0))
-         (scrim-height (+ text-height lane-height))
-         (scrim-y (- size scrim-height))
-         (font-size (supersonic-art-overlay-font-size size))
-         (baseline-y (+ scrim-y (/ text-height 2)))
-         (pad (supersonic-art-scroll-pad size))
-         (clip (svg-clip-path svg :id "supersonic-art-scroll-clip")))
-    (svg-embed svg file mime nil :width size :height size)
-    (svg-rectangle svg 0 scrim-y size scrim-height :fill "black" :fill-opacity 0.55)
-    (when waveform
-      (supersonic-waveform-svg-bars svg (supersonic-waveform-bars (car waveform) (cdr waveform) size lane-height)
-                                     (- size lane-height) lane-height))
-    (svg-rectangle clip 0 scrim-y size text-height)
-    (let ((family (supersonic-art-overlay-font-family)))
-      (apply #'svg-text svg text
-             :x (- pad offset) :y baseline-y
-             :fill (supersonic-art-overlay-fill) :font-size font-size :font-weight (supersonic-art-overlay-font-weight)
-             :text-anchor "start" :dominant-baseline "middle"
-             :clip-path "url(#supersonic-art-scroll-clip)"
-             (and family (list :font-family family))))
-    (propertize " " 'display (svg-image svg))))
+  (let ((ctx (supersonic-art-overlay--context
+              id size text waveform supersonic-art-overlay-scroll-layers offset)))
+    (dolist (layer supersonic-art-overlay-scroll-layers)
+      (funcall layer ctx))
+    (propertize " " 'display (svg-image (plist-get ctx :svg)))))
 
 (aio-defun
  supersonic--fetch-art (id size)

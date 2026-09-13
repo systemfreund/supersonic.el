@@ -254,6 +254,56 @@ consulted."
 ;; other way around (see the Commentary above) -- declared here purely
 ;; to keep the byte-compiler quiet about the forward references below,
 ;; not to actually load them early.
+(declare-function supersonic-now-playing-layout-art "supersonic")
+(declare-function supersonic-now-playing-layout-waveform "supersonic")
+(declare-function supersonic-now-playing-layout-label "supersonic")
+(declare-function supersonic-now-playing-layout-buttons "supersonic")
+
+(defcustom supersonic-now-playing-layout-functions
+  (list #'supersonic-now-playing-layout-art
+        #'supersonic-now-playing-layout-label
+        #'supersonic-now-playing-layout-buttons)
+  "Functions laying out the now-playing buffer's primary rows, in order.
+Each is called as (FUNCTION BUFF SONG), the same convention
+`supersonic-now-playing-render-functions' uses, right after
+`supersonic-now-playing--render' erases BUFF for a track that exists --
+this is the part of the buffer that always came before that variable's
+own rows (see its docstring for where this list's output ends and that
+one's begins).  Each built-in inserts its own row(s), including
+whatever blank line separates it from what comes after, so
+reordering this list reorders the rows cleanly; dropping one drops the
+row entirely.  Same per-function error isolation as
+`supersonic-now-playing-animation-functions'.
+
+Four are built in; three make up the default, in the order they have
+always appeared in:
+
+- `supersonic-now-playing-layout-art': SONG's cover art, if it has any.
+- `supersonic-now-playing-layout-label': a placeholder row for whichever
+  field `supersonic-now-playing-animation-functions' cycles through,
+  unconditional even when nothing has been drawn there yet.
+- `supersonic-now-playing-layout-buttons': the transport button row.
+
+The fourth, `supersonic-now-playing-layout-waveform', is not in the
+default list -- a placeholder row for the standalone waveform seekbar,
+left out entirely when `supersonic-waveform-available-p' is nil.  Add
+it (in whatever position) for a standalone row alongside, or instead
+of, whatever `supersonic-art-overlay-layers'/`-scroll-layers' are
+drawing into the cover art overlay -- the two are independent
+consumers of the same cached envelope, not alternatives that pick one
+another out (see `supersonic-now-playing-layout-waveform's own
+docstring), so adding this back does not disturb the overlay's own
+waveform lane, and dropping `supersonic-art-overlay-layer-waveform'
+from the overlay layers does not disturb this row either.
+
+Adding a function of your own -- a second cover art at a different
+size, say -- inserts it alongside the rest; it can read BUFF's
+`supersonic-now-playing--paused', `supersonic-now-playing--art-id' and
+so on the way the built-ins do, since none of that buffer-local state
+is threaded through the (FUNCTION BUFF SONG) call itself."
+  :type '(repeat function)
+  :group 'supersonic)
+
 (declare-function supersonic-now-playing-animate-label "supersonic")
 (declare-function supersonic-now-playing-animate-art-overlay "supersonic")
 (declare-function supersonic-now-playing-animate-art-overlay-scroll "supersonic")
@@ -383,27 +433,62 @@ whenever the active backend has no queue to report on), `-format' and
   :type '(repeat function)
   :group 'supersonic)
 
-(defcustom supersonic-now-playing-waveform-in-overlay t
-  "Layer the waveform seekbar onto the cover art instead of below it.
-Requires both `supersonic-enable-art' and `supersonic-enable-waveform'
-to actually show anything -- see
-`supersonic-now-playing-animate-art-overlay'/`-scroll', which draw the
-waveform into a lane below their text once this is on, the same way
-they already draw that text onto the art instead of beside it.  The
-combined image stays clickable to seek, exactly like the standalone
-seekbar this replaces.
+;; Defined in supersonic-art.el, which requires this file rather than
+;; the other way around (see the Commentary above) -- declared here for
+;; the same reason the now-playing animation functions above are.
+(declare-function supersonic-art-overlay-layer-art "supersonic-art")
+(declare-function supersonic-art-overlay-layer-scrim "supersonic-art")
+(declare-function supersonic-art-overlay-layer-waveform "supersonic-art")
+(declare-function supersonic-art-overlay-layer-text "supersonic-art")
+(declare-function supersonic-art-overlay-layer-text-scroll "supersonic-art")
 
-Only takes effect together with `supersonic-now-playing-animate-art-overlay'
-or `-scroll' in `supersonic-now-playing-animation-functions': with
-`supersonic-now-playing-animate-label', or for a track with no cover
-art cached, nothing draws a waveform onto anything, and this option
-just told `supersonic-now-playing--render' not to reserve a standalone
-line for one either -- so the waveform would not appear anywhere at
-all.  `supersonic-waveform-width'/`supersonic-waveform-height' do not
-apply to the composited lane either; it is sized off
-`supersonic-now-playing-art-size' instead, the same as the text scrim
-is."
-  :type 'boolean
+(defcustom supersonic-art-overlay-layers
+  (list #'supersonic-art-overlay-layer-art
+        #'supersonic-art-overlay-layer-scrim
+        #'supersonic-art-overlay-layer-waveform
+        #'supersonic-art-overlay-layer-text)
+  "Layers composited into `supersonic-art-overlay-propertize's SVG, in order.
+Each is called as (FUNCTION CTX), CTX being the shared layout context
+`supersonic-art-overlay--context' builds once per call -- geometry
+(scrim height, text baseline, whether a waveform lane is reserved at
+all) is decided there from what is present in this list and passed in,
+not from where in the list a layer happens to sit, so reordering this
+list changes stacking without changing layout.  First in the list
+draws first, so ends up on the bottom; the default order -- art, then
+the scrim, then the waveform lane, then text -- is what always drew,
+before this existed to be configurable.
+
+Reordering this list moves a layer's position in the final image, e.g.
+listing `supersonic-art-overlay-layer-text' ahead of
+`supersonic-art-overlay-layer-waveform' to draw the waveform lane over
+the label rather than below it.  Dropping a layer removes it from the
+image entirely, including the room `supersonic-art-overlay-layer-scrim'
+would otherwise reserve for it -- see `supersonic-art-overlay--context'.
+Adding a function of your own -- a border, a gradient -- draws it
+alongside the rest, reading CTX's `:svg' and whichever other keys it
+needs.
+
+See `supersonic-art-overlay-scroll-layers' for the scrolling variant's
+counterpart, used instead whenever
+`supersonic-now-playing-animate-art-overlay-scroll' is the one drawing."
+  :type '(repeat function)
+  :group 'supersonic)
+
+(defcustom supersonic-art-overlay-scroll-layers
+  (list #'supersonic-art-overlay-layer-art
+        #'supersonic-art-overlay-layer-scrim
+        #'supersonic-art-overlay-layer-waveform
+        #'supersonic-art-overlay-layer-text-scroll)
+  "Layers composited into `supersonic-art-overlay-scroll-propertize's SVG.
+The scrolling variant of `supersonic-art-overlay-layers', used whenever
+`supersonic-now-playing-animate-art-overlay-scroll' is the one drawing
+rather than `supersonic-now-playing-animate-art-overlay' -- everything
+that variable's docstring says about reordering and dropping layers
+applies here identically, the one difference being the last entry:
+`supersonic-art-overlay-layer-text-scroll' instead of
+`-layer-text', which is the one layer function this list draws with
+that the other one has no equivalent of."
+  :type '(repeat function)
   :group 'supersonic)
 
 (defcustom supersonic-album-list-count 50
