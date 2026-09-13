@@ -1502,6 +1502,18 @@ tell the label apart from that."
       (let ((match (text-property-search-forward 'supersonic-now-playing-field 'label t)))
         (and match (buffer-substring-no-properties (prop-match-beginning match) (prop-match-end match)))))))
 
+(defun supersonic-tests--now-playing-field-position (buff field)
+  "Return the buffer position of BUFF's FIELD-tagged text, or nil if absent.
+Used to check `supersonic-now-playing-layout-functions' for row order --
+comparing two fields' positions -- the way
+`supersonic-tests--waveform-field-present-p' already checks for row
+presence alone."
+  (with-current-buffer buff
+    (save-excursion
+      (goto-char (point-min))
+      (let ((match (text-property-search-forward 'supersonic-now-playing-field field t)))
+        (and match (prop-match-beginning match))))))
+
 (ert-deftest supersonic-tests-now-playing-buffer-follows-track-changes ()
   "An open now-playing buffer refreshes itself as mpv advances, with no
 manual refresh."
@@ -2050,6 +2062,90 @@ instead of letting it take every row after it down too."
             (supersonic-now-playing--render buff song nil 0 "t")
             (should (supersonic-tests--buffer-matches buff "Title:"))
             (should (supersonic-tests--buffer-matches buff "Artist:"))))
+      (kill-buffer buff))))
+
+(ert-deftest supersonic-tests-now-playing-layout-functions-control-row-presence ()
+  "Trimming `supersonic-now-playing-layout-functions' down drops the rows
+left out -- proof that `supersonic-now-playing--render' no longer
+hardcodes art/waveform/label/buttons the way it did before this
+variable existed, the same way `supersonic-now-playing-render-functions'
+already covers the informational rows below them."
+  (skip-unless (image-type-available-p 'pbm))
+  (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
+    (let ((supersonic-enable-waveform t)
+          (supersonic-now-playing-waveform-in-overlay nil)
+          (buff (get-buffer-create "*supersonic-tests-now-playing*"))
+          (song '(("id" . "t") ("title" . "A Title") ("duration" . 100))))
+      (unwind-protect
+          (with-current-buffer buff
+            (supersonic-now-playing-mode)
+            (let ((supersonic-now-playing-layout-functions
+                   (list #'supersonic-now-playing-layout-label #'supersonic-now-playing-layout-buttons)))
+              (supersonic-now-playing--render buff song nil 0 "t")
+              (should-not (supersonic-tests--now-playing-field-position buff 'art))
+              (should-not (supersonic-tests--waveform-field-present-p buff))
+              (should (supersonic-tests--now-playing-field-position buff 'label))))
+        (kill-buffer buff)))))
+
+(ert-deftest supersonic-tests-now-playing-layout-functions-control-row-order ()
+  "Reordering `supersonic-now-playing-layout-functions' reorders the rows
+themselves -- moving `supersonic-now-playing-layout-label' ahead of
+`supersonic-now-playing-layout-art' puts the label above the cover art
+instead of below it, the reverse of the default order."
+  (let ((buff (get-buffer-create "*supersonic-tests-now-playing*"))
+        (song '(("id" . "t") ("title" . "A Title"))))
+    (unwind-protect
+        (with-current-buffer buff
+          (supersonic-now-playing-mode)
+          (let ((supersonic-now-playing-layout-functions
+                 (list #'supersonic-now-playing-layout-label
+                       #'supersonic-now-playing-layout-art
+                       #'supersonic-now-playing-layout-buttons)))
+            (supersonic-now-playing--render buff song nil 0 "t")
+            ;; No cached art for "t" -- `supersonic-now-playing-layout-art'
+            ;; inserts nothing either way, so this only asserts on the one
+            ;; row that is actually there to move: the label now comes
+            ;; before the buttons rather than after.
+            (should
+             (< (supersonic-tests--now-playing-field-position buff 'label)
+                (save-excursion (goto-char (point-min)) (search-forward "◀◀"))))))
+      (kill-buffer buff))))
+
+(ert-deftest supersonic-tests-now-playing-layout-buttons-reads-paused-from-buffer-local ()
+  "`supersonic-now-playing-layout-buttons' shows the same play/pause glyph
+`supersonic-now-playing--render' always drew for a given PAUSED, reading
+it back off `supersonic-now-playing--paused' rather than taking it as an
+argument -- a difference in plumbing this list's (FUNCTION BUFF SONG)
+calling convention forced, not in what ends up on screen."
+  (let ((buff (get-buffer-create "*supersonic-tests-now-playing*"))
+        (song '(("id" . "t") ("title" . "A Title"))))
+    (unwind-protect
+        (with-current-buffer buff
+          (supersonic-now-playing-mode)
+          (supersonic-now-playing--render buff song t 0 "t")
+          (should (supersonic-tests--buffer-matches buff "▶"))
+          (supersonic-now-playing--render buff song nil 0 "t2")
+          (should (supersonic-tests--buffer-matches buff "⏸")))
+      (kill-buffer buff))))
+
+(ert-deftest supersonic-tests-now-playing-layout-functions-isolates-a-broken-entry ()
+  "An entry in `supersonic-now-playing-layout-functions' that signals an
+error does not stop the rest of the list from running -- same isolation
+`supersonic-now-playing-render-functions' already gets from
+`supersonic-now-playing--run-field-functions'."
+  (let ((buff (get-buffer-create "*supersonic-tests-now-playing*"))
+        (song '(("id" . "t") ("title" . "A Title"))))
+    (unwind-protect
+        (with-current-buffer buff
+          (supersonic-now-playing-mode)
+          (let ((supersonic-now-playing-layout-functions
+                 (list
+                  (lambda (_buff _song) (error "boom"))
+                  #'supersonic-now-playing-layout-label
+                  #'supersonic-now-playing-layout-buttons)))
+            (supersonic-now-playing--render buff song nil 0 "t")
+            (should (supersonic-tests--now-playing-field-position buff 'label))
+            (should (supersonic-tests--buffer-matches buff "◀◀"))))
       (kill-buffer buff))))
 
 (ert-deftest supersonic-tests-now-playing-render-queue-position-shows-position-and-total ()

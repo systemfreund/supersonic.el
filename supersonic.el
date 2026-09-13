@@ -311,6 +311,14 @@ Set by `supersonic-now-playing--render'; consulted by
 has already moved on to a different track (a full-track transcode can
 take a few seconds, plenty of time for that to happen).")
 
+(defvar-local supersonic-now-playing--paused nil
+  "Whether the now-playing buffer's last render showed playback as paused.
+Set by `supersonic-now-playing--render' from its own PAUSED argument, so
+`supersonic-now-playing-layout-buttons' can read it back without that
+argument being threaded through `supersonic-now-playing-layout-functions''s
+\(FUNCTION BUFF SONG) calling convention, which every other layout,
+animation and render function already shares.")
+
 (defvar-local supersonic-now-playing--position nil
   "Playback position in seconds as of the now-playing buffer's last update.
 Written by `supersonic-now-playing--render' and by every
@@ -996,6 +1004,65 @@ knows to leave its row out rather than show a nonsensical count."
         (setq found position)))
     (and found (cons found (length queue)))))
 
+(defun supersonic-now-playing-layout-art (_buff song)
+  "Insert SONG's cover art as its own row, if it has any.
+Tagged `art' the same way it always was, so
+`supersonic-now-playing-animate-art-overlay'/`-label' can still find
+and replace it via `supersonic-now-playing--update-field' regardless of
+where in `supersonic-now-playing-layout-functions' this ends up.
+Built into the default list; dropping it here also drops it from
+`supersonic-now-playing-animate-label's target and
+`supersonic-now-playing-animate-art-overlay's fallback alike, since
+neither one inserts the row itself -- both only ever patch whatever row
+this one leaves behind."
+  (let ((art (supersonic-now-playing--art song)))
+    (when art
+      (insert (propertize art 'supersonic-now-playing-field 'art) "\n"))))
+
+(defun supersonic-now-playing-layout-waveform (_buff _song)
+  "Insert a placeholder row for the standalone waveform seekbar, if any.
+Nothing is inserted at all when
+`supersonic-now-playing--waveform-standalone-p' is nil -- either
+waveforms are off, or `supersonic-now-playing-waveform-in-overlay' is
+layering one onto the art instead (see
+`supersonic-now-playing-layout-art') -- the same condition that always
+gated this row, before it moved into its own function.  Whether there
+is an image to put in the placeholder yet is settled separately, at
+the end of `supersonic-now-playing--render', via
+`supersonic-now-playing--show-waveform'."
+  (when (supersonic-now-playing--waveform-standalone-p)
+    (insert (propertize " " 'supersonic-now-playing-field 'waveform) "\n")))
+
+(defun supersonic-now-playing-layout-label (_buff _song)
+  "Insert a placeholder row for the animated side label, then a blank line.
+Unconditional, unlike `supersonic-now-playing-layout-art'/`-waveform':
+`supersonic-now-playing-animation-functions' fills this row in (or
+leaves it empty, if it targets the art overlay instead) once the rest
+of the buffer exists for it to search across -- see
+`supersonic-now-playing--render'."
+  (insert (propertize " " 'supersonic-now-playing-field 'label) "\n\n"))
+
+(defun supersonic-now-playing-layout-buttons (buff _song)
+  "Insert the transport button row, then a blank line.
+Reads BUFF's `supersonic-now-playing--paused' rather than taking PAUSED
+as an argument, unlike every other part of
+`supersonic-now-playing--render' this function replaces -- see that
+variable for why."
+  (supersonic-now-playing--insert-button "|◀◀" #'supersonic-prev-track)
+  (insert "  ")
+  (supersonic-now-playing--insert-button
+   (if (buffer-local-value 'supersonic-now-playing--paused buff)
+       "▶"
+     "⏸")
+   #'supersonic-toggle-playing)
+  (insert "  ")
+  (supersonic-now-playing--insert-button "▶▶|" #'supersonic-skip-track)
+  (insert "  ")
+  (supersonic-now-playing--insert-button "◀◀" #'supersonic-seek-back)
+  (insert "  ")
+  (supersonic-now-playing--insert-button "▶▶" #'supersonic-seek-forward)
+  (insert "\n\n"))
+
 (defun supersonic-now-playing--render (buff song paused position track-id &optional queue-position queue-total)
   "Render SONG into BUFF, marked as paused or playing according to PAUSED.
 POSITION is how many seconds into SONG playback currently is.  SONG is a
@@ -1013,7 +1080,6 @@ still works."
   (when (buffer-live-p buff)
     (with-current-buffer buff
       (let* ((inhibit-read-only t)
-             (art (and song (supersonic-now-playing--art song)))
              (duration (and song (assoc-default "duration" song)))
              ;; Re-rendering the track already on show is the common case,
              ;; not the exception: a pause, a resume, `g', and two or three
@@ -1024,6 +1090,7 @@ still works."
              ;; those looked like a first request for a waveform nobody had
              ;; ever asked for, and re-ran generation accordingly.
              (same-track (and track-id (equal track-id supersonic-now-playing--track-id))))
+        (setq supersonic-now-playing--paused paused)
         (setq supersonic-now-playing--duration duration)
         (setq supersonic-now-playing--position position)
         (setq supersonic-now-playing--track-id track-id)
@@ -1065,43 +1132,14 @@ still works."
         (if (not song)
             (insert "Nothing is playing.\n")
           (progn
-            (when art
-              (insert (propertize art 'supersonic-now-playing-field 'art) "  "))
-            ;; The waveform sits right beside the art, where the label
-            ;; used to -- whether there is an image to put in it is
-            ;; settled at the end of this function, via
-            ;; `supersonic-now-playing--show-waveform'.  Nothing at all
-            ;; is inserted here when there is no standalone waveform to
-            ;; show (either none is enabled, or
-            ;; `supersonic-now-playing-waveform-in-overlay' is drawing
-            ;; it onto the art instead).
-            (when (supersonic-now-playing--waveform-standalone-p)
-              (insert (propertize " " 'supersonic-now-playing-field 'waveform)))
-            ;; The label moved down to the waveform's old slot instead,
-            ;; always on its own line below the art (and the waveform,
-            ;; if it's there) rather than sharing a line with either --
-            ;; `supersonic-now-playing-animation-functions' fills it in
-            ;; (or leaves it empty, if it targets the art overlay
-            ;; instead) a few lines down, once the rest of the buffer
-            ;; exists for it to search across.  Always followed by a
-            ;; blank line before the buttons, since -- unlike the
-            ;; waveform above it -- the label placeholder is here
-            ;; unconditionally.
-            (insert "\n" (propertize " " 'supersonic-now-playing-field 'label) "\n\n")
-            (supersonic-now-playing--insert-button "|◀◀" #'supersonic-prev-track)
-            (insert "  ")
-            (supersonic-now-playing--insert-button
-             (if paused
-                 "▶"
-               "⏸")
-             #'supersonic-toggle-playing)
-            (insert "  ")
-            (supersonic-now-playing--insert-button "▶▶|" #'supersonic-skip-track)
-            (insert "  ")
-            (supersonic-now-playing--insert-button "◀◀" #'supersonic-seek-back)
-            (insert "  ")
-            (supersonic-now-playing--insert-button "▶▶" #'supersonic-seek-forward)
-            (insert "\n\n")
+            ;; Art, the waveform (if standalone), the label placeholder
+            ;; and the transport buttons are all laid out here, in
+            ;; whatever order `supersonic-now-playing-layout-functions'
+            ;; lists them -- see that variable for what each built-in
+            ;; entry inserts and why `supersonic-now-playing--paused' is
+            ;; read back off BUFF rather than threaded through as an
+            ;; argument.
+            (supersonic-now-playing--run-field-functions supersonic-now-playing-layout-functions buff song)
             (supersonic-now-playing--run-field-functions supersonic-now-playing-render-functions buff song)
             ;; Paint whatever `supersonic-now-playing--field-index' points at
             ;; right away rather than leaving the label (or the art overlay)

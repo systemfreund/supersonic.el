@@ -254,6 +254,54 @@ consulted."
 ;; other way around (see the Commentary above) -- declared here purely
 ;; to keep the byte-compiler quiet about the forward references below,
 ;; not to actually load them early.
+(declare-function supersonic-now-playing-layout-art "supersonic")
+(declare-function supersonic-now-playing-layout-waveform "supersonic")
+(declare-function supersonic-now-playing-layout-label "supersonic")
+(declare-function supersonic-now-playing-layout-buttons "supersonic")
+
+(defcustom supersonic-now-playing-layout-functions
+  (list #'supersonic-now-playing-layout-art
+        #'supersonic-now-playing-layout-waveform
+        #'supersonic-now-playing-layout-label
+        #'supersonic-now-playing-layout-buttons)
+  "Functions laying out the now-playing buffer's primary rows, in order.
+Each is called as (FUNCTION BUFF SONG), the same convention
+`supersonic-now-playing-render-functions' uses, right after
+`supersonic-now-playing--render' erases BUFF for a track that exists --
+this is the part of the buffer that always came before that variable's
+own rows (see its docstring for where this list's output ends and that
+one's begins).  Each built-in inserts its own row(s), including
+whatever blank line separates it from what comes after, so
+reordering this list reorders the rows cleanly; dropping one drops the
+row entirely, e.g. removing `supersonic-now-playing-layout-waveform'
+turns off the standalone waveform seekbar's row the same way
+`supersonic-enable-waveform' being nil does, but without giving up
+waveforms layered into the art overlay via
+`supersonic-now-playing-waveform-in-overlay'.  Same per-function error
+isolation as `supersonic-now-playing-animation-functions'.
+
+Four are built in, and make up the default, in the order they have
+always appeared in:
+
+- `supersonic-now-playing-layout-art': SONG's cover art, if it has any.
+- `supersonic-now-playing-layout-waveform': a placeholder row for the
+  standalone waveform seekbar, if
+  `supersonic-now-playing--waveform-standalone-p' -- left out entirely
+  when waveforms are off, or when `supersonic-now-playing-waveform-in-overlay'
+  is layering one onto the art instead.
+- `supersonic-now-playing-layout-label': a placeholder row for whichever
+  field `supersonic-now-playing-animation-functions' cycles through,
+  unconditional even when nothing has been drawn there yet.
+- `supersonic-now-playing-layout-buttons': the transport button row.
+
+Adding a function of your own -- a second cover art at a different
+size, say -- inserts it alongside the rest; it can read BUFF's
+`supersonic-now-playing--paused', `supersonic-now-playing--art-id' and
+so on the way the built-ins do, since none of that buffer-local state
+is threaded through the (FUNCTION BUFF SONG) call itself."
+  :type '(repeat function)
+  :group 'supersonic)
+
 (declare-function supersonic-now-playing-animate-label "supersonic")
 (declare-function supersonic-now-playing-animate-art-overlay "supersonic")
 (declare-function supersonic-now-playing-animate-art-overlay-scroll "supersonic")
