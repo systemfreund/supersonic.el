@@ -7,3 +7,4 @@
 # Keep it out of the repo for now
 tools/*
 docs/agents/emacs-integration.md
+CLAUDE.md
