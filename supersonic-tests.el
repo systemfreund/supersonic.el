@@ -1965,6 +1965,51 @@ instead of letting it take every row after it down too."
             (should (supersonic-tests--buffer-matches buff "Artist:"))))
       (kill-buffer buff))))
 
+(ert-deftest supersonic-tests-now-playing-render-queue-position-shows-position-and-total ()
+  "`supersonic-now-playing-render-queue-position' shows a \"Queue: N/M\"
+row from the QUEUE-POSITION/QUEUE-TOTAL `supersonic-now-playing--render'
+was called with, not from SONG -- neither is part of it."
+  (let ((buff (get-buffer-create "*supersonic-tests-now-playing*"))
+        (song '(("id" . "t") ("title" . "A Title"))))
+    (unwind-protect
+        (with-current-buffer buff
+          (supersonic-now-playing-mode)
+          (supersonic-now-playing--render buff song nil 0 "t" 4 19)
+          (should (supersonic-tests--buffer-matches buff "Queue: *4/19")))
+      (kill-buffer buff))))
+
+(ert-deftest supersonic-tests-now-playing-render-queue-position-omits-row-without-a-queue ()
+  "`supersonic-now-playing-render-queue-position' leaves its row out
+entirely once `supersonic-now-playing--render' is called without a
+queue position, the same way every other built-in leaves its row out
+for a value SONG does not have."
+  (let ((buff (get-buffer-create "*supersonic-tests-now-playing*"))
+        (song '(("id" . "t") ("title" . "A Title"))))
+    (unwind-protect
+        (with-current-buffer buff
+          (supersonic-now-playing-mode)
+          (supersonic-now-playing--render buff song nil 0 "t")
+          (should-not (supersonic-tests--buffer-matches buff "Queue:")))
+      (kill-buffer buff))))
+
+(ert-deftest supersonic-tests-now-playing-current-queue-position-finds-the-current-entry ()
+  "`supersonic-now-playing--current-queue-position' returns the
+1-based index of QUEUE's `:current' entry alongside QUEUE's length."
+  (should
+   (equal
+    '(2 . 3)
+    (supersonic-now-playing--current-queue-position
+     (list '(:track-id "1" :current nil) '(:track-id "2" :current t) '(:track-id "3" :current nil))))))
+
+(ert-deftest supersonic-tests-now-playing-current-queue-position-is-nil-without-a-current-entry ()
+  "`supersonic-now-playing--current-queue-position' returns nil for an
+empty queue, and for one where nothing is marked `:current' -- either
+way, there is no position to report."
+  (should-not (supersonic-now-playing--current-queue-position nil))
+  (should-not
+   (supersonic-now-playing--current-queue-position
+    (list '(:track-id "1" :current nil) '(:track-id "2" :current nil)))))
+
 (ert-deftest supersonic-tests-now-playing-force-redisplay-is-off-by-default ()
   "`supersonic-now-playing--run-field-functions' does not force a
 redisplay unless `supersonic-now-playing-force-redisplay' asks for

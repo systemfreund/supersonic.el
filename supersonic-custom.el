@@ -337,12 +337,14 @@ alongside the rest."
 (declare-function supersonic-now-playing-render-duration "supersonic")
 (declare-function supersonic-now-playing-render-format "supersonic")
 (declare-function supersonic-now-playing-render-size "supersonic")
+(declare-function supersonic-now-playing-render-queue-position "supersonic")
 
 (defcustom supersonic-now-playing-render-functions
   (list #'supersonic-now-playing-render-title
         #'supersonic-now-playing-render-artist
         #'supersonic-now-playing-render-album
         #'supersonic-now-playing-render-duration
+        #'supersonic-now-playing-render-queue-position
         #'supersonic-now-playing-render-format
         #'supersonic-now-playing-render-size)
   "Functions laying out the now-playing buffer's informational text rows.
@@ -368,11 +370,16 @@ waveform and the transport buttons are not part of this list -- they
 are laid out unconditionally by `supersonic-now-playing--render' itself,
 before this one runs.
 
-Six are built in, and make up the default, in the order they have
+Seven are built in, and make up the default, in the order they have
 always appeared in: `supersonic-now-playing-render-title',
 `-artist', `-album', `-duration' (tags its row so
 `supersonic-now-playing-update-duration-field' can keep patching it as
-playback moves on, wherever reordering puts it), `-format' and `-size'."
+playback moves on, wherever reordering puts it),
+`-queue-position' (reads the play queue
+`supersonic-now-playing-fetch-and-render' fetched alongside SONG, not
+SONG itself, so its \"Queue: N/M\" row leaves itself out the same way
+whenever the active backend has no queue to report on), `-format' and
+`-size'."
   :type '(repeat function)
   :group 'supersonic)
 
