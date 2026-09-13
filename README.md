@@ -63,64 +63,21 @@ album, format, duration and size, plus clickable playback controls.
 Keys in that buffer: `SPC` play/pause, `n`/`p` next/previous track,
 `f`/`b` seek, `g` refresh manually.
 
-A clickable waveform seekbar (`supersonic-enable-waveform`, on by
-default) is layered onto the cover art overlay by default -- click
-anywhere on it to seek there.
-
-The label below the cover art shows the track's title by default.
-Setting `supersonic-now-playing-cycle-fields` to a list of `title`,
-`artist` and/or `album` makes it rotate through them instead, every
-`supersonic-now-playing-cycle-interval` seconds (10 by default).
-
-That rotation is layered onto the cover art itself by default, via
-`supersonic-now-playing-animate-art-overlay` in
-`supersonic-now-playing-animation-functions`; swap it for
-`supersonic-now-playing-animate-label` to draw the side label instead.
-`supersonic-now-playing-animate-art-overlay-scroll` is a third option:
-instead of switching between fields, it joins all of them into one
-line and scrolls it across the art. To show more than one of these at
-once (e.g. the side label and the art overlay together), just list
-more than one.
-
-The side label's font is the `supersonic-now-playing-label` face
-(bold by default); customize it, e.g. via `M-x customize-face`, to
-change its size or typeface. The art overlay's label is drawn into
-the SVG image instead, so it has its own face,
-`supersonic-now-playing-art-overlay-label` -- only `:weight`,
-`:family` and `:foreground` carry over there, not `:height` (its
-pixel size stays tied to `supersonic-now-playing-art-size`).
-
-Both the cover art overlay's own composition (which of art, scrim,
-waveform lane and text get drawn, and in what stacking order) and the
-buffer's row layout (which of art, waveform, label and buttons get
-their own row, and in what order) are each built from a list of
-functions -- `supersonic-art-overlay-layers`/`-scroll-layers` for the
-former, `supersonic-now-playing-layout-functions` for the latter.
-Reorder either list to change stacking/row order, or drop an entry to
-leave it out. For example, to show the waveform as its own row in the
-buffer instead of layered onto the cover art:
+By default, the title (optionally rotating through title/artist/album
+via `supersonic-now-playing-cycle-fields`) and a clickable waveform
+seekbar (`supersonic-enable-waveform`) are both layered onto the cover
+art. Which rows exist, what layers onto the art vs. gets its own row,
+and what info shows below the buttons, is all controlled by a handful
+of function-list variables -- `supersonic-now-playing-layout-functions`,
+`supersonic-now-playing-animation-functions`, `supersonic-art-overlay-layers`
+and `supersonic-now-playing-render-functions` -- see their docstrings
+(`C-h v`) for the specifics. For example, to show the waveform as its
+own row below the cover art instead of layered onto it:
 
 ```elisp
 (add-to-list 'supersonic-now-playing-layout-functions #'supersonic-now-playing-layout-waveform t)
-(setq supersonic-art-overlay-layers
-      (remove #'supersonic-art-overlay-layer-waveform supersonic-art-overlay-layers))
-(setq supersonic-art-overlay-scroll-layers
-      (remove #'supersonic-art-overlay-layer-waveform supersonic-art-overlay-scroll-layers))
+(setq supersonic-art-overlay-layers (remove #'supersonic-art-overlay-layer-waveform supersonic-art-overlay-layers))
 ```
-
-The standalone row is sized by `supersonic-waveform-width`/`-height`;
-the lane composited onto the cover art is not -- it scales with
-`supersonic-now-playing-art-size` instead. The row and the overlay
-lane are independent of each other, so it's also possible to leave
-both in place (adding the row without removing the overlay layer) and
-get the waveform in both places at once.
-
-The Title/Artist/Album/Duration/Format/Size rows below the transport
-buttons come from `supersonic-now-playing-render-functions`, a list
-with one function per row, in the order they should appear. Drop the
-entries you don't want -- setting it to `nil` hides all of them,
-leaving just the cover art, the label and the buttons -- or reorder it,
-or add a function of your own for a row it doesn't already have.
 
 By default the now-playing buffer opens in the selected window, replacing
 whatever was there. To keep it pinned in its own window instead, e.g. to
