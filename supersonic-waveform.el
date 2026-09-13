@@ -774,12 +774,12 @@ playing."
 Shared by `supersonic-waveform-propertize' and whichever of
 `supersonic-now-playing-animate-art-overlay'/`-scroll' just composited
 a waveform onto the cover art (see
-`supersonic-now-playing-waveform-in-overlay'): both hand back exactly
-this, differing only in what image DISPLAY actually is.  The click
-itself does not care which one it was either --
+`supersonic-now-playing--maybe-seekable', which is what decides that a
+composited overlay actually got a waveform lane worth clicking in):
+both hand back exactly this, differing only in what image DISPLAY
+actually is.  The click itself does not care which one it was either --
 `supersonic-waveform--seek-at-click' reads the fraction straight off
-wherever in the image was clicked, the
-same way regardless."
+wherever in the image was clicked, the same way regardless."
   (propertize " " 'display display 'keymap supersonic-waveform-seek-map 'pointer 'hand 'help-echo
               "mouse-1: seek to this position"))
 

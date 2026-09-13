@@ -1013,11 +1013,19 @@ Tagged `art' the same way it always was, so
 `supersonic-now-playing-animate-art-overlay'/`-label' can still find
 and replace it via `supersonic-now-playing--update-field' regardless of
 where in `supersonic-now-playing-layout-functions' this ends up.
-Built into the default list; dropping it here also drops it from
-`supersonic-now-playing-animate-label's target and
-`supersonic-now-playing-animate-art-overlay's fallback alike, since
-neither one inserts the row itself -- both only ever patch whatever row
-this one leaves behind."
+Built into the default list; dropping it here leaves
+`supersonic-now-playing-animate-art-overlay'/`-scroll' with nothing to
+patch, since neither one inserts the `art' row itself -- both only ever
+replace whatever row this one left behind.  Their fallback,
+`supersonic-now-playing-animate-label', is unaffected: that one targets
+the `label' row `supersonic-now-playing-layout-label' inserts, which is
+a separate entry in `supersonic-now-playing-layout-functions'.  That
+fallback is chosen on whether cover art is available at all (cached,
+and `supersonic-art-available-p'), never on whether this row is there,
+so dropping this entry on its own leaves the rotating field nowhere to
+show: swap `supersonic-now-playing-animate-art-overlay' for
+`supersonic-now-playing-animate-label' in
+`supersonic-now-playing-animation-functions' at the same time."
   (let ((art (supersonic-now-playing--art song)))
     (when art
       (insert (propertize art 'supersonic-now-playing-field 'art) "\n"))))

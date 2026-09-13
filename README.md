@@ -75,8 +75,18 @@ and `supersonic-now-playing-render-functions` -- see their docstrings
 own row below the cover art instead of layered onto it:
 
 ```elisp
-(add-to-list 'supersonic-now-playing-layout-functions #'supersonic-now-playing-layout-waveform t)
-(setq supersonic-art-overlay-layers (remove #'supersonic-art-overlay-layer-waveform supersonic-art-overlay-layers))
+;; Rows, top to bottom: art, waveform, label, buttons.
+(setq supersonic-now-playing-layout-functions
+      (list #'supersonic-now-playing-layout-art
+            #'supersonic-now-playing-layout-waveform
+            #'supersonic-now-playing-layout-label
+            #'supersonic-now-playing-layout-buttons))
+;; Take the lane back out of the art overlay. `supersonic-art-overlay-layers'
+;; is what `supersonic-now-playing-animate-art-overlay' draws with;
+;; `-scroll-layers' is the scrolling variant's own list, so drop it from
+;; whichever of the two `supersonic-now-playing-animation-functions' uses.
+(setq supersonic-art-overlay-layers
+      (remove #'supersonic-art-overlay-layer-waveform supersonic-art-overlay-layers))
 ```
 
 By default the now-playing buffer opens in the selected window, replacing

@@ -415,8 +415,11 @@ alongside the rest."
         #'supersonic-now-playing-render-format
         #'supersonic-now-playing-render-size)
   "Functions laying out the now-playing buffer's informational text rows.
-Each is called as (FUNCTION BUFF SONG), in list order, right after the
-transport buttons -- SONG is the \"song\" alist
+Each is called as (FUNCTION BUFF SONG), in list order, once every entry
+in `supersonic-now-playing-layout-functions' has had its turn -- so
+these rows always follow that list's output as a block, wherever
+reordering that list has left the individual rows within it.  SONG is
+the \"song\" alist
 `supersonic-now-playing--render' is rendering, the same shape
 `supersonic-now-playing-fetch-and-render' fetched from getSong.view.
 Every built-in inserts nothing at all if its value is missing for the
@@ -433,9 +436,10 @@ which rows exist in the first place, and in what order, each time
 Reordering entries reorders the rows; dropping one drops the row;
 adding a function of your own -- a \"Genre:\" row read off SONG, say --
 inserts it alongside the rest.  Cover art, the label/art overlay, the
-waveform and the transport buttons are not part of this list -- they
-are laid out unconditionally by `supersonic-now-playing--render' itself,
-before this one runs.
+standalone waveform row and the transport buttons are not part of this
+list -- they are `supersonic-now-playing-layout-functions''s rows, run
+before this list and configurable in exactly the same way; the split
+between the two is about ordering, not about which one is fixed.
 
 Seven are built in, and make up the default, in the order they have
 always appeared in: `supersonic-now-playing-render-title',
