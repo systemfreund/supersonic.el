@@ -1,6 +1,7 @@
 ;;; supersonic.el --- Browse and play music from subsonic servers with mpv -*- lexical-binding: t; -*-
 
 ;; Author: systemfreund <github@o9z.de>
+;; Assisted-by: Claude:claude-opus-5
 ;; URL: https://github.com/systemfreund/supersonic.el
 ;; Version: 0.5.1
 ;; Keywords: multimedia
