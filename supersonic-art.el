@@ -72,7 +72,8 @@ actually drawn with."
   (max 10 (round (* size 0.07))))
 
 (defun supersonic-art-overlay-font-weight ()
-  "Return the SVG `font-weight' for `supersonic-now-playing-art-overlay-label's
+  "Return the SVG `font-weight' for the art overlay label face.
+Derived from `supersonic-now-playing-art-overlay-label's
 `:weight'.  SVG text only understands \"bold\"/\"normal\", so any of Emacs's
 finer-grained weight symbols (`semi-bold', `extra-bold', ...) collapses
 to whichever of the two it reads closer to."
@@ -92,8 +93,8 @@ installed wherever the SVG image is actually rendered."
     (unless (eq family 'unspecified) family)))
 
 (defun supersonic-art-overlay-fill ()
-  "Return the SVG `fill' color for
-`supersonic-now-playing-art-overlay-label's `:foreground'."
+  "Return the SVG `fill' color for the art overlay label face.
+Taken from `supersonic-now-playing-art-overlay-label's `:foreground'."
   (let ((foreground (face-attribute 'supersonic-now-playing-art-overlay-label :foreground)))
     (if (eq foreground 'unspecified) "white" foreground)))
 
@@ -144,10 +145,10 @@ the text row's height only when something is going to draw in it."
 `svg.el' has no way to ask the image back how wide TEXT came out once
 drawn -- the scrolling overlay draws into an image that never becomes
 one -- but the selected frame's own font metrics
-(`string-pixel-width', added in Emacs 29.1) are a real answer rather
+\(`string-pixel-width', added in Emacs 29.1) are a real answer rather
 than a guess: a flat per-character multiplier used to be all this had,
 and a title's actual mix of narrow (\"i\", \"l\", a space) and wide
-(\"m\", \"w\") characters swung that guess wide enough to call text
+\(\"m\", \"w\") characters swung that guess wide enough to call text
 that visually fit worth scrolling anyway.  Measured against
 `supersonic-now-playing-art-overlay-label's `:weight' and `:family'
 rather than a fixed `bold', so a customization that widens or narrows
@@ -166,7 +167,8 @@ is the best available without it."
     (* (length text) font-size 0.6)))
 
 (defun supersonic-art-scroll-pad (size)
-  "Return the pixel margin the scrolling overlay's text keeps clear of the edges.
+  "Return the pixel margin the scrolling text keeps clear of the edges.
+Scales with SIZE, the cover art's edge length in pixels.
 Shared by `supersonic-art-overlay-scroll-propertize' and
 `supersonic-art-scroll-max-offset', for the same reason
 `supersonic-art-overlay-font-size' is."
@@ -206,6 +208,11 @@ all.  A custom replacement layer under a different name is not
 recognized for this and gets no room reserved for it; write one that
 reserves its own space via a :before-ish layer earlier in LAYERS if
 that matters.
+
+ID is the cover art id the background image is looked up under, at SIZE.
+TEXT is the label the text row draws, WAVEFORM the envelope the
+waveform lane draws; either may be nil when that layer has nothing to
+show.
 
 OFFSET is only meaningful to `supersonic-art-overlay-layer-text-scroll'
 and defaults to 0 for the static variant, which never reads it."

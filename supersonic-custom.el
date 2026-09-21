@@ -373,7 +373,7 @@ active backend reports rather than by elapsed time."
   "Functions run in order whenever the now-playing buffer's position updates.
 The position-driven counterpart to
 `supersonic-now-playing-animation-functions': each is called as
-(FUNCTION BUFF POSITION), POSITION being what the active backend just
+\(FUNCTION BUFF POSITION), POSITION being what the active backend just
 reported rather than a DELTA -- a seek or a pause between two updates
 must never show up as drift, which ruled out counting elapsed seconds
 locally the way the animation side does.  Runs on
@@ -471,7 +471,7 @@ whenever the active backend has no queue to report on), `-format' and
   "Layers composited into `supersonic-art-overlay-propertize's SVG, in order.
 Each is called as (FUNCTION CTX), CTX being the shared layout context
 `supersonic-art-overlay--context' builds once per call -- geometry
-(scrim height, text baseline, whether a waveform lane is reserved at
+\(scrim height, text baseline, whether a waveform lane is reserved at
 all) is decided there from what is present in this list and passed in,
 not from where in the list a layer happens to sit, so reordering this
 list changes stacking without changing layout.  First in the list
@@ -549,7 +549,7 @@ The Subsonic API has no push mechanism for jukebox state, so
 caching the result and firing the generalized playback hooks whenever
 the cached snapshot changes; the jukebox backend's status accessor and
 queue listing both answer from that cache rather than issuing a fresh
-request of their own. Lower values notice a track change or a pause
+request of their own.  Lower values notice a track change or a pause
 toggled from another client sooner, at the cost of one request to the
 server per interval."
   :type 'number
@@ -584,8 +584,9 @@ for a different typeface, without touching the rest of the buffer."
 
 (defface supersonic-now-playing-art-overlay-label
   '((t :weight bold :foreground "white"))
-  "Face for the label `supersonic-now-playing-animate-art-overlay'/`-scroll'
-draw onto the cover art itself, as opposed to `supersonic-now-playing-label'
+  "Face for the label drawn onto the cover art itself.
+Used by `supersonic-now-playing-animate-art-overlay'/`-scroll', as
+opposed to `supersonic-now-playing-label'
 for the plain-text side label -- this text is painted into the SVG
 overlay image rather than shown as propertized buffer text, so only
 `:weight', `:family' and `:foreground' carry over, onto the SVG text's

@@ -61,7 +61,7 @@
     (and buff (buffer-live-p buff) buff)))
 
 (defun supersonic-queue-maybe-refresh ()
-  "Refresh the play queue buffer from the active backend's play queue, if it is open.
+  "Refresh the play queue buffer from the active backend, if it is open.
 Called whenever the queue is likely to have changed: after
 starting/enqueueing tracks and whenever the active backend reports a
 track starting or ending."
@@ -176,9 +176,10 @@ Only runs while that list is non-nil and a track is playing; see
 `supersonic-now-playing--animation-tick'.")
 
 (defvar supersonic-now-playing--animation-timer-interval nil
-  "`supersonic-now-playing-animation-frame-interval' as of the last
-(re)start of `supersonic-now-playing--animation-timer', or nil while it
-is not running.  A `run-at-time' timer's period is fixed at creation
+  "Frame interval as of the last (re)start of the animation timer, or nil.
+Holds `supersonic-now-playing-animation-frame-interval' as of the last
+\(re)start of `supersonic-now-playing--animation-timer', and is nil
+while it is not running.  A `run-at-time' timer's period is fixed at creation
 and does not track later changes to the variable it was read from, so
 `supersonic-now-playing--start-animation-timer' compares against this
 to notice a customization made (live, e.g. via `setopt') while a track
@@ -224,30 +225,31 @@ actually fires.  Reset to 0 whenever `supersonic-now-playing--render'
 moves on to a new track, the same way `supersonic-now-playing--field-index' is.")
 
 (defvar-local supersonic-now-playing--cycle-tick nil
-  "`supersonic-now-playing--animation-last-time' as of the last DELTA
-`supersonic-now-playing--advance-field' actually accumulated, or nil.
+  "Animation timestamp as of the last DELTA actually accumulated, or nil.
+Holds `supersonic-now-playing--animation-last-time' as of the last
+DELTA `supersonic-now-playing--advance-field' actually accumulated.
 `supersonic-now-playing-animation-functions' can list more than one of
 the field-cycling built-ins
-(`supersonic-now-playing-animate-label',
+\(`supersonic-now-playing-animate-label',
 `supersonic-now-playing-animate-art-overlay') to run in the same tick,
 each with the same DELTA; without this, both would accumulate it into
 `supersonic-now-playing--cycle-elapsed' independently and the field
 would advance twice as fast as `supersonic-now-playing-cycle-interval'
 says.  Comparing against `supersonic-now-playing--animation-last-time'
-(unchanged for the duration of one tick, however many built-ins it
+\(unchanged for the duration of one tick, however many built-ins it
 calls) is how `supersonic-now-playing--advance-field' recognizes a
 second call within the same tick and skips accumulating again.  Reset
 to nil whenever `supersonic-now-playing--render' moves on to a new
 track, the same way the fields above are.")
 
 (defvar-local supersonic-now-playing--cycle-changed nil
-  "Whether `supersonic-now-playing--advance-field' last actually
-switched the field, cached so a second call within the same tick (see
+  "Whether `supersonic-now-playing--advance-field' last switched the field.
+Cached so a second call within the same tick (see
 `supersonic-now-playing--cycle-tick') answers the same way the first
 one did instead of re-deciding from DELTA already spent.")
 
 (defvar-local supersonic-now-playing--animation-last-time nil
-  "float-time of the last animation tick this buffer processed, or nil.
+  "Value of `float-time' at this buffer's last animation tick, or nil.
 Lets `supersonic-now-playing--animation-tick' compute how much real
 time actually passed since the last one instead of assuming it always
 matches `supersonic-now-playing-animation-frame-interval' -- a tick can
@@ -353,7 +355,7 @@ waveform for a buffer nobody is looking at -- real CPU and network
 work otherwise wasted on nothing -- and checks this itself to know
 whether it still owes the current track a first attempt once the
 buffer becomes visible again, without retrying one that already ran
-(and maybe failed).")
+\(and maybe failed).")
 
 (defun supersonic-now-playing-buffer ()
   "Return the now-playing buffer if it is currently live, else nil."
@@ -443,7 +445,7 @@ rotated field did before that variable existed."
 (defun supersonic-now-playing--overlay-waveform ()
   "Return (ENVELOPE . PROGRESS) for the cover art overlay to layer in, or nil.
 Nil unless a waveform envelope is already cached for the current track
-(`supersonic-now-playing--waveform') -- the same absence
+\(`supersonic-now-playing--waveform') -- the same absence
 `supersonic-now-playing-animate-art-overlay'/`-scroll' already tolerate
 for the cover art itself, here extended to the waveform layered onto
 it.  Whether that envelope actually ends up drawn is then entirely
@@ -678,14 +680,14 @@ again, so it only needs to run after the whole list has had its turn."
     (redisplay t)))
 
 (defun supersonic-now-playing--animation-tick ()
-  "Measure real elapsed time and pass it on to
-`supersonic-now-playing-animation-functions'.  Ticks fire every
+  "Measure real elapsed time and pass it on to the animation functions.
+Runs `supersonic-now-playing-animation-functions'.  Ticks fire every
 `supersonic-now-playing-animation-frame-interval'
 seconds, but that is only ever a nominal cadence -- Emacs can run a
 timer late, and a hidden buffer skips the call below entirely -- so
 what is actually passed on is DELTA, the real seconds elapsed since the
 last tick this buffer processed
-(`supersonic-now-playing--animation-last-time'), not an assumption that
+\(`supersonic-now-playing--animation-last-time'), not an assumption that
 it is always exactly the frame interval.  This is what lets
 `supersonic-now-playing-animate-label' switch fields every
 `supersonic-now-playing-cycle-interval' seconds on the dot
@@ -843,8 +845,9 @@ whatever the active backend most recently reported, read there off
    (supersonic-now-playing--position position (buffer-local-value 'supersonic-now-playing--duration buff))))
 
 (defun supersonic-now-playing-recolor-waveform (buff position)
-  "Redraw BUFF's waveform seekbar(s) with POSITION as the new played/unplayed
-split.  No-op unless a waveform is already showing for BUFF's current track --
+  "Redraw BUFF's waveform seekbar(s) at POSITION.
+POSITION is the new played/unplayed split.  No-op unless a waveform is
+already showing for BUFF's current track --
 there's nothing to recolor before `supersonic-waveform-ensure''s
 callback has delivered the first envelope -- and no-op too while the
 split still falls within the bucket it was last drawn in, which is
@@ -938,18 +941,18 @@ renders."
       (supersonic-image-propertize art-id supersonic-now-playing-art-size))))
 
 (defun supersonic-now-playing-render-title (_buff song)
-  "Insert SONG's \"Title:\" row, if it has one.  Built into
-`supersonic-now-playing-render-functions'."
+  "Insert SONG's \"Title:\" row, if it has one.
+Built into `supersonic-now-playing-render-functions'."
   (supersonic-now-playing--insert-field "Title" (assoc-default "title" song)))
 
 (defun supersonic-now-playing-render-artist (_buff song)
-  "Insert SONG's \"Artist:\" row, if it has one.  Built into
-`supersonic-now-playing-render-functions'."
+  "Insert SONG's \"Artist:\" row, if it has one.
+Built into `supersonic-now-playing-render-functions'."
   (supersonic-now-playing--insert-field "Artist" (assoc-default "artist" song)))
 
 (defun supersonic-now-playing-render-album (_buff song)
-  "Insert SONG's \"Album:\" row, if it has one.  Built into
-`supersonic-now-playing-render-functions'."
+  "Insert SONG's \"Album:\" row, if it has one.
+Built into `supersonic-now-playing-render-functions'."
   (supersonic-now-playing--insert-field "Album" (assoc-default "album" song)))
 
 (defun supersonic-now-playing-render-duration (buff _song)
@@ -971,13 +974,13 @@ function ends up putting it.  Built into
    'duration))
 
 (defun supersonic-now-playing-render-format (_buff song)
-  "Insert SONG's \"Format:\" row, if it is known.  Built into
-`supersonic-now-playing-render-functions'."
+  "Insert SONG's \"Format:\" row, if it is known.
+Built into `supersonic-now-playing-render-functions'."
   (supersonic-now-playing--insert-field "Format" (supersonic-now-playing--format song)))
 
 (defun supersonic-now-playing-render-size (_buff song)
-  "Insert SONG's \"Size:\" row, if it is known.  Built into
-`supersonic-now-playing-render-functions'."
+  "Insert SONG's \"Size:\" row, if it is known.
+Built into `supersonic-now-playing-render-functions'."
   (let ((size (assoc-default "size" song)))
     (supersonic-now-playing--insert-field "Size" (and size (format "%.2f MB" (/ size 1048576.0))))))
 
@@ -1038,7 +1041,7 @@ Nothing is inserted when `supersonic-waveform-available-p' is nil --
 waveforms are off, or the frame cannot draw one at all.  Unconditional
 otherwise: whether a waveform also ends up layered onto the cover art
 is entirely `supersonic-art-overlay-layers'/`-scroll-layers''s call
-(via `supersonic-now-playing-animate-art-overlay'/`-scroll'), a
+\(via `supersonic-now-playing-animate-art-overlay'/`-scroll'), a
 decision this function neither makes nor needs to know about -- both
 consume the same `supersonic-now-playing--waveform' independently, so
 dropping this entry from `supersonic-now-playing-layout-functions'
