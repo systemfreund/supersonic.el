@@ -1,6 +1,7 @@
 ;;; supersonic-waveform.el --- Waveform seekbar generation for supersonic.el -*- lexical-binding: t; -*-
 
 ;; Author: systemfreund <github@o9z.de>
+;; Assisted-by: Claude:claude-opus-5
 ;; URL: https://github.com/systemfreund/supersonic.el
 ;; Keywords: multimedia
 
