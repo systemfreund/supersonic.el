@@ -6,6 +6,37 @@ on:
   pull_request:
 
 jobs:
+  # package-lint and checkdoc are what MELPA's submission checklist asks a
+  # package to be clean under, so keep them green continuously rather than
+  # rediscovering a drifted docstring at review time.  Deliberately a single
+  # Emacs: both lint the source as text against the declared `Package-Requires'
+  # floor, so running them per matrix version would repeat the same verdict.
+  # Newest rather than 28.1, since package-lint tracks what is in current Emacs
+  # and needs a recent one to know which symbols are new.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: purcell/setup-emacs@master
+        with:
+          version: 31.1
+      - uses: actions/cache@v4
+        id: cache-cask-packages
+        with:
+          path: .cask
+          key: cache-cask-packages-lint-${{ hashFiles('Cask') }}
+      - uses: actions/cache@v4
+        id: cache-cask-executable
+        with:
+          path: ~/.cask
+          key: cache-cask-executable-000
+      - uses: cask/setup-cask@master
+        if: steps.cache-cask-executable.outputs.cache-hit != 'true'
+        with:
+          version: snapshot
+      - run: echo "$HOME/.cask/bin" >> "$GITHUB_PATH"
+      - run: make lint
+
   test:
     runs-on: ubuntu-latest
     strategy:

@@ -5,3 +5,6 @@
 
 (depends-on "transient")
 (depends-on "aio")
+
+(development
+ (depends-on "package-lint"))
