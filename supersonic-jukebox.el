@@ -58,7 +58,7 @@
 ;; No capability pre-checking is done for actions some servers may not
 ;; support: the action is sent and whatever error the server returns is
 ;; surfaced, the same way `supersonic-mpv-command' does for "mpv not
-;; running". This matters in particular for seeking (see
+;; running".  This matters in particular for seeking (see
 ;; `supersonic-jukebox--seek'/`-seek-fraction'): jukeboxControl's `skip'
 ;; takes an `offset' parameter some servers accept and others (e.g.
 ;; Ampache) reject outright, and such a rejection is left to surface
@@ -101,7 +101,7 @@ current track's position in seconds as of `:polled-at', a `float-time'
 timestamp of when this snapshot was taken; `:duration', the current
 track's duration in seconds, or nil if there is no current track or the
 server left it out -- see `supersonic-jukebox--seek-fraction', the only
-reader of this field, for why. `supersonic-jukebox-status', `-queue'
+reader of this field, for why.  `supersonic-jukebox-status', `-queue'
 and `-live-p' all answer from this rather than issuing a fresh request
 -- see `supersonic-jukebox--poll'; `:position' itself is interpolated
 forward from `:polled-at' rather than read verbatim, see
@@ -161,14 +161,14 @@ stored as `:polled-at' -- see `supersonic-jukebox--interpolated-position'.
 attributes it is built from (currentIndex/playing/position) are shared
 with the bare jukeboxStatus other actions return, which this file
 never parses on its own -- see the commentary at the top for why a
-poll always re-fetches the whole playlist instead. `:duration' is
+poll always re-fetches the whole playlist instead.  `:duration' is
 pulled from the same `entry' list, off whichever one `currentIndex'
 points at -- a song entry carries its own \"duration\" the same way any
 other Subsonic song listing does -- rather than tracked per-entry,
 since the only use for it is seeking within the track currently
 playing.
 
-`:playing' is compared against `t' explicitly rather than taken as any
+`:playing' is compared against t explicitly rather than taken as any
 non-nil value, the same as `supersonic--mpv-handle-message' has to for
 mpv's own \"pause\" property: `json-read' turns JSON's false into
 `:json-false', which is itself non-nil in Lisp."
@@ -196,8 +196,8 @@ the cached `:position' on its own would otherwise sit still between
 polls instead of counting up by the second the way the now-playing
 buffer's own tick expects -- interpolating against the wall clock is
 what lets it do that without polling the server any more often than
-`supersonic-jukebox-poll-interval' calls for. Only while `:playing' --
-nothing is elapsing towards the position while paused. The next poll's
+`supersonic-jukebox-poll-interval' calls for.  Only while `:playing' --
+nothing is elapsing towards the position while paused.  The next poll's
 real position is authoritative and quietly corrects whatever this
 guessed in the meantime, typically by a fraction of a second, bounded
 by network latency and the jukebox's own position granularity."
@@ -228,7 +228,7 @@ the jukebox runs out of queue). `supersonic-scrobble' itself gates on
 Track-change when the identity of the playing entry moved -- including
 between nothing and something, the same as any other backend going
 live or not-live counts as a track change -- state-change when only
-play/pause did. Never fires the position-change hook itself: that one
+play/pause did.  Never fires the position-change hook itself: that one
 is for the sudden jump a seek makes, and a poll landing on its own
 schedule has no way to tell a seek someone requested apart from a
 position that simply crept on since the last one -- so
@@ -486,6 +486,8 @@ is asking about lingers past that."
 
 (defun supersonic-jukebox--watch-backend (_symbol new-value _operation _where)
   "Start or stop polling as `supersonic-playback-backend' becomes/stops `jukebox'.
+NEW-VALUE is the backend about to be selected; polling runs only while
+it is `jukebox'.
 Registered on `supersonic-playback-backend' with `add-variable-watcher'
 as this file loads, and invoked once by hand right after with the
 variable's current value, so a `jukebox' selection already in place
