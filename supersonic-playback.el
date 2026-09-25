@@ -82,6 +82,14 @@ off this from the outside, so no backend ever has to know they exist.")
 Only that: a change in the identity of what is playing runs
 `supersonic-playback-track-change-hook' instead.")
 
+(defvar supersonic-playback-queue-change-hook nil
+  "Hook run whenever the play queue's entries may have changed.
+Only while what is playing stays the same -- tracks enqueued behind it,
+say: a change in the identity of what is playing runs
+`supersonic-playback-track-change-hook' instead, and consumers re-read
+the queue on that one anyway.  Like the other hooks it carries no
+payload; a consumer pulls the queue via `supersonic-playback-queue'.")
+
 (defvar supersonic-playback-position-change-hook nil
   "Hook run whenever the playback position jumped rather than crept on.
 Seeking is what this is for.  A position that only advances by itself

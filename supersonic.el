@@ -771,9 +771,12 @@ whenever the active backend reports that playback was paused or resumed."
 ;; Wired up from the outside rather than the backend calling these
 ;; directly, so the backends stay independent of this one's buffers --
 ;; see `supersonic-playback-track-change-hook'/
+;; `supersonic-playback-queue-change-hook'/
 ;; `supersonic-playback-state-change-hook'.
 (add-hook 'supersonic-playback-track-change-hook #'supersonic-queue-maybe-refresh)
 (add-hook 'supersonic-playback-track-change-hook #'supersonic-now-playing-maybe-refresh)
+(add-hook 'supersonic-playback-queue-change-hook #'supersonic-queue-maybe-refresh)
+(add-hook 'supersonic-playback-queue-change-hook #'supersonic-now-playing-maybe-refresh)
 (add-hook 'supersonic-playback-state-change-hook #'supersonic-now-playing-maybe-refresh)
 (add-hook 'supersonic-playback-position-change-hook #'supersonic-now-playing-maybe-update-position)
 
@@ -1885,6 +1888,8 @@ holding references to functions that no longer exist.  Returns nil so
 `unload-feature' still goes on to remove the definitions itself."
   (remove-hook 'supersonic-playback-track-change-hook #'supersonic-queue-maybe-refresh)
   (remove-hook 'supersonic-playback-track-change-hook #'supersonic-now-playing-maybe-refresh)
+  (remove-hook 'supersonic-playback-queue-change-hook #'supersonic-queue-maybe-refresh)
+  (remove-hook 'supersonic-playback-queue-change-hook #'supersonic-now-playing-maybe-refresh)
   (remove-hook 'supersonic-playback-state-change-hook #'supersonic-now-playing-maybe-refresh)
   (remove-hook 'supersonic-playback-position-change-hook #'supersonic-now-playing-maybe-update-position)
   nil)

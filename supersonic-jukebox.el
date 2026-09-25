@@ -228,8 +228,13 @@ the jukebox runs out of queue). `supersonic-scrobble' itself gates on
   "Run the facade's hooks for whatever changed between PREVIOUS and CURRENT.
 Track-change when the identity of the playing entry moved -- including
 between nothing and something, the same as any other backend going
-live or not-live counts as a track change -- state-change when only
-play/pause did.  Never fires the position-change hook itself: that one
+live or not-live counts as a track change -- and otherwise
+queue-change when the playlist's entries did, and state-change when
+play/pause did.  Entries are compared too because an `add' neither
+moves the current entry nor touches play/pause: without it, the queue
+buffer and now-playing's \"Queue: N/M\" row went on showing the old
+length until the next track started (#38).  That covers another client
+adding to the jukebox's playlist as well.  Never fires the position-change hook itself: that one
 is for the sudden jump a seek makes, and a poll landing on its own
 schedule has no way to tell a seek someone requested apart from a
 position that simply crept on since the last one -- so
@@ -246,6 +251,8 @@ this backend ever gets to notice one."
         (progn
           (supersonic-jukebox--scrobble-track-change previous-track current-track)
           (run-hooks 'supersonic-playback-track-change-hook))
+      (unless (equal (plist-get previous :entries) (plist-get current :entries))
+        (run-hooks 'supersonic-playback-queue-change-hook))
       (unless (eq (plist-get previous :playing) (plist-get current :playing))
         (run-hooks 'supersonic-playback-state-change-hook)))))
 

@@ -205,7 +205,9 @@ already playing undisturbed and simply queues IDS after it."
   (supersonic-mpv-ensure-running)
   (dolist (id ids)
     (supersonic--mpv-load-track id "append-play"))
-  (run-hooks 'supersonic-playback-track-change-hook))
+  ;; If mpv was idle, `append-play' starts the first of IDS, and the
+  ;; `start-file' that follows runs the track-change hook by itself.
+  (run-hooks 'supersonic-playback-queue-change-hook))
 
 (defun supersonic--mpv-handle-message (parsed-response)
   "Handle PARSED-RESPONSE, one message parsed from mpv's IPC socket."
