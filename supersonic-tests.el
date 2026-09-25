@@ -384,18 +384,21 @@ promise.  It resolves to nil instead, which is what lets
 (ert-deftest supersonic-tests-mpv-runs-the-backend-neutral-hooks ()
   "mpv signals through the facade's hooks, not hooks of its own: every
 point where what is playing may have changed runs
-`supersonic-playback-track-change-hook', and a bare pause toggle runs
+`supersonic-playback-track-change-hook', an enqueue runs
+`supersonic-playback-queue-change-hook', and a bare pause toggle runs
 `supersonic-playback-state-change-hook'."
   (let ((track-changes 0)
+        (queue-changes 0)
         (state-changes 0))
     (let ((supersonic-playback-track-change-hook (list (lambda () (cl-incf track-changes))))
+          (supersonic-playback-queue-change-hook (list (lambda () (cl-incf queue-changes))))
           (supersonic-playback-state-change-hook (list (lambda () (cl-incf state-changes)))))
       (supersonic-tests--with-mpv
        (supersonic-mpv-start (list supersonic-tests--track-1))
        (should (supersonic-tests--wait-for (lambda () (> track-changes 0))))
-       (let ((before track-changes))
-         (supersonic-mpv-enqueue (list supersonic-tests--track-2))
-         (should (> track-changes before)))
+       (should (= 0 queue-changes))
+       (supersonic-mpv-enqueue (list supersonic-tests--track-2))
+       (should (= 1 queue-changes))
        (should (= 0 state-changes))
        (supersonic-toggle-playing)
        (should (supersonic-tests--wait-for (lambda () (> state-changes 0))))
@@ -3227,6 +3230,51 @@ finds nothing new."
      (supersonic-tests--resolve (supersonic-jukebox--poll))
      (should (= 1 track-changes))
      (should (= 1 state-changes)))))
+
+(ert-deftest supersonic-tests-jukebox-poll-fires-queue-change-hook ()
+  "A poll that finds entries added to or removed from the playlist,
+while the current track and play/pause stayed the same, runs the
+facade's queue-change hook and neither of the other two -- see #38.  A
+track change runs only the track-change hook, which already makes
+every consumer re-read the queue."
+  (supersonic-tests--with-jukebox
+   (let ((supersonic-playback-track-change-hook nil)
+         (supersonic-playback-queue-change-hook nil)
+         (supersonic-playback-state-change-hook nil)
+         (track-changes 0)
+         (queue-changes 0)
+         (state-changes 0))
+     (add-hook 'supersonic-playback-track-change-hook (lambda () (cl-incf track-changes)))
+     (add-hook 'supersonic-playback-queue-change-hook (lambda () (cl-incf queue-changes)))
+     (add-hook 'supersonic-playback-state-change-hook (lambda () (cl-incf state-changes)))
+     (setq supersonic-tests--jukebox-playlist
+           `(("currentIndex" . 0) ("playing" . t) ("position" . 0) ("entry" . ((("id" . "a"))))))
+     (supersonic-tests--resolve (supersonic-jukebox--poll))
+     (should (= 1 track-changes))
+     (should (= 0 queue-changes))
+     ;; Same track still playing, one more entry behind it.
+     (setq supersonic-tests--jukebox-playlist
+           `(("currentIndex" . 0) ("playing" . t) ("position" . 0) ("entry" . ((("id" . "a")) (("id" . "b"))))))
+     (supersonic-tests--resolve (supersonic-jukebox--poll))
+     (should (= 1 track-changes))
+     (should (= 1 queue-changes))
+     (should (= 0 state-changes))
+     ;; Nothing changed at all.
+     (supersonic-tests--resolve (supersonic-jukebox--poll))
+     (should (= 1 queue-changes))
+     ;; The track moves on and the playlist changes along with it.
+     (setq supersonic-tests--jukebox-playlist
+           `(("currentIndex" . 0) ("playing" . t) ("position" . 0) ("entry" . ((("id" . "b"))))))
+     (supersonic-tests--resolve (supersonic-jukebox--poll))
+     (should (= 2 track-changes))
+     (should (= 1 queue-changes)))))
+
+(ert-deftest supersonic-tests-queue-change-refreshes-queue-and-now-playing ()
+  "Both buffers showing the play queue -- the queue buffer itself and
+now-playing's \"Queue: N/M\" row -- refresh on
+`supersonic-playback-queue-change-hook', not only on a track change."
+  (should (memq #'supersonic-queue-maybe-refresh supersonic-playback-queue-change-hook))
+  (should (memq #'supersonic-now-playing-maybe-refresh supersonic-playback-queue-change-hook)))
 
 (ert-deftest supersonic-tests-jukebox-poll-scrobbles-old-and-new-track-on-change ()
   "A poll that finds the current track id changed scrobbles the previous
