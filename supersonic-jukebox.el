@@ -325,22 +325,38 @@ Never issues a request of its own -- see `supersonic-jukebox--poll'."
 
 (aio-defun
  supersonic-jukebox--enqueue (ids)
- "Append IDS to the jukebox playlist, starting playback if it was idle.
-`add' alone leaves the jukebox's play state untouched, which would
-leave `supersonic-playback-enqueue''s contract -- \"if nothing is
-[playing], playback starts\" -- broken for this backend; whether it
-was idle is read from the cached snapshot from before this call, since
-`add' does not report it back itself."
+ "Append IDS to the jukebox playlist, playing them if nothing is left to play.
+`add' alone leaves the jukebox's play state untouched, so this also
+starts playback on the first of IDS when the playlist was empty or had
+been played to its end -- `supersonic-playback-enqueue''s contract.  A
+jukebox merely stopped partway through its playlist is left stopped:
+`start' would only resume the stopped entry, not play IDS -- see #39.
+
+Polls first rather than trusting the cached snapshot, which can be up
+to `supersonic-jukebox-poll-interval' seconds stale -- long enough to
+still show the last entry playing after it has in fact ended.  Played
+to its end is read the way Navidrome reports it: `currentIndex' left on
+the last entry, not playing, at position 0.  `skip' does not start a
+stopped jukebox by itself, hence the `start' after it."
  (supersonic--with-async-error-handling
   nil "enqueue on the jukebox"
-  (let ((was-playing (plist-get supersonic-jukebox--snapshot :playing)))
+  (aio-await (supersonic-jukebox--poll))
+  (let* ((snapshot supersonic-jukebox--snapshot)
+         (length (length (plist-get snapshot :entries)))
+         (finished (and (not (plist-get snapshot :playing))
+                        (eql (plist-get snapshot :current-index) (1- length))
+                        (eql (plist-get snapshot :position) 0))))
     (aio-await (supersonic-jukebox--request "add" (supersonic-jukebox--id-query ids)))
-    (unless was-playing
-      (aio-await (supersonic-jukebox--request "start"))))
+    (cond
+     ((zerop length)
+      (aio-await (supersonic-jukebox--request "start")))
+     (finished
+      (aio-await (supersonic-jukebox--request "skip" `(("index" . ,(number-to-string length)))))
+      (aio-await (supersonic-jukebox--request "start")))))
   (aio-await (supersonic-jukebox--poll))))
 
 (defun supersonic-jukebox-enqueue (ids)
-  "Append IDS to the end of the jukebox playlist."
+  "Append IDS to the jukebox playlist, playing them if nothing is left to play."
   (ignore (supersonic-jukebox--enqueue ids)))
 
 (aio-defun

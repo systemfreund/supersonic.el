@@ -144,8 +144,10 @@ since a backend not yet loaded has never registered itself."
 
 (defun supersonic-playback-enqueue (ids)
   "Append IDS to the end of the play queue.
-Whatever is already playing is left undisturbed; if nothing is,
-playback starts."
+Whatever is already playing is left undisturbed, and so is a queue
+merely paused or stopped partway through; if there is nothing left to
+play -- the queue is empty or has been played to its end -- playback
+starts on the first of IDS."
   (supersonic-playback--call 'enqueue ids))
 
 (defun supersonic-playback-toggle-play ()

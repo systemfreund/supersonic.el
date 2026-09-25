@@ -3363,27 +3363,61 @@ after is already current."
    (should (supersonic-jukebox-live-p))))
 
 (ert-deftest supersonic-tests-jukebox-enqueue-appends-without-restarting-if-playing ()
-  "`supersonic-jukebox-enqueue' only sends `add' when the cached snapshot
-already shows the jukebox playing, leaving playback undisturbed."
+  "`supersonic-jukebox-enqueue' only sends `add' when the jukebox is
+already playing, leaving playback undisturbed."
   (supersonic-tests--with-jukebox
    (setq supersonic-tests--jukebox-playlist
          `(("currentIndex" . 0) ("playing" . t) ("position" . 0) ("entry" . ((("id" . "a"))))))
-   (supersonic-tests--resolve (supersonic-jukebox--poll))
-   (setq supersonic-tests--jukebox-requests nil)
    (supersonic-tests--resolve (supersonic-jukebox--enqueue '("b")))
-   (should (equal '("add" "get") (supersonic-tests--jukebox-request-actions)))))
+   (should (equal '("get" "add" "get") (supersonic-tests--jukebox-request-actions)))))
 
-(ert-deftest supersonic-tests-jukebox-enqueue-starts-playback-if-idle ()
-  "`supersonic-jukebox-enqueue' also sends `start' when nothing was
-already playing, honoring `supersonic-playback-enqueue''s contract
-that enqueuing starts playback from idle -- the same as
-`supersonic-mpv-enqueue' does."
+(ert-deftest supersonic-tests-jukebox-enqueue-only-appends-if-stopped-mid-queue ()
+  "`supersonic-jukebox-enqueue' only sends `add' when the jukebox was
+stopped partway through its playlist: `start' would just resume the
+stopped track rather than play what was enqueued -- see #39."
   (supersonic-tests--with-jukebox
-   ;; No poll has landed yet, so the cached snapshot is nil / not playing.
    (setq supersonic-tests--jukebox-playlist
-         `(("currentIndex" . 0) ("playing" . t) ("position" . 0) ("entry" . ((("id" . "a"))))))
+         `(("currentIndex" . 1) ("playing" . :json-false) ("position" . 42)
+           ("entry" . ((("id" . "a")) (("id" . "b")) (("id" . "c"))))))
+   (supersonic-tests--resolve (supersonic-jukebox--enqueue '("d")))
+   (should (equal '("get" "add" "get") (supersonic-tests--jukebox-request-actions)))))
+
+(ert-deftest supersonic-tests-jukebox-enqueue-plays-first-new-entry-if-queue-finished ()
+  "`supersonic-jukebox-enqueue' skips to the first entry it enqueued and
+starts it when the jukebox had already played its last entry to the
+end -- which Navidrome reports as `currentIndex' still on that last
+entry, not playing, at position 0 -- see #39."
+  (supersonic-tests--with-jukebox
+   (setq supersonic-tests--jukebox-playlist
+         `(("currentIndex" . 2) ("playing" . :json-false) ("position" . 0)
+           ("entry" . ((("id" . "a")) (("id" . "b")) (("id" . "c"))))))
+   (supersonic-tests--resolve (supersonic-jukebox--enqueue '("d" "e")))
+   (should (equal '("get" "add" "skip" "start" "get") (supersonic-tests--jukebox-request-actions)))
+   (let ((skip-request (seq-find (lambda (query) (equal "skip" (alist-get "action" query nil nil #'equal)))
+                                 supersonic-tests--jukebox-requests)))
+     (should (equal "3" (alist-get "index" skip-request nil nil #'equal))))))
+
+(ert-deftest supersonic-tests-jukebox-enqueue-only-appends-if-stopped-within-last-entry ()
+  "`supersonic-jukebox-enqueue' only sends `add' when the jukebox was
+stopped partway through its last entry, rather than having played it
+to the end: that entry is still there to resume."
+  (supersonic-tests--with-jukebox
+   (setq supersonic-tests--jukebox-playlist
+         `(("currentIndex" . 2) ("playing" . :json-false) ("position" . 42)
+           ("entry" . ((("id" . "a")) (("id" . "b")) (("id" . "c"))))))
+   (supersonic-tests--resolve (supersonic-jukebox--enqueue '("d")))
+   (should (equal '("get" "add" "get") (supersonic-tests--jukebox-request-actions)))))
+
+(ert-deftest supersonic-tests-jukebox-enqueue-starts-playback-if-queue-empty ()
+  "`supersonic-jukebox-enqueue' also sends `start' when the jukebox's
+playlist was empty, honoring `supersonic-playback-enqueue''s contract
+that enqueuing starts playback from idle.  No `skip' is needed: the
+server points its index at the first entry `add' brings in by itself."
+  (supersonic-tests--with-jukebox
+   (setq supersonic-tests--jukebox-playlist
+         `(("currentIndex" . -1) ("playing" . :json-false) ("position" . 0)))
    (supersonic-tests--resolve (supersonic-jukebox--enqueue '("a")))
-   (should (equal '("add" "start" "get") (supersonic-tests--jukebox-request-actions)))))
+   (should (equal '("get" "add" "start" "get") (supersonic-tests--jukebox-request-actions)))))
 
 (ert-deftest supersonic-tests-jukebox-toggle-play-starts-or-stops-from-cache ()
   "`supersonic-jukebox-toggle-play' sends `stop' when the cached snapshot
