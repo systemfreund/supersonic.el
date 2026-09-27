@@ -238,12 +238,26 @@ Asks getPodcasts for that one channel, episodes included."
  nil)
 
 (aio-defun
- supersonic-subsonic--stream-url (id)
+ supersonic-subsonic--stream-url (id &optional format)
  "Return a promise resolving to the stream.view URL for track ID.
 Built locally, without asking the server anything.  It carries the
 \"u\"/\"t\"/\"s\" token-auth triple, which never expires -- hence the
-facade's warning to keep it off command lines."
- (supersonic-build-url "/stream.view" `(("id" . ,id))))
+facade's warning to keep it off command lines.
+
+FORMAT, if given, is the plist the facade documents for `stream-url' --
+`(:format EXT :max-bit-rate KBPS)'.  `:format' becomes stream.view's
+own `format' parameter (transcode to EXT, or \"raw\" to skip Subsonic's
+usual on-the-fly transcoding), `:max-bit-rate' becomes `maxBitRate' in
+kbps.  Either key left out of FORMAT is left out of the request, the
+same as when FORMAT is nil altogether, so the server keeps deciding
+for itself exactly as it always has."
+ (supersonic-build-url
+  "/stream.view"
+  (append
+   `(("id" . ,id))
+   (and (plist-get format :format) `(("format" . ,(plist-get format :format))))
+   (and (plist-get format :max-bit-rate)
+        `(("maxBitRate" . ,(number-to-string (plist-get format :max-bit-rate))))))))
 
 (defun supersonic-subsonic--scrobble (id now-playing)
   "Scrobble track ID via scrobble.view, as now playing if NOW-PLAYING."
