@@ -2527,29 +2527,49 @@ keeping whatever supersonic itself first memoized for that host."
       (setq user "right-user")
       (should (equal "right-user" (plist-get (supersonic-auth) :user))))))
 
-(ert-deftest supersonic-tests-tracks-parse-follows-browse-by-tags-toggle ()
-  "`supersonic-tracks-parse' reads the track list from whichever json path
+(ert-deftest supersonic-tests-subsonic-album-tracks-follow-browse-by-tags-toggle ()
+  "The Subsonic provider reads an album's tracks from whichever json path
 matches the *current* `supersonic-browse-by-tags' value, staying
-consistent with `supersonic-tracks-json' (which picks the endpoint
-the same way) rather than parsing at a path cached from whatever
-`supersonic-browse-by-tags' was when the package was loaded."
+consistent with the endpoint it picks the same way, rather than parsing
+at a path cached from whatever `supersonic-browse-by-tags' was when the
+package was loaded."
   (let ((tag-response '(("subsonic-response" ("album" ("song" (("title" . "Tag Song") ("id" . "1")))))))
         (folder-response '(("subsonic-response" ("directory" ("child" (("title" . "Folder Song") ("id" . "2"))))))))
     (let ((supersonic-browse-by-tags t))
-      (should (equal "Tag Song" (aref (nth 1 (car (supersonic-tracks-parse tag-response))) 0))))
+      (should (equal '((:id "1" :title "Tag Song")) (supersonic-subsonic--album-tracks-from tag-response))))
     (let ((supersonic-browse-by-tags nil))
-      (should (equal "Folder Song" (aref (nth 1 (car (supersonic-tracks-parse folder-response))) 0))))))
+      (should (equal '((:id "2" :title "Folder Song")) (supersonic-subsonic--album-tracks-from folder-response))))))
 
-(ert-deftest supersonic-tests-artists-parse-flattens-index-buckets ()
-  "`supersonic-artists-parse' flattens every letter bucket of the
-\"index\" array into a single list of (id [name]) tabulated-list
-entries, in bucket order, covering every bucket rather than just the
-first."
-  (let ((data
-         '(("subsonic-response" ("artists" ("index"
-              (("artist" (("id" . "1") ("name" . "Alice")) (("id" . "2") ("name" . "Bob"))))
-              (("artist" (("id" . "3") ("name" . "Carl"))))))))))
-    (should (equal '(("1" ["Alice"]) ("2" ["Bob"]) ("3" ["Carl"])) (supersonic-artists-parse data)))))
+(ert-deftest supersonic-tests-subsonic-album-tracks-picks-endpoint-by-browse-by-tags ()
+  "`supersonic-browse-by-tags' picks getAlbum or getMusicDirectory inside
+the Subsonic provider, and the response is parsed at the path matching
+the endpoint that was asked."
+  (let (endpoints)
+    (cl-letf (((symbol-function 'supersonic-build-url) (lambda (endpoint _extra-query) (push endpoint endpoints) endpoint))
+              ((symbol-function 'supersonic-get-json)
+               (aio-lambda
+                (url)
+                (if (equal url "/getAlbum.view")
+                    '(("subsonic-response" ("album" ("song" (("title" . "Tag Song") ("id" . "1"))))))
+                  '(("subsonic-response" ("directory" ("child" (("title" . "Folder Song") ("id" . "2"))))))))))
+      (let ((supersonic-browse-by-tags t))
+        (should (equal "Tag Song" (plist-get (car (aio-wait-for (supersonic-subsonic--album-tracks "a"))) :title))))
+      (let ((supersonic-browse-by-tags nil))
+        (should (equal "Folder Song" (plist-get (car (aio-wait-for (supersonic-subsonic--album-tracks "a"))) :title))))
+      (should (equal '("/getMusicDirectory.view" "/getAlbum.view") endpoints)))))
+
+(ert-deftest supersonic-tests-subsonic-artists-flatten-index-buckets ()
+  "The Subsonic provider flattens every letter bucket of getArtists'
+\"index\" array into a single list of artists, in bucket order, covering
+every bucket rather than just the first -- and the artists buffer turns
+those into one (id [name]) row apiece."
+  (let* ((data
+          '(("subsonic-response" ("artists" ("index"
+               (("artist" (("id" . "1") ("name" . "Alice")) (("id" . "2") ("name" . "Bob"))))
+               (("artist" (("id" . "3") ("name" . "Carl")))))))))
+         (artists (supersonic-subsonic--artists-from data)))
+    (should (equal '((:id "1" :name "Alice") (:id "2" :name "Bob") (:id "3" :name "Carl")) artists))
+    (should (equal '(("1" ["Alice"]) ("2" ["Bob"]) ("3" ["Carl"])) (supersonic-artists-rows artists)))))
 
 (ert-deftest supersonic-tests-albums-buffer-becomes-current ()
   "`supersonic-albums' leaves the freshly created album-list buffer as
@@ -2624,7 +2644,7 @@ buffer over one such row."
                 (("title" . "Not Downloaded") ("id" . "1") ("status" . "skipped"))
                 (("title" . "Ready") ("id" . "2") ("status" . "completed") ("duration" . 3725)))))))))
         (supersonic-browse-by-tags t))
-    (let ((rows (supersonic-tracks-parse tracks)))
+    (let ((rows (supersonic-tracks-rows (supersonic-subsonic--album-tracks-from tracks))))
       (should (equal "" (aref (nth 1 (nth 0 rows)) 1)))
       (should (equal "1:05" (aref (nth 1 (nth 1 rows)) 1))))
     (let ((rows (supersonic-podcast-episodes-parse episodes)))
@@ -3660,6 +3680,235 @@ variable, with no separate mode to turn on."
           (should-not supersonic-jukebox--live))
       (when (timerp supersonic-jukebox--timer)
         (cancel-timer supersonic-jukebox--timer)))))
+
+;;;
+;;; Library provider facade
+;;;
+
+(defmacro supersonic-tests--with-provider (operations &rest body)
+  "Run BODY with a provider implementing OPERATIONS registered and active.
+OPERATIONS is an alist as `supersonic-provider-register' takes it.  The
+provider is registered under a throwaway name, selected via
+`supersonic-provider' for BODY's duration, and unregistered again
+afterwards, so no test leaks it into another."
+  (declare (indent 1))
+  `(let ((supersonic-provider 'supersonic-tests-fake))
+     (supersonic-provider-register 'supersonic-tests-fake ,operations)
+     (unwind-protect
+         (progn
+           ,@body)
+       (remhash 'supersonic-tests-fake supersonic-provider--providers))))
+
+(defun supersonic-tests--resolved (value)
+  "Return a function ignoring its arguments and returning a promise of VALUE."
+  (lambda (&rest _)
+    (let ((promise (aio-promise)))
+      (aio-resolve promise (lambda () value))
+      promise)))
+
+(defconst supersonic-tests--fake-library
+  `((artists . ,(supersonic-tests--resolved '((:id "ar/1" :name "Alice") (:id "ar/2" :name "Bob"))))
+    (artist-albums
+     . ,(lambda (artist-id)
+          (funcall (supersonic-tests--resolved
+                    (list (list :id (concat artist-id "/al-1") :name "First" :year 1999)
+                          (list :id (concat artist-id "/al-2") :name "Second"))))))
+    (album-list
+     . ,(lambda (type count)
+          (funcall (supersonic-tests--resolved
+                    (list (list :id (format "%s-%d" type count) :name "Listed" :artist "Carl"))))))
+    (album-tracks
+     . ,(lambda (album-id)
+          (funcall (supersonic-tests--resolved
+                    (list (list :id (concat album-id "/01.flac") :title "One" :duration 65 :track 1)
+                          (list :id (concat album-id "/02.flac") :title "Two"))))))
+    (search
+     . ,(supersonic-tests--resolved
+         '(:artists ((:id "ar/1" :name "Alice"))
+           :albums ((:id "ar/1/al-1" :name "First"))
+           :tracks ((:id "ar/1/al-1/01.flac" :title "One"))))))
+  "A complete in-memory library, with mpd-style path ids.
+Nothing in it resembles a Subsonic id or response, so a buffer that
+renders it correctly cannot be relying on Subsonic behind the facade.")
+
+(ert-deftest supersonic-tests-provider-register-rejects-unknown-operations ()
+  "Registering an operation the facade does not know, or an implementation
+that is not a function, is refused -- the same checks
+`supersonic-playback-register-backend' makes."
+  (should-error (supersonic-provider-register 'supersonic-tests-bad '((no-such-op . ignore))))
+  (should-error (supersonic-provider-register 'supersonic-tests-bad '((artists . "not a function"))))
+  (should-not (gethash 'supersonic-tests-bad supersonic-provider--providers)))
+
+(ert-deftest supersonic-tests-provider-missing-provider-or-operation-is-a-user-error ()
+  "An unregistered `supersonic-provider', or an operation the active one
+leaves out, is reported as a `user-error' -- through the promise, so a
+refresh's own error handling gets to show it -- and
+`supersonic-provider-supports-p' says as much without signalling."
+  (let ((supersonic-provider 'supersonic-tests-nobody))
+    (should-not (supersonic-provider-supports-p 'artists))
+    (should-not (supersonic-provider-config-hints))
+    (should-error (aio-wait-for (supersonic-provider-artists)) :type 'user-error))
+  (supersonic-tests--with-provider `((artists . ,(supersonic-tests--resolved nil)))
+    (should (supersonic-provider-supports-p 'artists))
+    (should-not (supersonic-provider-supports-p 'search))
+    (should-error (aio-wait-for (supersonic-provider-search "x")) :type 'user-error)
+    (condition-case err
+        (aio-wait-for (supersonic-provider-search "x"))
+      (user-error (should (string-match-p "cannot search" (error-message-string err)))))))
+
+(ert-deftest supersonic-tests-provider-album-list-rejects-unknown-types ()
+  "`supersonic-provider-album-list' only passes on the types it documents."
+  (supersonic-tests--with-provider supersonic-tests--fake-library
+    (should-error (aio-wait-for (supersonic-provider-album-list 'starred 10)))
+    (should (equal "newest-10" (plist-get (car (aio-wait-for (supersonic-provider-album-list 'newest 10))) :id)))))
+
+(ert-deftest supersonic-tests-subsonic-is-the-default-provider ()
+  "Loading supersonic.el registers the Subsonic provider under the name
+`supersonic-provider' selects by default."
+  (should (eq 'subsonic (default-value 'supersonic-provider)))
+  (should (memq 'subsonic (supersonic-provider-names))))
+
+(ert-deftest supersonic-tests-subsonic-maps-items-to-provider-vocabulary ()
+  "The Subsonic provider hands out plists in the facade's vocabulary:
+numeric ids become strings, `coverArt' becomes `:art', and a field the
+server left out is absent rather than nil."
+  (should (equal '(:id "7" :name "Alice" :art "ar-7")
+                 (supersonic-subsonic--artist '(("id" . 7) ("name" . "Alice") ("coverArt" . "ar-7")))))
+  (should (equal '(:id "al-1" :name "First" :artist "Alice" :year 1999 :art "al-1")
+                 (supersonic-subsonic--album
+                  '(("id" . "al-1") ("name" . "First") ("artist" . "Alice") ("year" . 1999) ("coverArt" . "al-1")))))
+  (should (equal '(:id "s-1" :title "One" :artist "Alice" :album "First" :duration 65 :track 1 :art "al-1"
+                   :suffix "mp3" :content-type "audio/mpeg" :size 1024)
+                 (supersonic-subsonic--track
+                  '(("id" . "s-1") ("title" . "One") ("artist" . "Alice") ("album" . "First") ("duration" . 65)
+                    ("track" . 1) ("coverArt" . "al-1") ("suffix" . "mp3") ("contentType" . "audio/mpeg")
+                    ("size" . 1024) ("bitRate" . 320)))))
+  (should (equal '(:id "s-2") (supersonic-subsonic--track '(("id" . "s-2"))))))
+
+(ert-deftest supersonic-tests-subsonic-requests-and-parses-each-browse-operation ()
+  "Each browse operation of the Subsonic provider asks the endpoint it
+always did, with the same parameters, and parses the answer at the
+right path."
+  (let (requests)
+    (cl-letf (((symbol-function 'supersonic-build-url)
+               (lambda (endpoint extra-query) (push (cons endpoint extra-query) requests) endpoint))
+              ((symbol-function 'supersonic-get-json)
+               (aio-lambda
+                (url)
+                (pcase url
+                  ("/getArtist.view"
+                   '(("subsonic-response" ("artist" ("album" (("id" . "al-1") ("name" . "First") ("year" . 1999)))))))
+                  ("/getAlbumList2.view"
+                   '(("subsonic-response" ("albumList2" ("album" (("id" . "al-2") ("name" . "New") ("artist" . "Bob")))))))
+                  ("/search3.view"
+                   '(("subsonic-response" ("searchResult3"
+                                            ("artist" (("id" . "ar-1") ("name" . "Alice")))
+                                            ("album" (("id" . "al-1") ("name" . "First")))
+                                            ("song" (("id" . "s-1") ("title" . "One")))))))))))
+      (should (equal '((:id "al-1" :name "First" :year 1999))
+                     (aio-wait-for (supersonic-subsonic--artist-albums "ar-1"))))
+      (should (equal '("/getArtist.view" ("id" . "ar-1")) (pop requests)))
+      (should (equal '((:id "al-2" :name "New" :artist "Bob"))
+                     (aio-wait-for (supersonic-subsonic--album-list 'random 50))))
+      (should (equal '("/getAlbumList2.view" ("type" . "random") ("size" . "50")) (pop requests)))
+      (should (equal '(:artists ((:id "ar-1" :name "Alice")) :albums ((:id "al-1" :name "First"))
+                       :tracks ((:id "s-1" :title "One")))
+                     (aio-wait-for (supersonic-subsonic--search "the smiths"))))
+      (should (equal '("/search3.view" ("query" . "the smiths")) (pop requests))))))
+
+(ert-deftest supersonic-tests-refresh-error-shows-the-providers-config-hints ()
+  "A failed refresh lists the active provider's own configuration hints
+under the error -- Subsonic's are the ones this buffer always showed --
+and just the error for a provider with none to give."
+  (let ((buff (get-buffer-create "*supersonic-tests-artists*"))
+        (failing (lambda () (let ((p (aio-promise))) (aio-resolve p (lambda () (error "Boom"))) p))))
+    (unwind-protect
+        (progn
+          (cl-letf (((symbol-function 'supersonic-subsonic--artists) failing))
+            (aio-wait-for (supersonic-artists-refresh buff))
+            (with-current-buffer buff
+              (should (string-match-p "Error: Failed to fetch artists: Boom" (buffer-string)))
+              (should (string-match-p "Configuration hint:" (buffer-string)))
+              (should (string-match-p "  - Check that supersonic-host is configured correctly" (buffer-string)))))
+          (supersonic-tests--with-provider `((artists . ,failing))
+            (aio-wait-for (supersonic-artists-refresh buff))
+            (with-current-buffer buff
+              (should (equal "Error: Failed to fetch artists: Boom\n" (buffer-string))))))
+      (kill-buffer buff))))
+
+(ert-deftest supersonic-tests-browse-buffers-render-a-non-subsonic-provider ()
+  "The artists, artist albums, album list, tracks and search buffers
+render whatever the active provider hands back, ids included, without
+any Subsonic request being made."
+  (cl-letf (((symbol-function 'supersonic-get-json) (lambda (&rest _) (error "Subsonic was asked")))
+            ((symbol-function 'supersonic-build-url) (lambda (&rest _) (error "Subsonic was asked"))))
+    (supersonic-tests--with-provider supersonic-tests--fake-library
+      (let ((buff (get-buffer-create "*supersonic-tests-browse*"))
+            (supersonic-album-list-count 7))
+        (unwind-protect
+            (with-current-buffer buff
+              (aio-wait-for (supersonic-artists-refresh buff))
+              (should (equal '(("ar/1" ["Alice"]) ("ar/2" ["Bob"])) tabulated-list-entries))
+              (aio-wait-for (supersonic-albums-refresh "ar/1" buff))
+              (should (equal '("ar/1/al-1" "ar/1/al-2") (mapcar #'car tabulated-list-entries)))
+              (should (equal "1999" (aref (cadr (car tabulated-list-entries)) 0)))
+              (should (equal "0" (aref (cadr (cadr tabulated-list-entries)) 0)))
+              (aio-wait-for (supersonic-albums-refresh-type 'recent buff))
+              (should (equal '("recent-7") (mapcar #'car tabulated-list-entries)))
+              (should (equal "Carl" (substring-no-properties (aref (cadr (car tabulated-list-entries)) 1))))
+              (aio-wait-for (supersonic-tracks-refresh "ar/1/al-1" buff))
+              (should (equal '(("ar/1/al-1/01.flac" ["One" "1:05" "1"]) ("ar/1/al-1/02.flac" ["Two" "" "0"]))
+                             tabulated-list-entries))
+              (aio-wait-for (supersonic-search-refresh "one" buff))
+              (should (equal '((("ar/1" . "artist") ["Artist" "Alice"])
+                               (("ar/1/al-1" . "album") ["Album" "First"])
+                               (("ar/1/al-1/01.flac" . "song") ["Song" "One"]))
+                             tabulated-list-entries)))
+          (kill-buffer buff))))))
+
+(ert-deftest supersonic-tests-provider-ids-reach-playback-untouched ()
+  "Playing from the tracks and search buffers, and enqueueing an album,
+hands the playback facade the provider's own ids verbatim."
+  (let (started enqueued)
+    (cl-letf (((symbol-function 'supersonic-playback-start) (lambda (ids) (setq started ids)))
+              ((symbol-function 'supersonic-playback-enqueue) (lambda (ids) (setq enqueued ids))))
+      (supersonic-tests--with-provider supersonic-tests--fake-library
+        (let ((buff (get-buffer-create "*supersonic-tests-browse*")))
+          (unwind-protect
+              (with-current-buffer buff
+                (supersonic-tracks-mode)
+                (aio-wait-for (supersonic-tracks-refresh "ar/1/al-1" buff))
+                (goto-char (point-min))
+                (supersonic-play-tracks)
+                (should (equal '("ar/1/al-1/01.flac" "ar/1/al-1/02.flac") started))
+                (supersonic-open-search-appropriate-result '("ar/1/al-1/02.flac" . "song"))
+                (should (equal '("ar/1/al-1/02.flac") started))
+                (supersonic-album-mode)
+                (aio-wait-for (supersonic-albums-refresh "ar/2" buff))
+                ;; Past the header, which this mode prints into the buffer
+                ;; itself unless `supersonic-list-use-header-line' is set.
+                (goto-char (point-min))
+                (while (and (not (tabulated-list-get-id)) (not (eobp)))
+                  (forward-line))
+                (aio-wait-for (supersonic-enqueue-album))
+                (should (equal '("ar/2/al-1/01.flac" "ar/2/al-1/02.flac") enqueued)))
+            (kill-buffer buff)))))))
+
+(ert-deftest supersonic-tests-album-list-commands-ask-for-their-types ()
+  "The recent/random/newest commands ask the provider for the list type
+of the same name, and `supersonic-albums' still accepts it as a string."
+  (let (asked)
+    (cl-letf (((symbol-function 'supersonic-albums-refresh-type)
+               (lambda (type _buff) (push type asked) nil)))
+      (unwind-protect
+          (progn
+            (supersonic-recent-albums)
+            (supersonic-random-albums)
+            (supersonic-newest-albums)
+            (supersonic-albums nil "random"))
+        (when (get-buffer "*supersonic-albums*")
+          (kill-buffer "*supersonic-albums*"))))
+    (should (equal '(random newest random recent) asked))))
 
 (provide 'supersonic-tests)
 

@@ -1,0 +1,188 @@
+;;; supersonic-subsonic.el --- Subsonic library provider for supersonic.el -*- lexical-binding: t; -*-
+
+;; Author: systemfreund <github@o9z.de>
+;; Assisted-by: Claude:claude-opus-5
+;; URL: https://github.com/systemfreund/supersonic.el
+;; Keywords: multimedia
+
+;; This program is free software: you can redistribute it and/or modify
+;; it under the terms of the GNU General Public License as published by
+;; the Free Software Foundation, either version 3 of the License, or
+;; (at your option) any later version.
+
+;; This program is distributed in the hope that it will be useful,
+;; but WITHOUT ANY WARRANTY; without even the implied warranty of
+;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;; GNU General Public License for more details.
+
+;; You should have received a copy of the GNU General Public License
+;; along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+;;; Commentary:
+
+;; The Subsonic library provider: implements the operations of the
+;; facade in `supersonic-provider.el' against any server speaking the
+;; Subsonic REST API, and registers them under the name `subsonic'.
+;;
+;; Everything Subsonic-shaped about browsing stops here.  Requests go
+;; out through `supersonic-api.el'; what comes back is turned from
+;; Subsonic's JSON into the facade's plist vocabulary before anyone
+;; else sees it, so no list buffer ever has to know which endpoint an
+;; artist came from or what key a server keeps an album's year under.
+;; Subsonic ids are handed out verbatim, as the opaque ids the facade
+;; asks for, and `coverArt' becomes `:art'.
+;;
+;; Which endpoint an album's tracks come from is Subsonic's own
+;; business too: `supersonic-browse-by-tags' picks between the ID3 tag
+;; view (getAlbum) and the folder view (getMusicDirectory) in here,
+;; not in the buffer that shows the result.
+
+;;; Code:
+
+(require 'aio)
+
+(require 'supersonic-custom)
+(require 'supersonic-api)
+(require 'supersonic-provider)
+
+;;;
+;;; Subsonic JSON -> facade plists
+;;;
+
+(defun supersonic-subsonic--plist (data mapping)
+  "Build a facade plist from Subsonic alist DATA according to MAPPING.
+MAPPING is a list of (KEY . FIELD) pairs: each KEY of the result is
+set to DATA's FIELD.  Fields DATA does not have are left out entirely
+instead of being set to nil, so a missing value reads the same as a
+key the provider never heard of.  `:id' always comes first, taken from
+DATA's \"id\" as a string."
+  (let ((plist (list :id (supersonic-get-id-as-string data))))
+    (dolist (pair mapping)
+      (let ((value (assoc-default (cdr pair) data)))
+        (when value
+          (setq plist (append plist (list (car pair) value))))))
+    plist))
+
+(defun supersonic-subsonic--artist (data)
+  "Turn a Subsonic artist alist DATA into a facade artist plist."
+  (supersonic-subsonic--plist data '((:name . "name") (:art . "coverArt"))))
+
+(defun supersonic-subsonic--album (data)
+  "Turn a Subsonic album alist DATA into a facade album plist."
+  (supersonic-subsonic--plist
+   data '((:name . "name") (:artist . "artist") (:year . "year") (:art . "coverArt"))))
+
+(defun supersonic-subsonic--track (data)
+  "Turn a Subsonic song/child alist DATA into a facade track plist."
+  (supersonic-subsonic--plist
+   data
+   '((:title . "title")
+     (:artist . "artist")
+     (:album . "album")
+     (:duration . "duration")
+     (:track . "track")
+     (:art . "coverArt")
+     (:suffix . "suffix")
+     (:content-type . "contentType")
+     (:size . "size"))))
+
+(defun supersonic-subsonic--artists-from (data)
+  "Return the facade artists in a parsed getArtists response DATA.
+Flattens every letter bucket of the \"index\" array, in bucket order."
+  (mapcan
+   (lambda (bucket) (mapcar #'supersonic-subsonic--artist (assoc-default "artist" bucket)))
+   (supersonic-recursive-assoc data '("subsonic-response" "artists" "index"))))
+
+(defun supersonic-subsonic--artist-albums-from (data)
+  "Return the facade albums in a parsed getArtist response DATA."
+  (mapcar #'supersonic-subsonic--album (supersonic-recursive-assoc data '("subsonic-response" "artist" "album"))))
+
+(defun supersonic-subsonic--album-list-from (data)
+  "Return the facade albums in a parsed getAlbumList2 response DATA."
+  (mapcar #'supersonic-subsonic--album (supersonic-recursive-assoc data '("subsonic-response" "albumList2" "album"))))
+
+(defun supersonic-subsonic--tracks-path ()
+  "Return the json path to a track list, per current `supersonic-browse-by-tags'.
+Computed fresh on every call rather than cached, so that toggling
+`supersonic-browse-by-tags' at runtime stays consistent with
+`supersonic-subsonic--album-tracks', which also reads it live to pick
+the endpoint -- a cached path here would otherwise go stale and parse
+the response at the wrong key."
+  (if supersonic-browse-by-tags
+      '("subsonic-response" "album" "song")
+    '("subsonic-response" "directory" "child")))
+
+(defun supersonic-subsonic--album-tracks-from (data)
+  "Return the facade tracks in a parsed getAlbum/getMusicDirectory response DATA."
+  (mapcar #'supersonic-subsonic--track (supersonic-recursive-assoc data (supersonic-subsonic--tracks-path))))
+
+(defun supersonic-subsonic--search-from (data)
+  "Return the facade search result in a parsed search3 response DATA."
+  (let ((results (supersonic-recursive-assoc data '("subsonic-response" "searchResult3"))))
+    (list
+     :artists (mapcar #'supersonic-subsonic--artist (assoc-default "artist" results))
+     :albums (mapcar #'supersonic-subsonic--album (assoc-default "album" results))
+     :tracks (mapcar #'supersonic-subsonic--track (assoc-default "song" results)))))
+
+;;;
+;;; Operations
+;;;
+
+(aio-defun
+ supersonic-subsonic--artists () "Return a promise resolving to every artist, via getArtists."
+ (supersonic-subsonic--artists-from (aio-await (supersonic-get-json (supersonic-build-url "/getArtists.view" '())))))
+
+(aio-defun
+ supersonic-subsonic--artist-albums
+ (id)
+ "Return a promise resolving to the albums of artist ID, via getArtist."
+ (supersonic-subsonic--artist-albums-from
+  (aio-await (supersonic-get-json (supersonic-build-url "/getArtist.view" `(("id" . ,id)))))))
+
+(aio-defun
+ supersonic-subsonic--album-list
+ (type count)
+ "Return a promise resolving to at most COUNT albums of list TYPE.
+Asks getAlbumList2.  TYPE is one of `supersonic-provider-album-list-types', each of which
+is also the name getAlbumList2 knows that list under."
+ (supersonic-subsonic--album-list-from
+  (aio-await
+   (supersonic-get-json
+    (supersonic-build-url
+     "/getAlbumList2.view" `(("type" . ,(symbol-name type)) ("size" . ,(number-to-string count))))))))
+
+(aio-defun
+ supersonic-subsonic--album-tracks
+ (id)
+ "Return a promise resolving to the tracks of album ID.
+Asks getAlbum when `supersonic-browse-by-tags' is non-nil, and
+getMusicDirectory -- ID then being a directory -- otherwise."
+ (supersonic-subsonic--album-tracks-from
+  (aio-await
+   (supersonic-get-json
+    (if supersonic-browse-by-tags
+        (supersonic-build-url "/getAlbum.view" `(("id" . ,id)))
+      (supersonic-build-url "/getMusicDirectory.view" `(("id" . ,id))))))))
+
+(aio-defun
+ supersonic-subsonic--search (query) "Return a promise resolving to the search3 results for QUERY."
+ (supersonic-subsonic--search-from
+  (aio-await (supersonic-get-json (supersonic-build-url "/search3.view" `(("query" . ,query)))))))
+
+(defun supersonic-subsonic--config-hints ()
+  "Return what to check when a request to the Subsonic server fails."
+  '("Check that supersonic-host is configured correctly"
+    "Ensure the scheme (http:// or https://) matches your server"
+    "Verify .authinfo has the correct host (must match supersonic-host exactly)"))
+
+(supersonic-provider-register
+ 'subsonic
+ `((artists . supersonic-subsonic--artists)
+   (artist-albums . supersonic-subsonic--artist-albums)
+   (album-list . supersonic-subsonic--album-list)
+   (album-tracks . supersonic-subsonic--album-tracks)
+   (search . supersonic-subsonic--search)
+   (config-hints . supersonic-subsonic--config-hints)))
+
+(provide 'supersonic-subsonic)
+;;; supersonic-subsonic.el ends here
