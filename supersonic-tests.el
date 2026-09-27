@@ -3576,6 +3576,36 @@ has no dedicated \"previous track\" action of its own."
    (let ((skip-request (car (reverse supersonic-tests--jukebox-requests))))
      (should (equal "1" (alist-get "index" skip-request nil nil #'equal))))))
 
+(ert-deftest supersonic-tests-jukebox-next-is-a-no-op-on-the-last-track ()
+  "`supersonic-jukebox-next' sends no `skip' when the cached current
+index is already the last entry -- an out-of-range index left `skip'
+replaying the last entry instead of doing nothing (#50)."
+  (supersonic-tests--with-jukebox
+   (setq supersonic-tests--jukebox-playlist
+         `(("currentIndex" . 2)
+           ("playing" . t)
+           ("position" . 0)
+           ("entry" . ((("id" . "a")) (("id" . "b")) (("id" . "c"))))))
+   (supersonic-tests--resolve (supersonic-jukebox--poll))
+   (setq supersonic-tests--jukebox-requests nil)
+   (supersonic-tests--resolve (supersonic-jukebox--next))
+   (should (equal '("get") (supersonic-tests--jukebox-request-actions)))))
+
+(ert-deftest supersonic-tests-jukebox-prev-is-a-no-op-on-the-first-track ()
+  "`supersonic-jukebox-prev' sends no `skip' when the cached current
+index is already the first entry -- a negative index left `skip'
+replaying the last entry instead of doing nothing (#50)."
+  (supersonic-tests--with-jukebox
+   (setq supersonic-tests--jukebox-playlist
+         `(("currentIndex" . 0)
+           ("playing" . t)
+           ("position" . 0)
+           ("entry" . ((("id" . "a")) (("id" . "b")) (("id" . "c"))))))
+   (supersonic-tests--resolve (supersonic-jukebox--poll))
+   (setq supersonic-tests--jukebox-requests nil)
+   (supersonic-tests--resolve (supersonic-jukebox--prev))
+   (should (equal '("get") (supersonic-tests--jukebox-request-actions)))))
+
 (ert-deftest supersonic-tests-jukebox-seek-adds-offset-to-interpolated-position ()
   "`supersonic-jukebox-seek' sends `skip' back to the current index with
 an absolute `offset' -- the interpolated current position plus the

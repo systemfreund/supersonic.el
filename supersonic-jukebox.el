@@ -386,11 +386,17 @@ jukebox operation avoids a request just to learn current state."
   (ignore (supersonic-jukebox--toggle-play)))
 
 (aio-defun
- supersonic-jukebox--next () "Skip the jukebox to the entry after the cached snapshot's current one."
+ supersonic-jukebox--next ()
+ "Skip the jukebox to the entry after the cached snapshot's current one.
+A no-op past the last entry: `skip' has no bounds of its own, so asking
+it for an out-of-range index there just replays the last entry instead
+of stopping (#50)."
  (supersonic--with-async-error-handling
   nil "skip to the next jukebox track"
-  (let ((index (1+ (or (plist-get supersonic-jukebox--snapshot :current-index) -1))))
-    (aio-await (supersonic-jukebox--request "skip" `(("index" . ,(number-to-string index))))))
+  (let ((index (1+ (or (plist-get supersonic-jukebox--snapshot :current-index) -1)))
+        (length (length (plist-get supersonic-jukebox--snapshot :entries))))
+    (when (< index length)
+      (aio-await (supersonic-jukebox--request "skip" `(("index" . ,(number-to-string index)))))))
   (aio-await (supersonic-jukebox--poll))))
 
 (defun supersonic-jukebox-next ()
@@ -402,11 +408,15 @@ jukebox operation avoids a request just to learn current state."
  "Skip the jukebox to the entry before the cached snapshot's current one.
 jukeboxControl has no \"previous track\" action of its own, only `skip'
 to an arbitrary index -- see #9 -- so this is `supersonic-jukebox--next'
-with the cached `:current-index' decremented instead of incremented."
+with the cached `:current-index' decremented instead of incremented.  A
+no-op before the first entry: `skip' has no bounds of its own, so asking
+it for a negative index there just replays the last entry instead of
+doing nothing (#50)."
  (supersonic--with-async-error-handling
   nil "skip to the previous jukebox track"
   (let ((index (1- (or (plist-get supersonic-jukebox--snapshot :current-index) -1))))
-    (aio-await (supersonic-jukebox--request "skip" `(("index" . ,(number-to-string index))))))
+    (when (>= index 0)
+      (aio-await (supersonic-jukebox--request "skip" `(("index" . ,(number-to-string index)))))))
   (aio-await (supersonic-jukebox--poll))))
 
 (defun supersonic-jukebox-prev ()
