@@ -23,7 +23,9 @@
 ;; The single door through which every list buffer supersonic.el
 ;; renders asks for library data -- and so do the play queue, the
 ;; now-playing buffer and MPRIS for the metadata of what is playing,
-;; and the playback backends for what to stream and where to scrobble.
+;; the playback backends for what to stream and where to scrobble,
+;; and the cover art and waveform caches for art and a name to file
+;; things under.
 ;; It is the counterpart, for *where music comes from*, of what
 ;; `supersonic-playback.el' is for *how it gets played*.  A provider -- currently only Subsonic, via
 ;; `supersonic-subsonic.el' -- registers the functions implementing a
@@ -75,9 +77,10 @@
 (defconst supersonic-provider-operations
   '(artists artist-albums album-list album-tracks track search
     podcasts podcast-episodes add-podcast download-podcast-episode
-    stream-url scrobble config-hints)
+    stream-url scrobble cover-art cache-namespace config-hints)
   "The library operations a provider can implement.
-All but `scrobble' and `config-hints' return a promise.
+All but `scrobble', `cache-namespace' and `config-hints' return a
+promise.
 
 - `artists' takes no arguments and resolves to a list of artists.
 - `artist-albums' takes an artist id and resolves to that artist's
@@ -115,6 +118,14 @@ All but `scrobble' and `config-hints' return a promise.
   non-nil, as having been played otherwise.  Fire and forget: it sets
   the report in motion and returns, and its return value means
   nothing -- nobody waits for a scrobble to land.
+- `cover-art' takes an `:art' reference and a SIZE in pixels and
+  resolves to the image's bytes, as a unibyte string.  SIZE is a hint
+  only: a provider that cannot scale on its side returns the image as
+  it is, and Emacs scales it for display.
+- `cache-namespace' takes no arguments and returns a string naming
+  the library this provider is currently connected to -- a server
+  address, a music directory -- so that what is cached from one never
+  stands in for another's.  See `supersonic-provider-cache-name'.
 - `config-hints' takes no arguments and returns a list of strings,
   each a hint on what to check in this provider's configuration when
   a request fails -- shown underneath the error in the list buffer
@@ -273,6 +284,30 @@ that; it is reported in the echo area instead."
       (error
        (message "[Supersonic] Failed to scrobble: %s" (error-message-string err))))
     nil))
+
+(aio-defun
+ supersonic-provider-cover-art (art size)
+ "Return a promise resolving to the bytes of cover art ART at about SIZE pixels.
+ART is an item's `:art' reference, never the item's own id."
+ (aio-await (supersonic-provider--call 'cover-art art size)))
+
+(defun supersonic-provider-cache-name (id)
+  "Return a file name for ID that is safe, bounded and unique to the library.
+ID is any id or `:art' reference the active provider handed out.
+Provider ids are opaque and may be paths or URIs -- slashes, colons,
+spaces, non-ASCII -- so ID is hashed rather than used as is, together
+with the provider's `cache-namespace', so that the same ID from two
+servers still names two files.  The provider's name leads, readable,
+for whoever looks at the cache directory.  Never signals, even for a
+provider that is not registered, since cache lookups happen during
+rendering."
+  (let ((namespace (or (and (supersonic-provider-supports-p 'cache-namespace)
+                            (ignore-errors
+                              (supersonic-provider--call 'cache-namespace)))
+                       "")))
+    (format "%s-%s"
+            (replace-regexp-in-string "[^[:alnum:]_-]" "_" (symbol-name supersonic-provider))
+            (secure-hash 'sha256 (encode-coding-string (concat namespace "\0" id) 'utf-8)))))
 
 (defun supersonic-provider-config-hints ()
   "Return the active provider's configuration hints, a list of strings.

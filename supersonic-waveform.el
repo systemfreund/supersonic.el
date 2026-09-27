@@ -116,12 +116,16 @@ envelope from a different rate is a different measurement of the same
 track, not a reusable one.  It is read from the variable rather than
 passed in, unlike BUCKETS, because nothing outside the transcode has
 any use for it.
+ID is named via `supersonic-provider-cache-name', which makes any
+track id a single valid file name and keeps different providers' and
+servers' waveforms apart.
 Prefixed with \"waveform-\": `supersonic-cache-path' is shared with
 `supersonic-art-cache-file', whose own ID could otherwise coincide
 with this one (e.g. a track and its own cover art id) and collide on
 the same file name."
   (expand-file-name
-   (format "waveform-%s-%d-%d" id buckets supersonic-waveform-samplerate) supersonic-cache-path))
+   (format "waveform-%s-%d-%d" (supersonic-provider-cache-name id) buckets supersonic-waveform-samplerate)
+   supersonic-cache-path))
 
 (defun supersonic-waveform-cancel ()
   "Kill any in-flight waveform transcode and discard its output file.

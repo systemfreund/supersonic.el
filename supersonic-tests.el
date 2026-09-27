@@ -4454,6 +4454,161 @@ can be switched away from and the buffers watching it keep working."
         (should-not (supersonic-playback-live-p))
         (supersonic-playback-stop)))))
 
+;;;
+;;; Cover art through the provider; cache naming
+;;;
+
+(defun supersonic-tests--cover-art (record)
+  "Return a fake `cover-art' operation calling RECORD with each (ART . SIZE).
+It resolves to ART's name, UTF-8 encoded, as the image bytes."
+  (lambda (art size)
+    (funcall record (cons art size))
+    (funcall (supersonic-tests--resolved (encode-coding-string (concat "bytes of " art) 'utf-8)))))
+
+(defun supersonic-tests--first-cell (n)
+  "Return column N of the current buffer's first tabulated-list entry."
+  (aref (cadr (car tabulated-list-entries)) n))
+
+(ert-deftest supersonic-tests-cache-name-is-safe-bounded-and-distinct ()
+  "`supersonic-provider-cache-name' turns any id -- a path, a URI, one
+with spaces or non-ASCII characters -- into a single short file name,
+distinct per id, per server of the same provider, and per provider."
+  (let ((ids '("Artist/Album/01 - Track.flac" "mpd://host:6600/a b" "Ärzte/Über/ß" "plain"))
+        (supersonic-cache-path "/tmp/supersonic-tests-cache"))
+    (let ((names (mapcar #'supersonic-provider-cache-name ids)))
+      (dolist (name names)
+        (should (string-match-p "\\`[[:alnum:]_-]+\\'" name))
+        (should (< (length name) 100))
+        (should (equal (file-name-directory (supersonic-art-cache-file name 100))
+                       (file-name-as-directory supersonic-cache-path))))
+      (should (= (length ids) (length (delete-dups (copy-sequence names))))))
+    (dolist (id ids)
+      (should (equal (file-name-directory (supersonic-art-cache-file id 100))
+                     (file-name-as-directory supersonic-cache-path)))
+      (should (equal (file-name-directory (supersonic-waveform-cache-file id 100))
+                     (file-name-as-directory supersonic-cache-path)))))
+  (let ((one (let ((supersonic-host "https://one.example")) (supersonic-provider-cache-name "al-1")))
+        (two (let ((supersonic-host "https://two.example")) (supersonic-provider-cache-name "al-1"))))
+    (should-not (equal one two))
+    (should (string-prefix-p "subsonic-" one)))
+  (let ((subsonic (supersonic-provider-cache-name "al-1")))
+    (supersonic-tests--with-provider `((cache-namespace . ,(lambda () "")))
+      (should-not (equal subsonic (supersonic-provider-cache-name "al-1")))))
+  (let ((supersonic-provider 'never-registered))
+    (should (supersonic-provider-cache-name "al-1"))))
+
+(ert-deftest supersonic-tests-subsonic-cover-art-asks-get-cover-art ()
+  "The Subsonic provider's `cover-art' asks getCoverArt for the art
+reference at the size given and resolves to the body's bytes; a failed
+request rejects."
+  (let (requests)
+    (cl-letf (((symbol-function 'supersonic-build-url)
+               (lambda (endpoint query) (push (cons endpoint query) requests) "dummy://url")))
+      (supersonic-tests--with-stubbed-response "PNG-BYTES"
+        (should (equal "PNG-BYTES" (supersonic-tests--resolve (supersonic-provider-cover-art "al-1" 300)))))
+      (should (equal '(("/getCoverArt.view" ("id" . "al-1") ("size" . "300"))) requests))
+      (cl-letf (((symbol-function 'supersonic-url-retrieve)
+                 (aio-lambda (_url) (cons '(:error (error "404")) (generate-new-buffer " *supersonic-tests*")))))
+        (should-error (supersonic-tests--resolve (supersonic-provider-cover-art "al-1" 300)))))))
+
+(ert-deftest supersonic-tests-fetch-art-goes-through-the-provider ()
+  "`supersonic--fetch-art' caches whatever bytes the active provider's
+`cover-art' resolves to, without any Subsonic request, and asks only
+once per art reference and size."
+  (let ((supersonic-cache-path (make-temp-file "supersonic-tests-cache-" t))
+        (requests nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'supersonic-build-url) (lambda (&rest _) (error "Subsonic was asked"))))
+          (supersonic-tests--with-provider
+              `((cover-art . ,(supersonic-tests--cover-art (lambda (r) (push r requests)))))
+            (supersonic-tests--resolve (supersonic--fetch-art "covers/ä b" 100))
+            (supersonic-tests--resolve (supersonic--fetch-art "covers/ä b" 100))
+            (should (equal '(("covers/ä b" . 100)) requests))
+            (with-temp-buffer
+              (set-buffer-multibyte nil)
+              (insert-file-contents-literally (supersonic-art-cache-file "covers/ä b" 100))
+              (should (equal (encode-coding-string "bytes of covers/ä b" 'utf-8) (buffer-string))))))
+      (delete-directory supersonic-cache-path t))))
+
+(ert-deftest supersonic-tests-list-art-uses-the-art-reference ()
+  "Album lists and podcasts fetch art by each item's `:art' reference,
+not by its id, and an item without one simply gets no art."
+  (let ((supersonic-cache-path (make-temp-file "supersonic-tests-cache-" t))
+        (supersonic-enable-art t)
+        (requests nil)
+        (buff (get-buffer-create "*supersonic-tests-art*")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t))
+                  ((symbol-function 'supersonic-image-propertize) (lambda (art _size) (concat "ART:" art)))
+                  ((symbol-function 'supersonic-build-url) (lambda (&rest _) (error "Subsonic was asked"))))
+          (supersonic-tests--with-provider
+              `((cover-art . ,(supersonic-tests--cover-art (lambda (r) (push r requests))))
+                (artist-albums
+                 . ,(supersonic-tests--resolved '((:id "ar/1/al-1" :name "First" :art "cover-1")
+                                                  (:id "ar/1/al-2" :name "Second"))))
+                (album-list . ,(supersonic-tests--resolved '((:id "al-9" :name "Listed" :art "cover-9"))))
+                (podcasts . ,(supersonic-tests--resolved '((:id "pod-1" :title "Pod" :art "cover-p")))))
+            (with-current-buffer buff
+              (aio-wait-for (supersonic-albums-refresh "ar/1" buff))
+              (should (supersonic-tests--wait-for (lambda () (equal "ART:cover-1" (supersonic-tests--first-cell 2)))))
+              (should (equal "" (aref (cadr (cadr tabulated-list-entries)) 2)))
+              (aio-wait-for (supersonic-albums-refresh-type 'recent buff))
+              (should (supersonic-tests--wait-for (lambda () (equal "ART:cover-9" (supersonic-tests--first-cell 2)))))
+              (aio-wait-for (supersonic-podcasts-refresh buff))
+              (should (supersonic-tests--wait-for (lambda () (equal "ART:cover-p" (supersonic-tests--first-cell 1))))))
+            (should (equal '("cover-1" "cover-9" "cover-p") (mapcar #'car (reverse requests))))))
+      (kill-buffer buff)
+      (delete-directory supersonic-cache-path t))))
+
+(ert-deftest supersonic-tests-no-cover-art-means-no-art-and-no-error ()
+  "With a provider that has no `cover-art', lists and now-playing render
+without art -- nothing is fetched, nothing fails."
+  (let ((supersonic-enable-art t)
+        (buff (get-buffer-create "*supersonic-tests-art*")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t))
+                  ((symbol-function 'supersonic-build-url) (lambda (&rest _) (error "Subsonic was asked"))))
+          (supersonic-tests--with-provider
+              `((artist-albums . ,(supersonic-tests--resolved '((:id "al-1" :name "First" :art "cover-1"))))
+                (track . ,(supersonic-tests--track-lookup '((:id "t-1" :title "One" :art "cover-1")))))
+            (should-not (supersonic-art-available-p))
+            (with-current-buffer buff
+              (aio-wait-for (supersonic-albums-refresh "ar/1" buff))
+              (should (equal "" (supersonic-tests--first-cell 2)))
+              (supersonic-now-playing-mode)
+              (supersonic-tests--with-playing "t-1"
+                (aio-wait-for (supersonic-now-playing-fetch-and-render buff))
+                (should (supersonic-tests--buffer-matches buff "Title: +One"))))))
+      (with-current-buffer buff
+        (supersonic-now-playing--stop-timer))
+      (kill-buffer buff))))
+
+(ert-deftest supersonic-tests-now-playing-fetches-art-by-the-tracks-art-reference ()
+  "The now-playing buffer fetches the playing track's `:art' reference,
+not its id, through the active provider."
+  (let ((supersonic-cache-path (make-temp-file "supersonic-tests-cache-" t))
+        (supersonic-enable-art t)
+        (requests nil)
+        (buff (get-buffer-create "*supersonic-tests-now-playing*")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t))
+                  ((symbol-function 'supersonic-image-propertize) (lambda (art _size) (concat "ART:" art)))
+                  ((symbol-function 'supersonic-build-url) (lambda (&rest _) (error "Subsonic was asked"))))
+          (supersonic-tests--with-provider
+              `((cover-art . ,(supersonic-tests--cover-art (lambda (r) (push r requests))))
+                (track
+                 . ,(supersonic-tests--track-lookup '((:id "ar/1/al-1/01.flac" :title "One" :art "covers/al-1")))))
+            (with-current-buffer buff
+              (supersonic-now-playing-mode)
+              (supersonic-tests--with-playing "ar/1/al-1/01.flac"
+                (aio-wait-for (supersonic-now-playing-fetch-and-render buff))
+                (should (equal '("covers/al-1") (mapcar #'car requests)))
+                (should (equal "covers/al-1" supersonic-now-playing--art-id))))))
+      (with-current-buffer buff
+        (supersonic-now-playing--stop-timer))
+      (kill-buffer buff)
+      (delete-directory supersonic-cache-path t))))
+
 (provide 'supersonic-tests)
 
 ;;; supersonic-tests.el ends here

@@ -1476,6 +1476,13 @@ entry at point.  An ID that isn't in the list at all yields nil."
 ;;; Albums
 ;;;
 
+(defun supersonic--arts (items)
+  "Return the `:art' reference of each of ITEMS, in order.
+What `supersonic-get-images' is handed next to the entries made from
+ITEMS: art is looked up by the reference the provider gave, not by
+the item's id."
+  (mapcar (lambda (item) (plist-get item :art)) items))
+
 (defun supersonic-albums-rows (albums)
   "Turn one artist's ALBUMS into year/name/art tabulated-list entries.
 ALBUMS is as resolved by `supersonic-provider-artist-albums'."
@@ -1509,7 +1516,7 @@ ALBUMS is as resolved by `supersonic-provider-album-list'."
       (with-current-buffer buff
         (setq tabulated-list-entries (supersonic-albums-rows albums))
         (tabulated-list-print t)
-        (supersonic-get-images tabulated-list-entries 2 buff))))))
+        (supersonic-get-images tabulated-list-entries (supersonic--arts albums) 2 buff))))))
 
 
 (aio-defun
@@ -1522,7 +1529,7 @@ TYPE is one of `supersonic-provider-album-list-types'."
       (with-current-buffer buff
         (setq tabulated-list-entries (supersonic-albums-type-rows albums))
         (tabulated-list-print t)
-        (supersonic-get-images tabulated-list-entries 2 buff))))))
+        (supersonic-get-images tabulated-list-entries (supersonic--arts albums) 2 buff))))))
 
 (defun supersonic-open-tracks ()
   "Open a list of tracks at point."
@@ -1676,7 +1683,7 @@ one as a string is accepted too."
       (with-current-buffer buff
         (setq tabulated-list-entries (supersonic-podcasts-rows podcasts))
         (tabulated-list-print t)
-        (supersonic-get-images tabulated-list-entries 1 buff))))))
+        (supersonic-get-images tabulated-list-entries (supersonic--arts podcasts) 1 buff))))))
 
 
 (defun supersonic-open-podcast-episodes ()

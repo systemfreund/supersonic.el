@@ -21,15 +21,17 @@
 ;;; Commentary:
 
 ;; Cover art caching for supersonic.el: naming/locating the on-disk
-;; cache, fetching art from the Subsonic server with bounded
-;; concurrency, and painting it into a tabulated-list buffer column.
+;; cache, fetching art through the active provider's `cover-art' with
+;; bounded concurrency, and painting it into a tabulated-list buffer
+;; column.  Art is always looked up by an item's `:art' reference,
+;; which the provider hands out and which need not be the item's id.
 
 ;;; Code:
-(require 'url)
+(require 'cl-lib)
 (require 'aio)
 (require 'svg)
 (require 'supersonic-custom)
-(require 'supersonic-api)
+(require 'supersonic-provider)
 ;; Only for `supersonic-waveform-bars'/`supersonic-waveform-svg-bars': the
 ;; bucket geometry and SVG drawing a waveform layered onto the cover art
 ;; needs (see `supersonic-art-overlay-propertize') are owned by that file,
@@ -37,17 +39,20 @@
 ;; this file otherwise knows nothing about waveforms, the same way that
 ;; one otherwise knows nothing about the now-playing buffer.
 (require 'supersonic-waveform)
-(defvar url-http-end-of-headers)
 
 (defun supersonic-art-available-p ()
   "Return non-nil if cover art can actually be shown right now.
 Mirrors `supersonic-waveform-available-p'.  Callers that only download
 art should test this too: a frame that cannot draw the image has no
-use for the file either."
-  (and supersonic-enable-art (display-graphic-p)))
+use for the file either.  Nor is there art for a provider without a
+`cover-art' operation -- lists and now-playing then simply go without."
+  (and supersonic-enable-art (display-graphic-p) (supersonic-provider-supports-p 'cover-art)))
 
 (defun supersonic-art-cache-file (id size)
   "Return the path cover art ID is cached under when fetched at SIZE.
+ID is an `:art' reference.  It is named via
+`supersonic-provider-cache-name', which makes any ID a single valid
+file name and keeps different providers' and servers' art apart.
 The size is part of the file name because the same art is shown at
 different sizes in different buffers (see `supersonic-list-art-size'
 and `supersonic-now-playing-art-size'): sharing one file per art id
@@ -57,7 +62,7 @@ setting is changed.  Prefixed with \"art-\": `supersonic-cache-path' is
 shared with `supersonic-waveform-cache-file', whose own ID could
 otherwise coincide with this one (e.g. a track and its own cover art
 id) and collide on the same file name."
-  (expand-file-name (format "art-%s-%d" id size) supersonic-cache-path))
+  (expand-file-name (format "art-%s-%d" (supersonic-provider-cache-name id) size) supersonic-cache-path))
 
 (defun supersonic-image-propertize (id size)
   "Generate a property displaying cover art ID at SIZE pixels high."
@@ -355,26 +360,21 @@ WAVEFORM is as in `supersonic-art-overlay-propertize'."
 (aio-defun
  supersonic--fetch-art (id size)
  "Ensure cover art ID is cached on disk at SIZE, fetching it if necessary.
-Returns a promise that resolves once the fetch has settled; callers
-should re-check `file-exists-p' afterwards rather than assume success,
-since a failed fetch resolves without signalling here."
- (unless (file-exists-p (supersonic-art-cache-file id size))
-   (unless (file-exists-p supersonic-cache-path)
-     (mkdir supersonic-cache-path))
-   (pcase-let ((`(,status . ,buffer)
-                (aio-await
-                 (supersonic-url-retrieve
-                  (supersonic-build-url "/getCoverArt.view" `(("id" . ,id) ("size" . ,(int-to-string size))))))))
-     (unwind-protect
-         (unless (plist-get status :error)
-           (with-current-buffer buffer
-             ;; Cover art is arbitrary binary image data, not text -- write the bytes as-is instead of letting Emacs
-             ;; guess (and possibly prompt for) a coding system.
-             (let ((coding-system-for-write 'no-conversion))
-               (write-region (1+ url-http-end-of-headers) (point-max) (supersonic-art-cache-file id size)
-                             nil
-                             'no-message))))
-       (kill-buffer buffer)))))
+ID is an `:art' reference, fetched through `supersonic-provider-cover-art'.
+Returns a promise that resolves once the art is cached, and rejects if
+it could not be fetched."
+ (let ((file (supersonic-art-cache-file id size)))
+   (unless (file-exists-p file)
+     (let ((data (aio-await (supersonic-provider-cover-art id size))))
+       (unless (file-exists-p supersonic-cache-path)
+         (mkdir supersonic-cache-path t))
+       (with-temp-buffer
+         (set-buffer-multibyte nil)
+         (insert data)
+         ;; Cover art is arbitrary binary image data, not text -- write the bytes as-is instead of letting Emacs
+         ;; guess (and possibly prompt for) a coding system.
+         (let ((coding-system-for-write 'no-conversion))
+           (write-region nil nil file nil 'no-message)))))))
 
 (aio-defun
  supersonic--fetch-art-throttled (sem id size)
@@ -387,8 +387,12 @@ unreachable cover doesn't hold up the rest."
  (aio-await (aio-sem-wait sem)) (aio-await (aio-catch (supersonic--fetch-art id size))) (aio-sem-post sem))
 
 (aio-defun
- supersonic-get-images (entries n buff)
+ supersonic-get-images (entries arts n buff)
  "Fetch/cache cover art for ENTRIES and paint it into column N of BUFF.
+ARTS holds each entry's `:art' reference, in the same order as
+ENTRIES; an entry whose reference is nil is left without art.  Taken
+separately because an entry's id is the item's, and a provider's art
+reference need not be the same thing.
 Fetches are fired up front, before anything is awaited, but only
 `supersonic-art-fetch-concurrency' of them run at a time; individual
 failures are tolerated, leaving those entries without art rather than
@@ -399,15 +403,15 @@ so callers don't need to print again themselves."
        (aset (nth 1 entry) n ""))
    (let* ((sem (aio-sem supersonic-art-fetch-concurrency))
           (pending
-           (mapcar
-            (lambda (entry)
-              (cons entry (supersonic--fetch-art-throttled sem (car entry) supersonic-list-art-size)))
-            entries)))
-     (dolist (item pending)
-       (aio-await (cdr item))
-       (let ((entry (car item)))
-         (when (file-exists-p (supersonic-art-cache-file (car entry) supersonic-list-art-size))
-           (aset (nth 1 entry) n (supersonic-image-propertize (car entry) supersonic-list-art-size)))))))
+           (cl-mapcar
+            (lambda (entry art)
+              (list entry art (and art (supersonic--fetch-art-throttled sem art supersonic-list-art-size))))
+            entries arts)))
+     (pcase-dolist (`(,entry ,art ,promise) pending)
+       (when promise
+         (aio-await promise)
+         (when (file-exists-p (supersonic-art-cache-file art supersonic-list-art-size))
+           (aset (nth 1 entry) n (supersonic-image-propertize art supersonic-list-art-size)))))))
  (when (buffer-live-p buff)
    (with-current-buffer buff
      (when (derived-mode-p 'tabulated-list-mode)
