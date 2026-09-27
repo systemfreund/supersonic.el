@@ -24,9 +24,9 @@
 ;; facade in `supersonic-provider.el' against any server speaking the
 ;; Subsonic REST API, and registers them under the name `subsonic'.
 ;;
-;; Everything Subsonic-shaped about browsing -- and about streaming
-;; and scrobbling, which the mpv and jukebox backends ask for through
-;; the facade too -- stops here.  Requests go
+;; Everything Subsonic-shaped about browsing -- and about streaming,
+;; scrobbling and cover art, which the backends and caches ask for
+;; through the facade too -- stops here.  Requests go
 ;; out through `supersonic-api.el'; what comes back is turned from
 ;; Subsonic's JSON into the facade's plist vocabulary before anyone
 ;; else sees it, so no list buffer ever has to know which endpoint an
@@ -47,6 +47,8 @@
 (require 'supersonic-custom)
 (require 'supersonic-api)
 (require 'supersonic-provider)
+
+(defvar url-http-end-of-headers)
 
 ;;;
 ;;; Subsonic JSON -> facade plists
@@ -263,6 +265,28 @@ facade's warning to keep it off command lines."
    ;; `url-http-activate-callback').
    (lambda (_status) (kill-buffer (current-buffer)))))
 
+(aio-defun
+ supersonic-subsonic--cover-art (art size)
+ "Return a promise resolving to the bytes of cover art ART at SIZE.
+Asks getCoverArt, which scales the image to SIZE on the server."
+ (pcase-let ((`(,status . ,buffer)
+              (aio-await
+               (supersonic-url-retrieve
+                (supersonic-build-url "/getCoverArt.view" `(("id" . ,art) ("size" . ,(int-to-string size))))))))
+   (unwind-protect
+       (let ((err (plist-get status :error)))
+         (when err
+           (error "Failed to fetch cover art %s: %s" art (error-message-string err)))
+         (with-current-buffer buffer
+           (buffer-substring-no-properties (1+ url-http-end-of-headers) (point-max))))
+     (kill-buffer buffer))))
+
+(defun supersonic-subsonic--cache-namespace ()
+  "Return the Subsonic server's address, `supersonic-host'.
+Ids are only unique per server, so this is what keeps one server's
+cached art and waveforms apart from another's."
+  (or supersonic-host ""))
+
 (defun supersonic-subsonic--config-hints ()
   "Return what to check when a request to the Subsonic server fails."
   '("Check that supersonic-host is configured correctly"
@@ -283,6 +307,8 @@ facade's warning to keep it off command lines."
    (download-podcast-episode . supersonic-subsonic--download-podcast-episode)
    (stream-url . supersonic-subsonic--stream-url)
    (scrobble . supersonic-subsonic--scrobble)
+   (cover-art . supersonic-subsonic--cover-art)
+   (cache-namespace . supersonic-subsonic--cache-namespace)
    (config-hints . supersonic-subsonic--config-hints)))
 
 (provide 'supersonic-subsonic)

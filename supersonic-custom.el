@@ -78,8 +78,10 @@ this for that one seek."
 Shared by both `supersonic-art-cache-file' and
 `supersonic-waveform-cache-file', which prefix their file names
 distinctly enough (\"art-\"/\"waveform-\") that the two never collide,
-even though both are keyed on a Subsonic id that could otherwise
-coincide (e.g. a track and its own cover art id)."
+even though both are keyed on provider ids that could otherwise
+coincide (e.g. a track and its own cover art id).  The rest of each
+name is `supersonic-provider-cache-name' of the id, so files cached
+from different providers or servers never stand in for each other."
   :type 'directory
   :group 'supersonic)
 
