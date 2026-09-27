@@ -89,6 +89,26 @@ own row below the cover art instead of layered onto it:
       (remove #'supersonic-art-overlay-layer-waveform supersonic-art-overlay-layers))
 ```
 
+The functions in `supersonic-now-playing-layout-functions` and
+`supersonic-now-playing-render-functions` are called with the buffer and
+the track playing, as a plist -- `:title`, `:artist`, `:album`,
+`:duration`, `:art`, `:suffix`, `:content-type`, `:size` and so on,
+whichever of them the library knows. A row of your own reads it with `plist-get`:
+
+```elisp
+(add-to-list 'supersonic-now-playing-render-functions
+             (lambda (_buff song)
+               (when-let ((genre (plist-get song :genre)))
+                 (insert (format "%-10s%s\n" "Genre:" genre))))
+             t)
+```
+
+**Migrating custom functions:** before, these functions were handed the
+raw Subsonic `getSong` alist. They now get the plist above instead, so
+`(assoc-default "title" song)` becomes `(plist-get song :title)`, and
+the camel-cased keys become keywords: `"coverArt"` is `:art`,
+`"contentType"` is `:content-type`.
+
 By default the now-playing buffer opens in the selected window, replacing
 whatever was there. To keep it pinned in its own window instead, e.g. to
 browse albums or tracks alongside it as in the screenshot above, put it

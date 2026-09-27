@@ -73,7 +73,9 @@ DATA's \"id\" as a string."
    data '((:name . "name") (:artist . "artist") (:year . "year") (:art . "coverArt"))))
 
 (defun supersonic-subsonic--track (data)
-  "Turn a Subsonic song/child alist DATA into a facade track plist."
+  "Turn a Subsonic song/child alist DATA into a facade track plist.
+On top of the facade's own track keys, carries Subsonic's \"genre\"
+as `:genre', for a now-playing row of the user's own to read."
   (supersonic-subsonic--plist
    data
    '((:title . "title")
@@ -84,7 +86,8 @@ DATA's \"id\" as a string."
      (:art . "coverArt")
      (:suffix . "suffix")
      (:content-type . "contentType")
-     (:size . "size"))))
+     (:size . "size")
+     (:genre . "genre"))))
 
 (defun supersonic-subsonic--podcast (data)
   "Turn a Subsonic podcast channel alist DATA into a facade podcast plist."
@@ -123,6 +126,15 @@ the response at the wrong key."
 (defun supersonic-subsonic--album-tracks-from (data)
   "Return the facade tracks in a parsed getAlbum/getMusicDirectory response DATA."
   (mapcar #'supersonic-subsonic--track (supersonic-recursive-assoc data (supersonic-subsonic--tracks-path))))
+
+(defun supersonic-subsonic--song-from (data)
+  "Return the facade track in a parsed getSong response DATA.
+Signals an error when DATA has no song in it, so a caller that looks a
+track up never mistakes an empty answer for a track with no metadata."
+  (let ((song (supersonic-recursive-assoc data '("subsonic-response" "song"))))
+    (unless song
+      (error "No song in getSong response"))
+    (supersonic-subsonic--track song)))
 
 (defun supersonic-subsonic--search-from (data)
   "Return the facade search result in a parsed search3 response DATA."
@@ -186,6 +198,10 @@ getMusicDirectory -- ID then being a directory -- otherwise."
       (supersonic-build-url "/getMusicDirectory.view" `(("id" . ,id))))))))
 
 (aio-defun
+ supersonic-subsonic--song (id) "Return a promise resolving to track ID, via getSong."
+ (supersonic-subsonic--song-from (aio-await (supersonic-get-json (supersonic-build-url "/getSong.view" `(("id" . ,id)))))))
+
+(aio-defun
  supersonic-subsonic--search (query) "Return a promise resolving to the search3 results for QUERY."
  (supersonic-subsonic--search-from
   (aio-await (supersonic-get-json (supersonic-build-url "/search3.view" `(("query" . ,query)))))))
@@ -228,6 +244,7 @@ Asks getPodcasts for that one channel, episodes included."
    (artist-albums . supersonic-subsonic--artist-albums)
    (album-list . supersonic-subsonic--album-list)
    (album-tracks . supersonic-subsonic--album-tracks)
+   (track . supersonic-subsonic--song)
    (search . supersonic-subsonic--search)
    (podcasts . supersonic-subsonic--podcasts)
    (podcast-episodes . supersonic-subsonic--podcast-episodes)

@@ -76,7 +76,8 @@ track starting or ending."
  supersonic-queue-parse (entries)
  "Turn ENTRIES, as resolved by `supersonic-playback-queue', into
 tabulated-list entries.
-Fetches each entry's song metadata concurrently (fired up front, below,
+Looks each entry's track up through `supersonic-provider-track',
+concurrently (fired up front, below,
 before anything is awaited) and tolerates individual lookup failures
 via `aio-catch', falling back to the \"?\" placeholder row instead of
 aborting the whole render."
@@ -87,7 +88,7 @@ aborting the whole render."
               (list
                index track-id (plist-get entry :current)
                (and track-id
-                    (aio-catch (supersonic-get-json (supersonic-build-url "/getSong.view" `(("id" . ,track-id)))))))))
+                    (aio-catch (supersonic-provider-track track-id))))))
           entries)))
    ;; A plain `mapcar' lambda would call `aio-await' through an ordinary `funcall', outside of this function's own
    ;; generator machinery, which `generator.el' cannot transform -- so this collects results via a `dolist', which
@@ -96,10 +97,7 @@ aborting the whole render."
      (dolist (item pending)
        (pcase-let ((`(,index ,track-id ,current ,promise) item))
          (let* ((outcome (and promise (aio-await promise)))
-                (song
-                 (and outcome
-                      (eq (car outcome) :success)
-                      (supersonic-recursive-assoc (cdr outcome) '("subsonic-response" "song")))))
+                (track (and outcome (eq (car outcome) :success) (cdr outcome))))
            (push (list
                   ;; A missing track id would only happen if a backend handed back an entry it could not resolve;
                   ;; fall back to the entry's position so the row still gets a usable, if display-only, id.
@@ -108,15 +106,11 @@ aborting the whole render."
                    (if current
                        "▶"
                      "")
-                   (if song
-                       (assoc-default "title" song)
+                   (if track
+                       (or (plist-get track :title) "")
                      "?")
-                   (if song
-                       (or (assoc-default "artist" song) "")
-                     "")
-                   (if song
-                       (or (assoc-default "album" song) "")
-                     "")))
+                   (or (plist-get track :artist) "")
+                   (or (plist-get track :album) "")))
                  rows))))
      (nreverse rows))))
 
@@ -210,7 +204,7 @@ See `supersonic-now-playing--title'.")
   "Cover art id of the track the now-playing buffer is currently showing, or nil.
 Set by `supersonic-now-playing--render'; read by
 `supersonic-now-playing-animate-art-overlay' so it can redraw the art
-with new text without needing the whole song alist again.")
+with new text without needing the whole track plist again.")
 
 (defvar-local supersonic-now-playing--field-index 0
   "Index into `supersonic-now-playing-cycle-fields' of the field currently shown.
@@ -925,8 +919,8 @@ minute track but \"1:05:01\" once an hour is on the clock."
 
 (defun supersonic-now-playing--format (song)
   "Return SONG's file format as \"MP3 (audio/mpeg)\", or nil if unknown."
-  (let ((suffix (assoc-default "suffix" song))
-        (type (assoc-default "contentType" song)))
+  (let ((suffix (plist-get song :suffix))
+        (type (plist-get song :content-type)))
     (cond
      ((and suffix type)
       (format "%s (%s)" (upcase suffix) type))
@@ -940,7 +934,7 @@ minute track but \"1:05:01\" once an hour is on the clock."
 Expects the art to be cached already, which
 `supersonic-now-playing-fetch-and-render' takes care of before it
 renders."
-  (let ((art-id (assoc-default "coverArt" song)))
+  (let ((art-id (plist-get song :art)))
     (when (and (supersonic-art-available-p)
                art-id
                (file-exists-p (supersonic-art-cache-file art-id supersonic-now-playing-art-size)))
@@ -949,17 +943,17 @@ renders."
 (defun supersonic-now-playing-render-title (_buff song)
   "Insert SONG's \"Title:\" row, if it has one.
 Built into `supersonic-now-playing-render-functions'."
-  (supersonic-now-playing--insert-field "Title" (assoc-default "title" song)))
+  (supersonic-now-playing--insert-field "Title" (plist-get song :title)))
 
 (defun supersonic-now-playing-render-artist (_buff song)
   "Insert SONG's \"Artist:\" row, if it has one.
 Built into `supersonic-now-playing-render-functions'."
-  (supersonic-now-playing--insert-field "Artist" (assoc-default "artist" song)))
+  (supersonic-now-playing--insert-field "Artist" (plist-get song :artist)))
 
 (defun supersonic-now-playing-render-album (_buff song)
   "Insert SONG's \"Album:\" row, if it has one.
 Built into `supersonic-now-playing-render-functions'."
-  (supersonic-now-playing--insert-field "Album" (assoc-default "album" song)))
+  (supersonic-now-playing--insert-field "Album" (plist-get song :album)))
 
 (defun supersonic-now-playing-render-duration (buff _song)
   "Insert BUFF's \"Duration:\" row, tagged for later updates.
@@ -987,7 +981,7 @@ Built into `supersonic-now-playing-render-functions'."
 (defun supersonic-now-playing-render-size (_buff song)
   "Insert SONG's \"Size:\" row, if it is known.
 Built into `supersonic-now-playing-render-functions'."
-  (let ((size (assoc-default "size" song)))
+  (let ((size (plist-get song :size)))
     (supersonic-now-playing--insert-field "Size" (and size (format "%.2f MB" (/ size 1048576.0))))))
 
 (defun supersonic-now-playing-render-queue-position (buff _song)
@@ -1090,12 +1084,12 @@ variable for why."
 
 (defun supersonic-now-playing--render (buff song paused position track-id &optional queue-place)
   "Render SONG into BUFF, marked as paused or playing according to PAUSED.
-POSITION is how many seconds into SONG playback currently is.  SONG is a
-\"song\" alist as returned by getSong.view; if it is nil, BUFF shows a
-placeholder saying that nothing is playing.  TRACK-ID is SONG's track
-id (kept separate from SONG since the fallback placeholder built for a
-failed metadata lookup has no \"id\" field of its own to read it back
-from) -- see `supersonic-now-playing--track-id'.  QUEUE-PLACE is the
+POSITION is how many seconds into SONG playback currently is.  SONG is
+a track plist, as `supersonic-provider-track' resolves to; if it is
+nil, BUFF shows a placeholder saying that nothing is playing.  TRACK-ID
+is the id of the track playing, passed separately so that callers need
+not care whether SONG carries one -- see
+`supersonic-now-playing--track-id'.  QUEUE-PLACE is the
 current track's (POSITION . TOTAL) within the play queue as computed by
 `supersonic-now-playing--current-queue-place', or nil when the active
 backend has no queue to report on.  Optional so every existing caller
@@ -1104,7 +1098,7 @@ works."
   (when (buffer-live-p buff)
     (with-current-buffer buff
       (let* ((inhibit-read-only t)
-             (duration (and song (assoc-default "duration" song)))
+             (duration (plist-get song :duration))
              ;; Re-rendering the track already on show is the common case,
              ;; not the exception: a pause, a resume, `g', and two or three
              ;; renders inside the first second of a fresh mpv start all
@@ -1119,10 +1113,10 @@ works."
         (setq supersonic-now-playing--position position)
         (setq supersonic-now-playing--track-id track-id)
         (setq supersonic-now-playing--queue-place queue-place)
-        (setq supersonic-now-playing--title (and song (assoc-default "title" song)))
-        (setq supersonic-now-playing--artist (and song (assoc-default "artist" song)))
-        (setq supersonic-now-playing--album (and song (assoc-default "album" song)))
-        (setq supersonic-now-playing--art-id (and song (assoc-default "coverArt" song)))
+        (setq supersonic-now-playing--title (plist-get song :title))
+        (setq supersonic-now-playing--artist (plist-get song :artist))
+        (setq supersonic-now-playing--album (plist-get song :album))
+        (setq supersonic-now-playing--art-id (plist-get song :art))
         (unless same-track
           ;; A track change always starts the animated field back on the
           ;; title, whatever it last settled on for the track before it,
@@ -1201,16 +1195,13 @@ leaving nothing behind but a buffer that quietly stopped updating."
   (if (supersonic-playback-live-p)
       (let ((track-id (aio-await (supersonic-playback-status 'track-id))))
         (if track-id
-            (let* ((outcome
-                    (aio-await
-                     (aio-catch (supersonic-get-json (supersonic-build-url "/getSong.view" `(("id" . ,track-id)))))))
+            (let* ((outcome (aio-await (aio-catch (supersonic-provider-track track-id))))
                    (song
                     (if (eq (car outcome) :success)
-                        (supersonic-recursive-assoc (cdr outcome) '("subsonic-response" "song"))
-                      `(("title" . ,track-id)))))
-              (when (and (supersonic-art-available-p) (assoc-default "coverArt" song))
-                (aio-await
-                 (aio-catch (supersonic--fetch-art (assoc-default "coverArt" song) supersonic-now-playing-art-size))))
+                        (cdr outcome)
+                      (list :id track-id :title track-id))))
+              (when (and (supersonic-art-available-p) (plist-get song :art))
+                (aio-await (aio-catch (supersonic--fetch-art (plist-get song :art) supersonic-now-playing-art-size))))
               ;; Fired concurrently and asked for last, so all three are as
               ;; fresh as possible: the art fetch above can take a while on a
               ;; cold cache.

@@ -283,7 +283,8 @@ consulted."
         #'supersonic-now-playing-layout-buttons)
   "Functions laying out the now-playing buffer's primary rows, in order.
 Each is called as (FUNCTION BUFF SONG), the same convention
-`supersonic-now-playing-render-functions' uses, right after
+`supersonic-now-playing-render-functions' uses -- SONG being the same
+track plist described there -- right after
 `supersonic-now-playing--render' erases BUFF for a track that exists --
 this is the part of the buffer that always came before that variable's
 own rows (see its docstring for where this list's output ends and that
@@ -420,9 +421,14 @@ Each is called as (FUNCTION BUFF SONG), in list order, once every entry
 in `supersonic-now-playing-layout-functions' has had its turn -- so
 these rows always follow that list's output as a block, wherever
 reordering that list has left the individual rows within it.  SONG is
-the \"song\" alist
-`supersonic-now-playing--render' is rendering, the same shape
-`supersonic-now-playing-fetch-and-render' fetched from getSong.view.
+the track `supersonic-now-playing--render' is rendering, as the plist
+`supersonic-provider-track' resolved it to: `:title', `:artist',
+`:album', `:duration' (seconds), `:track', `:art', `:suffix',
+`:content-type' and `:size' (bytes), each left out when the provider
+does not know it, plus whatever keys of its own the provider adds --
+the Subsonic provider adds `:genre', for one.  Read them with
+`plist-get', e.g. (plist-get song :title).  Should the lookup fail,
+SONG is just (:id ID :title ID), so the bare id shows as the title.
 Every built-in inserts nothing at all if its value is missing for the
 current track, so a track with no album, say, just leaves that row out
 rather than showing it empty.  Same per-function error isolation as

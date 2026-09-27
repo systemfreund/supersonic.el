@@ -2075,7 +2075,7 @@ entry drops every other informational row -- proof that
 `supersonic-now-playing--render' no longer hardcodes which rows exist,
 the way it did before this variable existed."
   (let ((buff (get-buffer-create "*supersonic-tests-now-playing*"))
-        (song '(("id" . "t") ("title" . "A Title") ("artist" . "An Artist") ("album" . "An Album"))))
+        (song '(:id "t" :title "A Title" :artist "An Artist" :album "An Album")))
     (unwind-protect
         (with-current-buffer buff
           (supersonic-now-playing-mode)
@@ -2091,7 +2091,7 @@ the way it did before this variable existed."
 runs alongside the built-ins, with the same (BUFF SONG) calling
 convention as every other entry."
   (let ((buff (get-buffer-create "*supersonic-tests-now-playing*"))
-        (song '(("id" . "t") ("title" . "A Title") ("genre" . "Ambient"))))
+        (song '(:id "t" :title "A Title" :genre "Ambient")))
     (unwind-protect
         (with-current-buffer buff
           (supersonic-now-playing-mode)
@@ -2099,7 +2099,7 @@ convention as every other entry."
                  (append
                   supersonic-now-playing-render-functions
                   (list
-                   (lambda (_buff song) (supersonic-now-playing--insert-field "Genre" (assoc-default "genre" song)))))))
+                   (lambda (_buff song) (supersonic-now-playing--insert-field "Genre" (plist-get song :genre)))))))
             (supersonic-now-playing--render buff song nil 0 "t")
             (should (supersonic-tests--buffer-matches buff "Genre:.*Ambient"))))
       (kill-buffer buff))))
@@ -2110,7 +2110,7 @@ tag -- and so stays reachable by `supersonic-now-playing-update-duration-field'
 -- no matter where in `supersonic-now-playing-render-functions' it ends
 up, since that function finds it by tag rather than position."
   (let ((buff (get-buffer-create "*supersonic-tests-now-playing*"))
-        (song '(("id" . "t") ("title" . "A Title") ("duration" . 100))))
+        (song '(:id "t" :title "A Title" :duration 100)))
     (unwind-protect
         (with-current-buffer buff
           (supersonic-now-playing-mode)
@@ -2127,7 +2127,7 @@ error does not stop the rest of the list from running --
 `supersonic-now-playing--run-field-functions' reports and skips it
 instead of letting it take every row after it down too."
   (let ((buff (get-buffer-create "*supersonic-tests-now-playing*"))
-        (song '(("id" . "t") ("title" . "A Title") ("artist" . "An Artist"))))
+        (song '(:id "t" :title "A Title" :artist "An Artist")))
     (unwind-protect
         (with-current-buffer buff
           (supersonic-now-playing-mode)
@@ -2151,7 +2151,7 @@ already covers the informational rows below them."
   (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
     (let ((supersonic-enable-waveform t)
           (buff (get-buffer-create "*supersonic-tests-now-playing*"))
-          (song '(("id" . "t") ("title" . "A Title") ("duration" . 100))))
+          (song '(:id "t" :title "A Title" :duration 100)))
       (unwind-protect
           (with-current-buffer buff
             (supersonic-now-playing-mode)
@@ -2169,7 +2169,7 @@ themselves -- moving `supersonic-now-playing-layout-label' ahead of
 `supersonic-now-playing-layout-art' puts the label above the cover art
 instead of below it, the reverse of the default order."
   (let ((buff (get-buffer-create "*supersonic-tests-now-playing*"))
-        (song '(("id" . "t") ("title" . "A Title"))))
+        (song '(:id "t" :title "A Title")))
     (unwind-protect
         (with-current-buffer buff
           (supersonic-now-playing-mode)
@@ -2194,7 +2194,7 @@ it back off `supersonic-now-playing--paused' rather than taking it as an
 argument -- a difference in plumbing this list's (FUNCTION BUFF SONG)
 calling convention forced, not in what ends up on screen."
   (let ((buff (get-buffer-create "*supersonic-tests-now-playing*"))
-        (song '(("id" . "t") ("title" . "A Title"))))
+        (song '(:id "t" :title "A Title")))
     (unwind-protect
         (with-current-buffer buff
           (supersonic-now-playing-mode)
@@ -2210,7 +2210,7 @@ error does not stop the rest of the list from running -- same isolation
 `supersonic-now-playing-render-functions' already gets from
 `supersonic-now-playing--run-field-functions'."
   (let ((buff (get-buffer-create "*supersonic-tests-now-playing*"))
-        (song '(("id" . "t") ("title" . "A Title"))))
+        (song '(:id "t" :title "A Title")))
     (unwind-protect
         (with-current-buffer buff
           (supersonic-now-playing-mode)
@@ -2229,7 +2229,7 @@ error does not stop the rest of the list from running -- same isolation
 row from the QUEUE-PLACE `supersonic-now-playing--render' was called
 with, not from SONG -- the play queue is not part of it."
   (let ((buff (get-buffer-create "*supersonic-tests-now-playing*"))
-        (song '(("id" . "t") ("title" . "A Title"))))
+        (song '(:id "t" :title "A Title")))
     (unwind-protect
         (with-current-buffer buff
           (supersonic-now-playing-mode)
@@ -2243,7 +2243,7 @@ entirely once `supersonic-now-playing--render' is called without a
 queue place, the same way every other built-in leaves its row out
 for a value SONG does not have."
   (let ((buff (get-buffer-create "*supersonic-tests-now-playing*"))
-        (song '(("id" . "t") ("title" . "A Title"))))
+        (song '(:id "t" :title "A Title")))
     (unwind-protect
         (with-current-buffer buff
           (supersonic-now-playing-mode)
@@ -2690,7 +2690,7 @@ left a gap where the image had been until something else redrew it."
            (append supersonic-now-playing-layout-functions (list #'supersonic-now-playing-layout-waveform)))
           (supersonic-waveform-buckets 4)
           (buff (get-buffer-create "*supersonic-tests-now-playing*"))
-          (song '(("id" . "track-1") ("title" . "Song") ("duration" . 100))))
+          (song '(:id "track-1" :title "Song" :duration 100)))
       (unwind-protect
           (with-current-buffer buff
             (supersonic-now-playing-mode)
@@ -2726,7 +2726,7 @@ crosses into another bucket -- once every twelve seconds for a
       (unwind-protect
           (with-current-buffer buff
             (supersonic-now-playing-mode)
-            (supersonic-now-playing--render buff '(("id" . "t") ("duration" . 100)) nil 0 "t")
+            (supersonic-now-playing--render buff '(:id "t" :duration 100) nil 0 "t")
             (supersonic-now-playing--show-waveform
              buff "t"
              (cons (supersonic-tests--bytes '(10 20 30 40)) (supersonic-tests--bytes '(5 10 15 20))))
@@ -2757,7 +2757,7 @@ used to be the only way to get, now the default without it."
   (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
     (let ((supersonic-enable-waveform t)
           (buff (get-buffer-create "*supersonic-tests-now-playing*"))
-          (song '(("id" . "t") ("title" . "Song") ("duration" . 100))))
+          (song '(:id "t" :title "Song" :duration 100)))
       (unwind-protect
           (with-current-buffer buff
             (supersonic-now-playing-mode)
@@ -2784,7 +2784,7 @@ for it explicitly rather than relying on it being there."
            (supersonic-now-playing-layout-functions
             (append supersonic-now-playing-layout-functions (list #'supersonic-now-playing-layout-waveform)))
            (buff (get-buffer-create "*supersonic-tests-now-playing*"))
-           (song '(("id" . "t") ("title" . "Song") ("coverArt" . "art-1") ("duration" . 100))))
+           (song '(:id "t" :title "Song" :art "art-1" :duration 100)))
       (unwind-protect
           (progn
             (mkdir supersonic-cache-path)
@@ -2926,7 +2926,7 @@ song lookup a new track id kicks off has landed."
                                       (should (equal '("Playing") statuses))
                                       (should (equal "id-1" supersonic-mpris--track-id))
                                       (should (supersonic-tests--wait-for (lambda () supersonic-mpris--track-song)))
-                                      (should (equal "A Song" (assoc-default "title" supersonic-mpris--track-song)))))))
+                                      (should (equal "A Song" (plist-get supersonic-mpris--track-song :title)))))))
 
 (ert-deftest supersonic-tests-mpris-sync-reports-stopped-when-not-live ()
   "`supersonic-mpris--sync' announces \"Stopped\" and clears Metadata once
@@ -2938,7 +2938,7 @@ all -- the same guard `supersonic-playback-status' applies itself."
         (consulted nil)
         (supersonic-mpris--playback-status "Playing")
         (supersonic-mpris--track-id "id-1")
-        (supersonic-mpris--track-song '(("title" . "A Song"))))
+        (supersonic-mpris--track-song '(:title "A Song")))
     (cl-letf (((symbol-function 'supersonic-mpris--set-player-property)
                (lambda (property value)
                  (when (equal property "PlaybackStatus")
@@ -4017,6 +4017,162 @@ and without opening a list buffer that could only ever show an error."
     (should-error (supersonic-download-podcast-episode) :type 'user-error)
     (should-not (get-buffer "*supersonic-podcasts*"))
     (should-not (get-buffer "*supersonic-podcast-episodes*"))))
+
+;;;
+;;; Track metadata through the provider
+;;;
+
+(defun supersonic-tests--track-lookup (tracks)
+  "Return a `track' operation resolving ids found in TRACKS, a list of plists.
+Any other id rejects the promise, the way a failed lookup would."
+  (lambda (id)
+    (let ((promise (aio-promise))
+          (track (seq-find (lambda (track) (equal id (plist-get track :id))) tracks)))
+      (aio-resolve
+       promise
+       (if track
+           (lambda () track)
+         (lambda () (error "No such track: %s" id))))
+      promise)))
+
+(ert-deftest supersonic-tests-subsonic-track-asks-get-song ()
+  "The Subsonic provider's `track' operation asks getSong for the id it is
+given and maps the song into the facade's track vocabulary, carrying
+\"genre\" along as `:genre'.  An answer with no song in it is a failed
+lookup, not a track with nothing known about it."
+  (let (requests
+        (response
+         '(("subsonic-response"
+            ("song" ("id" . "s-1") ("title" . "One") ("artist" . "Alice") ("album" . "First")
+             ("duration" . 65) ("coverArt" . "al-1") ("suffix" . "mp3") ("contentType" . "audio/mpeg")
+             ("size" . 1048576) ("genre" . "Ambient"))))))
+    (cl-letf (((symbol-function 'supersonic-build-url)
+               (lambda (endpoint extra-query) (push (cons endpoint extra-query) requests) endpoint))
+              ((symbol-function 'supersonic-get-json) (aio-lambda (_url) response)))
+      (should (equal '(:id "s-1" :title "One" :artist "Alice" :album "First" :duration 65 :art "al-1"
+                       :suffix "mp3" :content-type "audio/mpeg" :size 1048576 :genre "Ambient")
+                     (aio-wait-for (supersonic-provider-track "s-1"))))
+      (should (equal '(("/getSong.view" ("id" . "s-1"))) requests))
+      (setq response '(("subsonic-response" ("status" . "ok"))))
+      (should-error (aio-wait-for (supersonic-provider-track "s-2"))))))
+
+(ert-deftest supersonic-tests-queue-parse-resolves-tracks-through-the-provider ()
+  "`supersonic-queue-parse' looks each entry up through the active
+provider -- no Subsonic request is made -- and a lookup that fails,
+or a provider with no `track' operation at all, leaves the \"?\"
+placeholder row instead of failing the whole queue."
+  (cl-letf (((symbol-function 'supersonic-get-json) (lambda (&rest _) (error "Subsonic was asked")))
+            ((symbol-function 'supersonic-build-url) (lambda (&rest _) (error "Subsonic was asked"))))
+    (let ((entries '((:track-id "ar/1/al-1/01.flac" :current t) (:track-id "gone.flac"))))
+      (supersonic-tests--with-provider
+          `((track . ,(supersonic-tests--track-lookup
+                       '((:id "ar/1/al-1/01.flac" :title "One" :artist "Alice" :album "First")))))
+        (should (equal '(("ar/1/al-1/01.flac" ["▶" "One" "Alice" "First"])
+                         ("gone.flac" ["" "?" "" ""]))
+                       (aio-wait-for (supersonic-queue-parse entries)))))
+      (supersonic-tests--with-provider `((artists . ,(supersonic-tests--resolved nil)))
+        (should (equal '(("ar/1/al-1/01.flac" ["▶" "?" "" ""])
+                         ("gone.flac" ["" "?" "" ""]))
+                       (aio-wait-for (supersonic-queue-parse entries))))))))
+
+(defmacro supersonic-tests--with-playing (track-id &rest body)
+  "Run BODY with a live test backend playing TRACK-ID, paused at 5 seconds."
+  (declare (indent 1))
+  `(supersonic-tests--with-backend
+       `((live-p . ,(lambda () t))
+         (status . ,(lambda (key)
+                      (funcall (supersonic-tests--resolved
+                                (alist-get key (list (cons 'track-id ,track-id) '(position . 5) '(paused . t)))))))
+         (queue . ,(supersonic-tests--resolved (list (list :track-id ,track-id :current t)))))
+     ,@body))
+
+(ert-deftest supersonic-tests-now-playing-resolves-the-track-through-the-provider ()
+  "`supersonic-now-playing-fetch-and-render' looks the playing track up
+through the active provider -- no Subsonic request is made -- and
+renders every row from the neutral track plist; when the lookup fails
+it shows the bare id as the title, as it always has."
+  (cl-letf (((symbol-function 'supersonic-get-json) (lambda (&rest _) (error "Subsonic was asked")))
+            ((symbol-function 'supersonic-build-url) (lambda (&rest _) (error "Subsonic was asked"))))
+    (let ((buff (get-buffer-create "*supersonic-tests-now-playing*")))
+      (unwind-protect
+          (with-current-buffer buff
+            (supersonic-now-playing-mode)
+            (supersonic-tests--with-provider
+                `((track . ,(supersonic-tests--track-lookup
+                             '((:id "ar/1/al-1/01.flac" :title "One" :artist "Alice" :album "First"
+                                :duration 65 :suffix "flac" :content-type "audio/flac" :size 2097152)))))
+              (supersonic-tests--with-playing "ar/1/al-1/01.flac"
+                (aio-wait-for (supersonic-now-playing-fetch-and-render buff))
+                (should (supersonic-tests--buffer-matches buff "Title: +One"))
+                (should (supersonic-tests--buffer-matches buff "Artist: +Alice"))
+                (should (supersonic-tests--buffer-matches buff "Album: +First"))
+                (should (supersonic-tests--buffer-matches buff "Duration: +00:05 / 01:05"))
+                (should (supersonic-tests--buffer-matches buff "Format: +FLAC (audio/flac)"))
+                (should (supersonic-tests--buffer-matches buff "Size: +2.00 MB"))
+                (should (equal "One" supersonic-now-playing--title))
+                (should (equal "Alice" supersonic-now-playing--artist)))
+              (supersonic-tests--with-playing "gone.flac"
+                (aio-wait-for (supersonic-now-playing-fetch-and-render buff))
+                (should (supersonic-tests--buffer-matches buff "Title: +gone\\.flac"))
+                (should-not (supersonic-tests--buffer-matches buff "Artist:"))
+                (should-not (supersonic-tests--buffer-matches buff "Nothing is playing")))))
+        (supersonic-now-playing--stop-timer)
+        (supersonic-now-playing--stop-animation-timer)
+        (kill-buffer buff)))))
+
+(ert-deftest supersonic-tests-now-playing-renders-a-subsonic-song-as-before ()
+  "A getSong answer mapped by the Subsonic provider renders the same rows
+the raw song alist used to: title, artist, album, format and size."
+  (let ((buff (get-buffer-create "*supersonic-tests-now-playing*"))
+        (song (supersonic-subsonic--track
+               '(("id" . "s-1") ("title" . "One") ("artist" . "Alice") ("album" . "First") ("duration" . 65)
+                 ("suffix" . "mp3") ("contentType" . "audio/mpeg") ("size" . 1048576)))))
+    (unwind-protect
+        (with-current-buffer buff
+          (supersonic-now-playing-mode)
+          (supersonic-now-playing--render buff song nil 0 "s-1")
+          (should (supersonic-tests--buffer-matches buff "Title: +One"))
+          (should (supersonic-tests--buffer-matches buff "Artist: +Alice"))
+          (should (supersonic-tests--buffer-matches buff "Album: +First"))
+          (should (supersonic-tests--buffer-matches buff "Duration: +00:00 / 01:05"))
+          (should (supersonic-tests--buffer-matches buff "Format: +MP3 (audio/mpeg)"))
+          (should (supersonic-tests--buffer-matches buff "Size: +1.00 MB")))
+      (supersonic-now-playing--stop-timer)
+      (supersonic-now-playing--stop-animation-timer)
+      (kill-buffer buff))))
+
+(ert-deftest supersonic-tests-mpris-metadata-reads-the-neutral-track ()
+  "MPRIS Metadata is built from the neutral track plist: title, album,
+artist (as a one-element array) and a length in microseconds."
+  (skip-unless (and (featurep 'dbusbind) (require 'supersonic-mpris nil t)))
+  (let ((supersonic-mpris--track-id "ar/1/al-1/01.flac")
+        (supersonic-mpris--track-song '(:id "ar/1/al-1/01.flac" :title "One" :artist "Alice" :album "First" :duration 65)))
+    (should (equal '(:array
+                     (:dict-entry "mpris:trackid" (:variant :object-path "/org/mpris/MediaPlayer2/Track/ar_1_al_1_01_flac"))
+                     (:dict-entry "xesam:title" (:variant "One"))
+                     (:dict-entry "xesam:album" (:variant "First"))
+                     (:dict-entry "xesam:artist" (:variant (:array "Alice")))
+                     (:dict-entry "mpris:length" (:variant :int64 65000000)))
+                   (supersonic-mpris--metadata)))))
+
+(ert-deftest supersonic-tests-mpris-fetches-the-track-through-the-provider ()
+  "`supersonic-mpris--fetch-song' looks the track up through the active
+provider -- no Subsonic request is made -- and announces it."
+  (skip-unless (and (featurep 'dbusbind) (require 'supersonic-mpris nil t)))
+  (let ((supersonic-mpris--track-id "ar/1/al-1/01.flac")
+        (supersonic-mpris--track-song nil)
+        (announced nil))
+    (cl-letf (((symbol-function 'supersonic-get-json) (lambda (&rest _) (error "Subsonic was asked")))
+              ((symbol-function 'supersonic-build-url) (lambda (&rest _) (error "Subsonic was asked")))
+              ((symbol-function 'supersonic-mpris--set-player-property)
+               (lambda (property value)
+                 (when (equal property "Metadata")
+                   (setq announced value)))))
+      (supersonic-tests--with-provider
+          `((track . ,(supersonic-tests--track-lookup '((:id "ar/1/al-1/01.flac" :title "One")))))
+        (aio-wait-for (supersonic-mpris--fetch-song "ar/1/al-1/01.flac"))
+        (should (equal "One" (plist-get supersonic-mpris--track-song :title)))
+        (should (member '(:dict-entry "xesam:title" (:variant "One")) announced))))))
 
 (provide 'supersonic-tests)
 
