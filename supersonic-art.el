@@ -363,7 +363,7 @@ since a failed fetch resolves without signalling here."
      (mkdir supersonic-cache-path))
    (pcase-let ((`(,status . ,buffer)
                 (aio-await
-                 (aio-url-retrieve
+                 (supersonic-url-retrieve
                   (supersonic-build-url "/getCoverArt.view" `(("id" . ,id) ("size" . ,(int-to-string size))))))))
      (unwind-protect
          (unless (plist-get status :error)

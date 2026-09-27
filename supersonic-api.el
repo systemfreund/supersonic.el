@@ -65,9 +65,32 @@ handed an id mpv reported for a track this session never enqueued."
 ;; fix byte-compiler complaints
 (defvar url-http-end-of-headers)
 
+(defun supersonic-url-retrieve (url)
+  "Wrap `url-retrieve' of URL in a promise of (STATUS . BUFFER).
+Like `aio-url-retrieve', except that BUFFER is the response buffer
+`url-retrieve' itself created, which the caller must kill.
+`aio-url-retrieve' has a bug: it resolves to a `clone-buffer' of
+it instead and never kills the original, so every request made
+through it leaves one ` *http host:port*' buffer behind for the
+rest of the session -- thousands overnight with the jukebox poll
+running (#42).  Reported upstream as skeeto/emacs-aio#33; once
+that is fixed and released, this can go back to
+`aio-url-retrieve'.  Handing
+the original out is safe: `url-http' has already handed the
+connection back to its keep-alive pool before calling us (see
+`url-http-activate-callback')."
+  (let ((promise (aio-promise)))
+    (condition-case err
+        (url-retrieve url
+                      (lambda (status)
+                        (let ((value (cons status (current-buffer))))
+                          (aio-resolve promise (lambda () value)))))
+      (error (aio-resolve promise (lambda () (signal (car err) (cdr err))))))
+    promise))
+
 (aio-defun
  supersonic-get-json (url) "Return a promise resolving to the parsed json response from URL."
- (pcase-let ((`(,status . ,buffer) (aio-await (aio-url-retrieve url))))
+ (pcase-let ((`(,status . ,buffer) (aio-await (supersonic-url-retrieve url))))
    (unwind-protect
        (progn
          (when (plist-get status :error)
@@ -79,7 +102,7 @@ handed an id mpv reported for a track this session never enqueued."
                 (data
                  (condition-case nil
                      (json-read-from-string
-                      ;; The Subsonic API always returns UTF-8 JSON (per RFC 8259); `aio-url-retrieve' doesn't reliably
+                      ;; The Subsonic API always returns UTF-8 JSON (per RFC 8259); `url-retrieve' doesn't reliably
                       ;; decode the body for us across Emacs versions, so decode explicitly.  Safe even if it's already
                       ;; decoded: `decode-coding-string' is a no-op on text that isn't raw undecoded bytes.
                       (decode-coding-string (buffer-substring (1+ url-http-end-of-headers) (point-max)) 'utf-8))
