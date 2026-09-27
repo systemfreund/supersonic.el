@@ -24,7 +24,9 @@
 ;; facade in `supersonic-provider.el' against any server speaking the
 ;; Subsonic REST API, and registers them under the name `subsonic'.
 ;;
-;; Everything Subsonic-shaped about browsing stops here.  Requests go
+;; Everything Subsonic-shaped about browsing -- and about streaming
+;; and scrobbling, which the mpv and jukebox backends ask for through
+;; the facade too -- stops here.  Requests go
 ;; out through `supersonic-api.el'; what comes back is turned from
 ;; Subsonic's JSON into the facade's plist vocabulary before anyone
 ;; else sees it, so no list buffer ever has to know which endpoint an
@@ -40,6 +42,7 @@
 ;;; Code:
 
 (require 'aio)
+(require 'url)
 
 (require 'supersonic-custom)
 (require 'supersonic-api)
@@ -232,6 +235,32 @@ Asks getPodcasts for that one channel, episodes included."
  (aio-await (supersonic-get-json (supersonic-build-url "/downloadPodcastEpisode.view" `(("id" . ,id)))))
  nil)
 
+(defun supersonic-subsonic--stream-url (id)
+  "Return the stream.view URL for track ID.
+It carries the \"u\"/\"t\"/\"s\" token-auth triple, which never
+expires -- hence the facade's warning to keep it off command lines."
+  (supersonic-build-url "/stream.view" `(("id" . ,id))))
+
+(defun supersonic-subsonic--scrobble (id now-playing)
+  "Scrobble track ID via scrobble.view, as now playing if NOW-PLAYING."
+  (url-retrieve
+   (supersonic-build-url
+    "/scrobble.view"
+    `(("id" . ,id)
+      ;; send a submission by default
+      ("submission" .
+       ,(if now-playing
+            "false"
+          "true"))))
+   ;; Nothing here reads the reply, but `url-retrieve' still hands
+   ;; the callback a response buffer and then forgets about it --
+   ;; without this every scrobble leaves one ` *http host:port*'
+   ;; buffer behind for the rest of the session.  Killing it from
+   ;; inside the callback is safe: url-http has already handed the
+   ;; connection back to its keep-alive pool before calling us (see
+   ;; `url-http-activate-callback').
+   (lambda (_status) (kill-buffer (current-buffer)))))
+
 (defun supersonic-subsonic--config-hints ()
   "Return what to check when a request to the Subsonic server fails."
   '("Check that supersonic-host is configured correctly"
@@ -250,6 +279,8 @@ Asks getPodcasts for that one channel, episodes included."
    (podcast-episodes . supersonic-subsonic--podcast-episodes)
    (add-podcast . supersonic-subsonic--add-podcast)
    (download-podcast-episode . supersonic-subsonic--download-podcast-episode)
+   (stream-url . supersonic-subsonic--stream-url)
+   (scrobble . supersonic-subsonic--scrobble)
    (config-hints . supersonic-subsonic--config-hints)))
 
 (provide 'supersonic-subsonic)

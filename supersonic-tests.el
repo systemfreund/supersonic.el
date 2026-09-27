@@ -1516,7 +1516,7 @@ through this predicate."
       (should-not (supersonic-art-available-p)))))
 
 (ert-deftest supersonic-tests-scrobble-does-not-leak-its-response-buffer ()
-  "`supersonic-scrobble' kills the buffer `url-retrieve' hands its
+  "`supersonic-subsonic--scrobble' kills the buffer `url-retrieve' hands its
 callback.  Nothing reads that reply, and nothing else cleans it up, so
 without this every scrobbled track would leave a ` *http host:port*'
 buffer behind for the rest of the session."
@@ -1528,7 +1528,7 @@ buffer behind for the rest of the session."
                  (setq response (generate-new-buffer " *supersonic-tests-response*"))
                  (with-current-buffer response
                    (funcall callback nil)))))
-      (supersonic-scrobble "track-1")
+      (supersonic-subsonic--scrobble "track-1" nil)
       (should response)
       (should-not (buffer-live-p response)))))
 
@@ -2614,8 +2614,7 @@ for the artist-ID branch of `supersonic-albums' (i.e. `supersonic-open-album')."
 itself.  Subsonic ids are opaque server-generated strings and search
 queries are whatever the user typed, so a raw \"&\" or \"=\" would
 silently split one parameter into two.  A nil value still encodes as
-empty, which is what `supersonic-scrobble' relies on for a track this
-session never enqueued."
+empty."
   (should (equal "?id=a%26b%3Dc" (supersonic-alist->query '(("id" . "a&b=c")))))
   (should (equal "?query=the%20smiths" (supersonic-alist->query '(("query" . "the smiths")))))
   (should (equal "?id=" (supersonic-alist->query '(("id" . nil))))))
@@ -3328,7 +3327,7 @@ has no previous track to submit, and a poll that finds nothing new
 scrobbles nothing at all."
   (supersonic-tests--with-jukebox
    (let ((scrobbles nil))
-     (cl-letf (((symbol-function 'supersonic-scrobble)
+     (cl-letf (((symbol-function 'supersonic-provider-scrobble)
                 (lambda (id &optional now-playing) (push (cons id now-playing) scrobbles))))
        ;; First poll ever: nothing to submit yet, only the new track announced.
        (setq supersonic-tests--jukebox-playlist
@@ -3356,7 +3355,7 @@ scrobbles nothing at all."
 unchanged, scrobbles nothing."
   (supersonic-tests--with-jukebox
    (let ((scrobbles nil))
-     (cl-letf (((symbol-function 'supersonic-scrobble)
+     (cl-letf (((symbol-function 'supersonic-provider-scrobble)
                 (lambda (id &optional now-playing) (push (cons id now-playing) scrobbles))))
        (setq supersonic-tests--jukebox-playlist
              `(("currentIndex" . 0) ("playing" . t) ("position" . 0) ("entry" . ((("id" . "a"))))))
@@ -3369,8 +3368,8 @@ unchanged, scrobbles nothing."
 
 (ert-deftest supersonic-tests-jukebox-scrobble-respects-enable-scrobbling-flag ()
   "Same as mpv, a track change on the jukebox only reaches the network
-when `supersonic-enable-scrobbling' is set -- `supersonic-scrobble' itself
-gates on it, so this backend needs no gate of its own."
+when `supersonic-enable-scrobbling' is set -- `supersonic-provider-scrobble'
+itself gates on it, so this backend needs no gate of its own."
   (supersonic-tests--with-jukebox
    (let ((supersonic-enable-scrobbling nil)
          (requests 0))
@@ -4173,6 +4172,179 @@ provider -- no Subsonic request is made -- and announces it."
         (aio-wait-for (supersonic-mpris--fetch-song "ar/1/al-1/01.flac"))
         (should (equal "One" (plist-get supersonic-mpris--track-song :title)))
         (should (member '(:dict-entry "xesam:title" (:variant "One")) announced))))))
+
+;;;
+;;; Streaming, scrobbling and backend compatibility
+;;;
+
+(ert-deftest supersonic-tests-provider-stream-url-dispatches-to-the-provider ()
+  "`supersonic-provider-stream-url' answers what the active provider's
+`stream-url' returns, synchronously, and reports a provider without one."
+  (supersonic-tests--with-provider `((stream-url . ,(lambda (id) (concat "fake://" id))))
+    (should (equal "fake://a/b" (supersonic-provider-stream-url "a/b"))))
+  (supersonic-tests--with-provider '()
+    (should-error (supersonic-provider-stream-url "a") :type 'user-error)))
+
+(ert-deftest supersonic-tests-provider-scrobble-is-gated-and-optional ()
+  "`supersonic-provider-scrobble' hands the id and now-playing flag to
+the provider -- but only with `supersonic-enable-scrobbling' set and a
+track id to report, and it silently does nothing for a provider that
+cannot scrobble."
+  (let ((scrobbles nil))
+    (supersonic-tests--with-provider
+        `((scrobble . ,(lambda (id now-playing) (push (cons id now-playing) scrobbles))))
+      (let ((supersonic-enable-scrobbling nil))
+        (supersonic-provider-scrobble "a" t)
+        (should-not scrobbles))
+      (let ((supersonic-enable-scrobbling t))
+        (supersonic-provider-scrobble "a" t)
+        (supersonic-provider-scrobble "b")
+        (supersonic-provider-scrobble nil)
+        (should (equal '(("a" . t) ("b" . nil)) (reverse scrobbles)))))
+    (supersonic-tests--with-provider '()
+      (let ((supersonic-enable-scrobbling t))
+        (should-not (supersonic-provider-scrobble "a"))))))
+
+(ert-deftest supersonic-tests-subsonic-streams-and-scrobbles ()
+  "The Subsonic provider implements `stream-url' with stream.view and
+`scrobble' with scrobble.view, submitting unless asked for now-playing."
+  (let ((requests nil))
+    (cl-letf (((symbol-function 'supersonic-build-url)
+               (lambda (endpoint query) (push (cons endpoint query) requests) "dummy://url"))
+              ((symbol-function 'url-retrieve) #'ignore))
+      (should (equal "dummy://url" (supersonic-subsonic--stream-url "t/1")))
+      (supersonic-subsonic--scrobble "t/1" t)
+      (supersonic-subsonic--scrobble "t/1" nil))
+    (should
+     (equal
+      '(("/stream.view" ("id" . "t/1"))
+        ("/scrobble.view" ("id" . "t/1") ("submission" . "false"))
+        ("/scrobble.view" ("id" . "t/1") ("submission" . "true")))
+      (reverse requests)))
+    (let ((operations (gethash 'subsonic supersonic-provider--providers)))
+      (should (eq 'supersonic-subsonic--stream-url (alist-get 'stream-url operations)))
+      (should (eq 'supersonic-subsonic--scrobble (alist-get 'scrobble operations))))))
+
+(ert-deftest supersonic-tests-mpv-loads-the-providers-stream-url ()
+  "mpv loads whatever URL the active provider's `stream-url' names, over
+its IPC socket, and builds no Subsonic URL of its own.  A provider that
+cannot name one fails the load before anything is registered."
+  (let ((supersonic--playlist (make-hash-table))
+        (supersonic-mpv--entry-counter 0)
+        (commands nil))
+    (cl-letf (((symbol-function 'supersonic-build-url) (lambda (&rest _) (error "Subsonic was asked")))
+              ((symbol-function 'supersonic-mpv-command) (lambda (&rest args) (push args commands) t)))
+      (supersonic-tests--with-provider `((stream-url . ,(lambda (id) (concat "fake://" id))))
+        (supersonic--mpv-load-track "a/1" "replace")
+        (should (equal '(("loadfile" "fake://a/1" "replace")) commands))
+        (should (equal "a/1" (gethash 1 supersonic--playlist))))
+      (supersonic-tests--with-provider '()
+        (should-error (supersonic--mpv-load-track "a/2" "append") :type 'user-error)
+        (should (= 1 supersonic-mpv--entry-counter))
+        (should (= 1 (hash-table-count supersonic--playlist)))))))
+
+(ert-deftest supersonic-tests-mpv-scrobbles-through-the-provider ()
+  "mpv's start-file and end-file events scrobble the entry's track
+through the active provider: as now playing, and as played."
+  (let ((supersonic--playlist (make-hash-table))
+        (supersonic-enable-scrobbling t)
+        (supersonic-playback-track-change-hook nil)
+        (scrobbles nil))
+    (puthash 7 "a/1" supersonic--playlist)
+    (cl-letf (((symbol-function 'supersonic-build-url) (lambda (&rest _) (error "Subsonic was asked"))))
+      (supersonic-tests--with-provider
+          `((scrobble . ,(lambda (id now-playing) (push (cons id now-playing) scrobbles))))
+        (supersonic--mpv-handle-message '((event . "start-file") (playlist_entry_id . 7)))
+        (supersonic--mpv-handle-message '((event . "end-file") (playlist_entry_id . 7)))
+        (should (equal '(("a/1" . t) ("a/1" . nil)) (reverse scrobbles))))
+      (supersonic-tests--with-provider '()
+        (supersonic--mpv-handle-message '((event . "start-file") (playlist_entry_id . 7)))))))
+
+(ert-deftest supersonic-tests-waveform-transcodes-the-providers-stream-url ()
+  "The waveform transcode streams from the active provider's
+`stream-url', handed over stdin rather than on the command line."
+  (let ((command nil)
+        (sent nil))
+    (cl-letf (((symbol-function 'executable-find) (lambda (&rest _) "/usr/bin/mpv"))
+              ((symbol-function 'supersonic-build-url) (lambda (&rest _) (error "Subsonic was asked")))
+              ((symbol-function 'make-process)
+               (lambda (&rest args)
+                 (setq command (plist-get args :command))
+                 'fake-process))
+              ((symbol-function 'process-send-string) (lambda (_proc s) (push s sent)))
+              ((symbol-function 'process-send-eof) #'ignore))
+      (let ((supersonic-mpv "mpv"))
+        (supersonic-tests--with-provider `((stream-url . ,(lambda (id) (concat "fake://secret@" id))))
+          (unwind-protect
+              (progn
+                (supersonic-waveform--start-transcode "a/1" 10 "cache-file" #'ignore)
+                (should-not (cl-some (lambda (arg) (string-match-p "secret" arg)) command))
+                (should (equal '("fake://secret@a/1\n") sent)))
+            (setq supersonic-waveform--process nil)
+            (supersonic-waveform-cancel)))))))
+
+(ert-deftest supersonic-tests-waveform-unavailable-without-stream-url ()
+  "No `stream-url', no waveform: the seekbar is simply left out rather
+than failing to generate."
+  (let ((supersonic-enable-waveform t))
+    (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t))
+              ((symbol-function 'image-type-available-p) (lambda (&optional _type) t)))
+      (supersonic-tests--with-provider `((stream-url . ,#'identity))
+        (should (supersonic-waveform-available-p)))
+      (supersonic-tests--with-provider '()
+        (should-not (supersonic-waveform-available-p))))))
+
+(ert-deftest supersonic-tests-backends-declare-provider-compatibility ()
+  "mpv plays for any provider with a `stream-url', the jukebox only for
+`subsonic', and a backend that declares nothing plays for everyone."
+  (should (supersonic-playback-compatible-p 'mpv 'subsonic))
+  (should (supersonic-playback-compatible-p 'jukebox 'subsonic))
+  (supersonic-tests--with-provider `((stream-url . ,#'identity))
+    (should (supersonic-playback-compatible-p 'mpv))
+    (should-not (supersonic-playback-compatible-p 'jukebox)))
+  (supersonic-tests--with-provider '()
+    (should-not (supersonic-playback-compatible-p 'mpv))
+    (should-not (supersonic-playback-compatible-p 'jukebox))
+    (supersonic-tests--with-backend '((stop . ignore))
+      (should (supersonic-playback-compatible-p 'test))))
+  (should-not (supersonic-playback-compatible-p 'nonexistent))
+  (should-error (supersonic-playback-register-backend 'bogus '() :requires '(teleport))))
+
+(ert-deftest supersonic-tests-switch-backend-offers-only-compatible-backends ()
+  "The switch command completes over the backends that fit the active
+provider, and refuses any other -- before stopping the active one."
+  (let ((supersonic-playback-backend 'test-from)
+        (supersonic-playback--backends (copy-hash-table supersonic-playback--backends))
+        (supersonic-playback--compatibility (copy-hash-table supersonic-playback--compatibility))
+        (stopped nil))
+    (supersonic-playback-register-backend 'test-from `((stop . ,(lambda () (push 'from stopped)))))
+    (supersonic-tests--with-provider `((stream-url . ,#'identity))
+      (should
+       (equal
+        '("mpv" "test-from")
+        (sort (mapcar #'symbol-name (supersonic-playback-compatible-backend-names)) #'string<)))
+      (let ((err (should-error (supersonic-playback-switch-backend 'jukebox) :type 'user-error)))
+        (should (string-match-p "jukebox" (cadr err)))
+        (should (string-match-p "supersonic-tests-fake" (cadr err))))
+      (should (eq 'test-from supersonic-playback-backend))
+      (should-not stopped))))
+
+(ert-deftest supersonic-tests-playback-refuses-an-incompatible-backend ()
+  "A playback command with a backend that cannot play for the active
+provider is a `user-error' naming both -- mpv is never even asked.
+Stopping and the read-only operations still answer, so the backend
+can be switched away from and the buffers watching it keep working."
+  (let ((supersonic-playback-backend 'mpv)
+        (commands nil))
+    (cl-letf (((symbol-function 'supersonic-mpv-command) (lambda (&rest args) (push args commands))))
+      (supersonic-tests--with-provider '()
+        (let ((err (should-error (supersonic-toggle-playing) :type 'user-error)))
+          (should (string-match-p "`mpv'" (cadr err)))
+          (should (string-match-p "`supersonic-tests-fake'" (cadr err))))
+        (should-error (supersonic-playback-start '("a")) :type 'user-error)
+        (should-not commands)
+        (should-not (supersonic-playback-live-p))
+        (supersonic-playback-stop)))))
 
 (provide 'supersonic-tests)
 

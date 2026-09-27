@@ -21,10 +21,11 @@
 ;;; Commentary:
 
 ;; The single door through which every list buffer supersonic.el
-;; renders -- and the play queue, the now-playing buffer and MPRIS, for
-;; the metadata of the tracks playing -- asks for library data -- the counterpart, for *where music
-;; comes from*, of what `supersonic-playback.el' is for *how it gets
-;; played*.  A provider -- currently only Subsonic, via
+;; renders asks for library data -- and so do the play queue, the
+;; now-playing buffer and MPRIS for the metadata of what is playing,
+;; and the playback backends for what to stream and where to scrobble.
+;; It is the counterpart, for *where music comes from*, of what
+;; `supersonic-playback.el' is for *how it gets played*.  A provider -- currently only Subsonic, via
 ;; `supersonic-subsonic.el' -- registers the functions implementing a
 ;; fixed set of operations under a name, and the generic
 ;; `supersonic-provider-*' functions here dispatch to whichever
@@ -74,9 +75,9 @@
 (defconst supersonic-provider-operations
   '(artists artist-albums album-list album-tracks track search
     podcasts podcast-episodes add-podcast download-podcast-episode
-    config-hints)
+    stream-url scrobble config-hints)
   "The library operations a provider can implement.
-All but `config-hints' return a promise.
+All but `stream-url', `scrobble' and `config-hints' return a promise.
 
 - `artists' takes no arguments and resolves to a list of artists.
 - `artist-albums' takes an artist id and resolves to that artist's
@@ -102,6 +103,14 @@ All but `config-hints' return a promise.
 - `download-podcast-episode' takes an episode id, has the provider
   fetch the episode so it can be played, and resolves once that has
   been set in motion.
+- `stream-url' takes a track id and returns, synchronously, a URL a
+  player can stream that track from.  It may carry credentials, so
+  whoever hands it to a subprocess does so over a pipe or socket and
+  never on a command line, where any local user could read it.
+- `scrobble' takes a track id and a NOW-PLAYING flag and reports the
+  track to the provider: as having just started when NOW-PLAYING is
+  non-nil, as having been played otherwise.  Fire and forget: its
+  return value means nothing and it need not wait for an answer.
 - `config-hints' takes no arguments and returns a list of strings,
   each a hint on what to check in this provider's configuration when
   a request fails -- shown underneath the error in the list buffer
@@ -143,12 +152,13 @@ re-loading a provider file is harmless."
     (maphash (lambda (name _operations) (push name names)) supersonic-provider--providers)
     (nreverse names)))
 
-(defun supersonic-provider-supports-p (operation)
-  "Return non-nil if the active provider implements OPERATION.
-Never signals, not even when `supersonic-provider' names a provider
-that was never registered -- the answer is then simply nil -- so it
-is safe to ask from inside an error handler."
-  (and (alist-get operation (gethash supersonic-provider supersonic-provider--providers)) t))
+(defun supersonic-provider-supports-p (operation &optional provider)
+  "Return non-nil if PROVIDER implements OPERATION.
+PROVIDER defaults to the active one, `supersonic-provider'.  Never
+signals, not even for a provider that was never registered -- the
+answer is then simply nil -- so it is safe to ask from inside an
+error handler."
+  (and (alist-get operation (gethash (or provider supersonic-provider) supersonic-provider--providers)) t))
 
 (defun supersonic-provider--implementation (operation)
   "Return the active provider's implementation of OPERATION.
@@ -233,6 +243,24 @@ The result is a plist (:artists ARTISTS :albums ALBUMS :tracks TRACKS)."
  supersonic-provider-download-podcast-episode (episode-id)
  "Return a promise resolving once EPISODE-ID's download has been started."
  (aio-await (supersonic-provider--call 'download-podcast-episode episode-id)))
+
+(defun supersonic-provider-stream-url (track-id)
+  "Return a URL to stream the track with TRACK-ID from.
+Synchronous, unlike the library operations above: a player asks for
+it right as it loads the track, and building it is local work for
+every provider there is.  The URL may carry credentials -- keep it off
+any subprocess's command line."
+  (supersonic-provider--call 'stream-url track-id))
+
+(defun supersonic-provider-scrobble (track-id &optional now-playing)
+  "Scrobble TRACK-ID, as now playing if NOW-PLAYING is non-nil.
+Does nothing unless `supersonic-enable-scrobbling' is set, for a nil
+TRACK-ID -- a backend reporting an entry it never resolved -- or when
+the active provider cannot scrobble: a playback backend calls this at
+every track change, and a provider without scrobbling is no reason
+to interrupt playback, let alone to say so each time."
+  (when (and supersonic-enable-scrobbling track-id (supersonic-provider-supports-p 'scrobble))
+    (supersonic-provider--call 'scrobble track-id now-playing)))
 
 (defun supersonic-provider-config-hints ()
   "Return the active provider's configuration hints, a list of strings.

@@ -55,7 +55,7 @@
 (require 'cl-lib)
 (require 'svg)
 (require 'supersonic-custom)
-(require 'supersonic-api)
+(require 'supersonic-provider)
 (require 'supersonic-playback)
 
 (defvar supersonic-waveform--process nil
@@ -95,8 +95,14 @@ analysis (for a track the user has since moved on from) from grinding
 on in the background regardless.")
 
 (defun supersonic-waveform-available-p ()
-  "Return non-nil if a waveform can actually be shown right now."
-  (and supersonic-enable-waveform (display-graphic-p) (image-type-available-p 'pbm)))
+  "Return non-nil if a waveform can actually be shown right now.
+That takes the active provider being able to say where to stream a
+track from: the transcode needs a `supersonic-provider-stream-url'.
+Without one there is simply no waveform, and nothing to report."
+  (and supersonic-enable-waveform
+       (display-graphic-p)
+       (image-type-available-p 'pbm)
+       (supersonic-provider-supports-p 'stream-url)))
 
 (defun supersonic-waveform-cache-file (id buckets)
   "Return the path ID's peak/RMS envelope is cached under at BUCKETS resolution.
@@ -466,14 +472,16 @@ that intercepts reads of the file and hands back empty/placeholder
 content instead of the real bytes, on the assumption that nothing
 needs the raw data of a file it's offering to play instead.
 
-The stream URL is written to mpv's stdin as a one-line playlist
+The stream URL, the active provider's `supersonic-provider-stream-url'
+for ID, is written to mpv's stdin as a one-line playlist
 \(`--playlist=fd://0') rather than passed as an argv element, because
-it carries Subsonic's \"u\"/\"t\"/\"s\" token-auth triple and argv is
-world-readable via `ps' and /proc for as long as the transcode runs.
-That token never expires -- the server only ever checks
-md5(password + s) = t -- so a captured triple would authenticate
-indefinitely, which is exactly the exposure `supersonic--auth-query'
-switched to token auth to avoid in the first place.  The playback path
+it may carry credentials -- Subsonic's carries its \"u\"/\"t\"/\"s\"
+token-auth triple -- and argv is world-readable via `ps' and /proc for
+as long as the transcode runs.  That token never expires -- the server
+only ever checks md5(password + s) = t -- so a captured triple would
+authenticate indefinitely, which is exactly the exposure
+`supersonic--auth-query' switched to token auth to avoid in the first
+place.  The playback path
 has the same property for the same reason: it sends \"loadfile\" over
 mpv's IPC socket instead of naming the URL on a command line.
 `--load-unsafe-playlists' is set because the sole entry is one we just
@@ -481,12 +489,12 @@ wrote ourselves, and mpv otherwise refuses non-HTTP protocols
 \(e.g. the \"av://\" test streams) from a playlist."
   (unless (and supersonic-mpv (executable-find supersonic-mpv))
     (error "No mpv executable found"))
-  ;; Build the url first: `supersonic-build-url' signals when there are no
-  ;; usable credentials, and between `make-temp-file' and the `setq' below
+  ;; Ask for the url first: the provider may signal (Subsonic does when
+  ;; there are no usable credentials), and between `make-temp-file' and the `setq' below
   ;; the temp file exists while nothing yet points at it -- an error thrown
   ;; in that window would strand it where not even
   ;; `supersonic-waveform-cancel' could find it again.
-  (let* ((url (supersonic-build-url "/stream.view" `(("id" . ,id))))
+  (let* ((url (supersonic-provider-stream-url id))
          (outfile (make-temp-file "supersonic-waveform-" nil ".tmp"))
          (job (list :id id :callback callback :progress-callback progress-callback)))
     (setq supersonic-waveform--outfile outfile)
