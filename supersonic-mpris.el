@@ -47,7 +47,7 @@
 (require 'dbus)
 (require 'aio)
 (require 'supersonic-custom)
-(require 'supersonic-api)
+(require 'supersonic-provider)
 (require 'supersonic-playback)
 
 (defgroup supersonic-mpris nil
@@ -142,7 +142,7 @@ Set from `supersonic-playback-status', never from a backend's private
 notion of a track -- see `supersonic-mpris--sync'.")
 
 (defvar supersonic-mpris--track-song nil
-  "Parsed \"song\" alist (as returned by getSong.view) for the current track.")
+  "The current track, as `supersonic-provider-track' resolved it, or nil.")
 
 ;;;
 ;;; Metadata dict construction
@@ -157,10 +157,10 @@ notion of a track -- see `supersonic-mpris--sync'.")
 (defun supersonic-mpris--metadata ()
   "Build the MPRIS Metadata dict-entry list (\"a{sv}\") for the current track."
   (let* ((song supersonic-mpris--track-song)
-         (title (and song (assoc-default "title" song)))
-         (album (and song (assoc-default "album" song)))
-         (artist (and song (assoc-default "artist" song)))
-         (duration (and song (assoc-default "duration" song))))
+         (title (plist-get song :title))
+         (album (plist-get song :album))
+         (artist (plist-get song :artist))
+         (duration (plist-get song :duration)))
     (cons
      :array
      (delq
@@ -199,8 +199,7 @@ sending PropertiesChanged itself."
 (aio-defun
  supersonic-mpris--fetch-song (id) "Fetch metadata for track ID, then re-announce Metadata."
  (condition-case err
-     (let* ((data (aio-await (supersonic-get-json (supersonic-build-url "/getSong.view" `(("id" . ,id))))))
-            (song (supersonic-recursive-assoc data '("subsonic-response" "song"))))
+     (let ((song (aio-await (supersonic-provider-track id))))
        ;; Ignore replies for a track we have since moved on from.
        (when (equal id supersonic-mpris--track-id)
          (setq supersonic-mpris--track-song song)

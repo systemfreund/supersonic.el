@@ -21,7 +21,8 @@
 ;;; Commentary:
 
 ;; The single door through which every list buffer supersonic.el
-;; renders asks for library data -- the counterpart, for *where music
+;; renders -- and the play queue, the now-playing buffer and MPRIS, for
+;; the metadata of the tracks playing -- asks for library data -- the counterpart, for *where music
 ;; comes from*, of what `supersonic-playback.el' is for *how it gets
 ;; played*.  A provider -- currently only Subsonic, via
 ;; `supersonic-subsonic.el' -- registers the functions implementing a
@@ -71,7 +72,7 @@
 (require 'supersonic-custom)
 
 (defconst supersonic-provider-operations
-  '(artists artist-albums album-list album-tracks search
+  '(artists artist-albums album-list album-tracks track search
     podcasts podcast-episodes add-podcast download-podcast-episode
     config-hints)
   "The library operations a provider can implement.
@@ -86,6 +87,9 @@ All but `config-hints' return a promise.
   produce a given TYPE signals a `user-error' saying so.
 - `album-tracks' takes an album id and resolves to its tracks, in
   album order.
+- `track' takes a track id and resolves to that one track -- how the
+  play queue, the now-playing buffer and MPRIS turn the bare ids a
+  playback backend reports into something to show.
 - `search' takes a query string and resolves to a plist of three
   lists, (:artists ARTISTS :albums ALBUMS :tracks TRACKS).
 - `podcasts' takes no arguments and resolves to every podcast
@@ -198,6 +202,11 @@ TYPE is one of `supersonic-provider-album-list-types'."
  supersonic-provider-album-tracks (album-id)
  "Return a promise resolving to the tracks of the album with ALBUM-ID."
  (aio-await (supersonic-provider--call 'album-tracks album-id)))
+
+(aio-defun
+ supersonic-provider-track (track-id)
+ "Return a promise resolving to the track with TRACK-ID."
+ (aio-await (supersonic-provider--call 'track track-id)))
 
 (aio-defun
  supersonic-provider-search (query)
