@@ -235,11 +235,13 @@ Asks getPodcasts for that one channel, episodes included."
  (aio-await (supersonic-get-json (supersonic-build-url "/downloadPodcastEpisode.view" `(("id" . ,id)))))
  nil)
 
-(defun supersonic-subsonic--stream-url (id)
-  "Return the stream.view URL for track ID.
-It carries the \"u\"/\"t\"/\"s\" token-auth triple, which never
-expires -- hence the facade's warning to keep it off command lines."
-  (supersonic-build-url "/stream.view" `(("id" . ,id))))
+(aio-defun
+ supersonic-subsonic--stream-url (id)
+ "Return a promise resolving to the stream.view URL for track ID.
+Built locally, without asking the server anything.  It carries the
+\"u\"/\"t\"/\"s\" token-auth triple, which never expires -- hence the
+facade's warning to keep it off command lines."
+ (supersonic-build-url "/stream.view" `(("id" . ,id))))
 
 (defun supersonic-subsonic--scrobble (id now-playing)
   "Scrobble track ID via scrobble.view, as now playing if NOW-PLAYING."

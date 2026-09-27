@@ -38,12 +38,16 @@
 ;; being depended on by it.
 ;;
 ;; Nor does it know how to reach a track: it streams whatever URL the
-;; active provider's `supersonic-provider-stream-url' hands it, and
+;; active provider's `supersonic-provider-stream-url' resolves to, and
 ;; reports what it played through `supersonic-provider-scrobble'.  mpv
 ;; therefore plays for any provider that implements `stream-url', and
-;; says so when it registers.
+;; says so when it registers.  Since those URLs arrive asynchronously,
+;; starting or enqueueing tracks returns before they reach mpv; loads
+;; are applied strictly in the order they were requested -- see
+;; `supersonic-mpv--pending-load'.
 
 ;;; Code:
+(require 'cl-lib)
 (require 'json)
 (require 'url)
 (require 'seq)
@@ -78,6 +82,21 @@ Populated as tracks are loaded into mpv via `supersonic--mpv-load-track',
 and consulted by scrobbling and MPRIS to resolve `playlist_entry_id'
 values reported by mpv back to supersonic track ids.")
 
+(defvar supersonic-mpv--pending-load nil
+  "Promise of the most recently requested load into mpv, or nil.
+Stream URLs are resolved asynchronously, so a `supersonic-mpv-start'
+or `-enqueue' does not reach mpv right away.  Each one waits for the
+load requested before it to be done before touching mpv's playlist,
+so loads land in the order they were asked for -- an album played and
+then another enqueued behind it ends up as exactly that, however long
+either one's URLs took.  See `supersonic-mpv--load'.")
+
+(defvar supersonic-mpv--load-generation 0
+  "Bumped by `supersonic-mpv-kill' to drop loads still resolving URLs.
+A load that finds this changed since it was requested gives up rather
+than starting mpv all over again right after it was stopped -- by the
+user, or by `supersonic-playback-switch-backend' switching away.")
+
 (defvar supersonic-mpv--request-counter 0
   "Counter for `supersonic-mpv-command-with-callback' request_ids.")
 
@@ -101,6 +120,7 @@ so it never has to query mpv for this on every render.")
   (with-timeout (supersonic-mpv-timeout (error "Failed to kill mpv"))
     (while (supersonic-mpv-live-p)
       (accept-process-output nil 0.05)))
+  (setq supersonic-mpv--load-generation (1+ supersonic-mpv--load-generation))
   (setq supersonic-mpv--process nil)
   (setq supersonic-mpv--socket nil)
   (setq supersonic-mpv--socket-buffer "")
@@ -173,8 +193,8 @@ Windows does not support; this is not implemented for windows-nt"))
       (supersonic-mpv-command "observe_property" 2 "pause")))
   t)
 
-(defun supersonic--mpv-load-track (id flag)
-  "Load supersonic track ID into the running mpv instance using loadfile FLAG.
+(defun supersonic--mpv-load-track (id url flag)
+  "Load supersonic track ID, streamed from URL, into mpv using loadfile FLAG.
 Registers the mpv playlist entry id this load will be assigned in
 `supersonic--playlist', so it can later be resolved back to ID for
 scrobbling and MPRIS metadata.  If the `loadfile' command could not
@@ -183,13 +203,9 @@ and this call), the tentative registration is rolled back and an error
 is signalled instead, so `supersonic-mpv--entry-counter' never runs
 ahead of the playlist entries mpv has actually seen.
 
-What mpv loads is the active provider's `supersonic-provider-stream-url'
-for ID, asked for before anything is registered, so a provider that
-cannot answer leaves nothing behind either.  It travels over the IPC
-socket rather than on mpv's command line, which is what keeps any
-credentials in it out of the process list."
-  (let ((url (supersonic-provider-stream-url id))
-        (entry-id (1+ supersonic-mpv--entry-counter)))
+URL travels over the IPC socket rather than on mpv's command line,
+which is what keeps any credentials in it out of the process list."
+  (let ((entry-id (1+ supersonic-mpv--entry-counter)))
     (puthash entry-id id supersonic--playlist)
     (if (supersonic-mpv-command "loadfile" url flag)
         (setq supersonic-mpv--entry-counter entry-id)
@@ -197,30 +213,79 @@ credentials in it out of the process list."
         (remhash entry-id supersonic--playlist)
         (error "Failed to load track %s: mpv is not running" id)))))
 
+(aio-defun
+ supersonic-mpv--stream-urls (ids)
+ "Return a promise resolving to the stream URLs of IDS, in the same order.
+All are asked for at once rather than one after the other, so a
+provider that has to ask its server waits for its answers side by
+side rather than for one round-trip per track in turn."
+ (let ((promises (mapcar #'supersonic-provider-stream-url ids))
+       (urls nil))
+   (dolist (promise promises)
+     (push (aio-await promise) urls))
+   (nreverse urls)))
+
+(aio-defun
+ supersonic-mpv--load-after (previous ids flags then)
+ "Load IDS into mpv once PREVIOUS, the load before, is done.
+FLAGS is the `loadfile' flag for the first of IDS consed onto the flag
+for the rest; THEN is called with no arguments once all are loaded.
+Resolves the stream URLs first, concurrently with PREVIOUS, so a
+provider that cannot name one leaves mpv untouched -- not started,
+nothing registered.  Every failure is reported in the echo area rather
+than signalled: nobody awaits this, and PREVIOUS must never reject for
+whichever load comes after it."
+ (let ((generation supersonic-mpv--load-generation))
+   (condition-case err
+       (let ((urls (aio-await (supersonic-mpv--stream-urls ids))))
+         (when previous
+           (aio-await previous))
+         (when (= generation supersonic-mpv--load-generation)
+           (supersonic-mpv-ensure-running)
+           (supersonic--mpv-load-track (car ids) (car urls) (car flags))
+           (cl-mapc
+            (lambda (id url) (supersonic--mpv-load-track id url (cdr flags)))
+            (cdr ids) (cdr urls))
+           (funcall then)))
+     (error
+      (message "[Supersonic] Failed to play: %s" (error-message-string err))))))
+
+(defun supersonic-mpv--load (ids flags then)
+  "Queue up loading IDS into mpv behind every load requested before.
+FLAGS and THEN are as for `supersonic-mpv--load-after'.  Returns a
+promise resolving once the load is done, or has failed and been
+reported -- see `supersonic-mpv--pending-load'."
+  (setq supersonic-mpv--pending-load (supersonic-mpv--load-after supersonic-mpv--pending-load ids flags then)))
+
 (defun supersonic-mpv-start (ids)
-  "Replace the current mpv queue with IDS and start playing immediately.
+  "Replace the current mpv queue with IDS and start playing.
+Returns before they reach mpv, once their stream URLs have been asked
+for -- see `supersonic-mpv--load'.
 `loadfile ... replace' swaps out the playlist but leaves mpv's `pause'
 property untouched, so if playback was paused before this call it
 would otherwise stay paused; explicitly unpause since the caller asked
 to start playing now."
-  (supersonic-mpv-ensure-running)
-  (supersonic--mpv-load-track (car ids) "replace")
-  (dolist (id (cdr ids))
-    (supersonic--mpv-load-track id "append"))
-  (supersonic-mpv-command "set_property" "pause" :json-false)
-  (run-hooks 'supersonic-playback-track-change-hook))
+  (when ids
+    (supersonic-mpv--load
+     ids '("replace" . "append")
+     (lambda ()
+       (supersonic-mpv-command "set_property" "pause" :json-false)
+       (run-hooks 'supersonic-playback-track-change-hook))))
+  nil)
 
 ;;;###autoload
 (defun supersonic-mpv-enqueue (ids)
   "Append IDS to the end of the current mpv queue.
 Starts playback if mpv is currently idle; otherwise leaves whatever is
-already playing undisturbed and simply queues IDS after it."
-  (supersonic-mpv-ensure-running)
-  (dolist (id ids)
-    (supersonic--mpv-load-track id "append-play"))
-  ;; If mpv was idle, `append-play' starts the first of IDS, and the
-  ;; `start-file' that follows runs the track-change hook by itself.
-  (run-hooks 'supersonic-playback-queue-change-hook))
+already playing undisturbed and simply queues IDS after it.  Returns
+before they reach mpv, the same as `supersonic-mpv-start'."
+  (when ids
+    (supersonic-mpv--load
+     ids '("append-play" . "append-play")
+     ;; If mpv was idle, `append-play' starts the first of IDS, and the
+     ;; `start-file' that follows runs the track-change hook by itself.
+     (lambda () (run-hooks 'supersonic-playback-queue-change-hook))))
+  nil)
 
 (defun supersonic--mpv-handle-message (parsed-response)
   "Handle PARSED-RESPONSE, one message parsed from mpv's IPC socket."
