@@ -3784,7 +3784,7 @@ refresh's own error handling gets to show it -- and
     (should-error (aio-wait-for (supersonic-provider-search "x")) :type 'user-error)
     (condition-case err
         (aio-wait-for (supersonic-provider-search "x"))
-      (user-error (should (string-match-p "does not support `search'" (error-message-string err)))))))
+      (user-error (should (string-match-p "does not support .search." (error-message-string err)))))))
 
 (ert-deftest supersonic-tests-provider-album-list-rejects-unknown-types ()
   "`supersonic-provider-album-list' only passes on the types it documents."
@@ -4011,7 +4011,7 @@ and without opening a list buffer that could only ever show an error."
       (should-error (call-interactively #'supersonic-add-podcast) :type 'user-error)
       (condition-case err
           (call-interactively #'supersonic-add-podcast)
-        (user-error (should (string-match-p "does not support `add-podcast'" (error-message-string err))))))
+        (user-error (should (string-match-p "does not support .add-podcast." (error-message-string err))))))
     (should-error (supersonic-podcasts) :type 'user-error)
     (should-error (supersonic-podcast-episodes "1") :type 'user-error)
     (should-error (supersonic-download-podcast-episode) :type 'user-error)
