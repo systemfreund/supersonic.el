@@ -56,8 +56,7 @@ ones containing characters that are reserved in a query (\"&\", \"+\",
 and a search query or podcast feed url has no chance of being clean.
 Keys are left alone: every one of them is a literal spelled out in this
 package.  A nil value still encodes as the empty string, the same as
-the plain `concat' this used to do -- `supersonic-scrobble' can be
-handed an id mpv reported for a track this session never enqueued."
+the plain `concat' this used to do."
   (if al
       (concat "?" (mapconcat (lambda (q) (concat (car q) "=" (url-hexify-string (or (cdr q) "")))) al "&"))
     ""))
@@ -163,31 +162,6 @@ EXTRA-QUERY is used for any extra query parameters"
       (user-error
        "Failed to load .authinfo, please provide auth configuration for
 supersonic, and ensure supersonic-host is set correctly"))))
-
-(defun supersonic-scrobble (id &optional now-playing)
-  "Scrobble ID and optionally use a NOW-PLAYING request.
-Generic Subsonic plumbing rather than mpv- or jukebox-specific: both
-`supersonic-mpv.el' and `supersonic-jukebox.el' call this once they've
-worked out, from their own start/end-of-track signal, which id just
-started or finished."
-  (when supersonic-enable-scrobbling
-    (url-retrieve
-     (supersonic-build-url
-      "/scrobble.view"
-      `(("id" . ,id)
-        ;; send a submission by default
-        ("submission" .
-         ,(if now-playing
-              "false"
-            "true"))))
-     ;; Nothing here reads the reply, but `url-retrieve' still hands
-     ;; the callback a response buffer and then forgets about it --
-     ;; without this every scrobble leaves one ` *http host:port*'
-     ;; buffer behind for the rest of the session.  Killing it from
-     ;; inside the callback is safe: url-http has already handed the
-     ;; connection back to its keep-alive pool before calling us (see
-     ;; `url-http-activate-callback').
-     (lambda (_status) (kill-buffer (current-buffer))))))
 
 (defun supersonic-get-id-as-string (data)
   "Return DATA's \"id\" field as a string, converting from a number if necessary."

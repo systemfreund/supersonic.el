@@ -218,12 +218,13 @@ end-file/start-file pair does it. PREVIOUS-TRACK is only submitted when
 there was one (nothing to submit the very first time a track starts,
 with no prior poll to have seen it in), and CURRENT-TRACK is only
 announced as now-playing when there is one (nothing to announce once
-the jukebox runs out of queue). `supersonic-scrobble' itself gates on
-`supersonic-enable-scrobbling', so this needs no gate of its own."
+the jukebox runs out of queue). `supersonic-provider-scrobble' itself
+gates on `supersonic-enable-scrobbling' and on the provider being able
+to scrobble, so this needs no gate of its own."
   (when previous-track
-    (supersonic-scrobble previous-track))
+    (supersonic-provider-scrobble previous-track))
   (when current-track
-    (supersonic-scrobble current-track t)))
+    (supersonic-provider-scrobble current-track t)))
 
 (defun supersonic-jukebox--announce-changes (previous current)
   "Run the facade's hooks for whatever changed between PREVIOUS and CURRENT.
@@ -542,7 +543,9 @@ that happen afterwards."
 ;; Announce jukebox to the playback facade as we are loaded, so that the
 ;; generic `supersonic-playback-*' functions resolve to the wrappers
 ;; above as soon as `supersonic-playback-backend' selects `jukebox' --
-;; see `supersonic-playback.el'.
+;; see `supersonic-playback.el'.  Only for the `subsonic' provider:
+;; jukeboxControl takes Subsonic ids, and nothing but a Subsonic server
+;; has a jukebox to control.
 (supersonic-playback-register-backend
  'jukebox
  '((start . supersonic-jukebox-start)
@@ -555,7 +558,8 @@ that happen afterwards."
    (seek-fraction . supersonic-jukebox-seek-fraction)
    (live-p . supersonic-jukebox-live-p)
    (status . supersonic-jukebox-status)
-   (queue . supersonic-jukebox-queue)))
+   (queue . supersonic-jukebox-queue))
+ :providers '(subsonic))
 
 (provide 'supersonic-jukebox)
 

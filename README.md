@@ -163,6 +163,12 @@ select it as the active backend:
   (require 'supersonic-jukebox))
 ```
 
+The jukebox only plays for the `subsonic` provider, since only a
+Subsonic server has a jukebox to control. With any other provider,
+playback commands report that the two do not fit, and
+`supersonic-playback-switch-backend` does not offer `jukebox`. mpv
+plays for any provider that can name a URL to stream from.
+
 ## Authentication
 
 Add a `~/.authinfo.gpg` or `~/.authinfo` file with the following contents

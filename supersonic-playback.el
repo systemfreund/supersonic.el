@@ -35,6 +35,12 @@
 ;; which backend woke it, and a backend never has to know who is
 ;; listening.
 ;;
+;; Not every backend can play what every library provider hands out,
+;; so a backend also says, as it registers, which providers it plays
+;; for -- by name, or by the provider operations it relies on -- and
+;; this file keeps an incompatible pairing from being selected or
+;; used.  See `supersonic-playback-register-backend'.
+;;
 ;; This file therefore knows nothing about mpv, HTTP streams, or the
 ;; Subsonic API: it only knows the operation names.  The dependency runs
 ;; the other way round, each backend requiring this file and registering
@@ -44,8 +50,10 @@
 ;;; Code:
 
 (require 'aio)
+(require 'seq)
 
 (require 'supersonic-custom)
+(require 'supersonic-provider)
 
 (defconst supersonic-playback-operations
   '(start enqueue toggle-play next prev stop seek seek-fraction live-p status queue)
@@ -106,30 +114,90 @@ Populated by `supersonic-playback-register-backend', which every
 backend calls as it is loaded, and read by
 `supersonic-playback--implementation' when dispatching.")
 
-(defun supersonic-playback-register-backend (name operations)
+(defvar supersonic-playback--compatibility (make-hash-table :test #'eq)
+  "Map of backend name (a symbol) to the providers it can play for.
+Each value is the plist of `:providers' and `:requires' passed to
+`supersonic-playback-register-backend'; a backend registered with
+neither has no entry and plays for every provider.")
+
+(defconst supersonic-playback--unchecked-operations '(stop live-p status queue)
+  "Operations the active backend answers even for an incompatible provider.
+None of them plays anything: they report on, or tear down, whatever the
+backend is already doing.  Refusing them would leave the now-playing
+buffer and MPRIS erroring on every refresh, and
+`supersonic-playback-switch-backend' unable to stop a backend it is
+switching away from.")
+
+(defun supersonic-playback-register-backend (name operations &rest compatibility)
   "Register NAME as a playback backend implementing OPERATIONS.
 NAME is the symbol users select with `supersonic-playback-backend'.
 OPERATIONS is an alist mapping operation symbols from
 `supersonic-playback-operations' to the functions implementing them.
 Registering a name that is already registered replaces it, so
-re-loading a backend file is harmless."
+re-loading a backend file is harmless.
+
+COMPATIBILITY is a plist saying which library providers -- see
+`supersonic-provider' -- the backend can play for:
+
+- `:providers', a list of provider names: the backend plays for these
+  and no others.  For a backend tied to one kind of server, such as
+  the Subsonic jukebox.
+- `:requires', a list of operations from
+  `supersonic-provider-operations': the backend plays for any
+  provider implementing them all.  For a backend that only needs to be
+  told where a track is, such as mpv with `stream-url'.
+
+Given both, a provider must satisfy both.  Given neither, the backend
+plays for every provider."
   (dolist (operation operations)
     (unless (memq (car operation) supersonic-playback-operations)
       (error "Unknown playback operation `%s' for backend `%s'" (car operation) name))
     (unless (functionp (cdr operation))
       (error "Implementation of `%s' for backend `%s' is not a function" (car operation) name)))
-  (puthash name operations supersonic-playback--backends))
+  (let ((providers (plist-get compatibility :providers))
+        (requires (plist-get compatibility :requires)))
+    (dolist (operation requires)
+      (unless (memq operation supersonic-provider-operations)
+        (error "Unknown provider operation `%s' required by backend `%s'" operation name)))
+    (puthash name operations supersonic-playback--backends)
+    (if (or providers requires)
+        (puthash name (list :providers providers :requires requires) supersonic-playback--compatibility)
+      (remhash name supersonic-playback--compatibility))))
+
+(defun supersonic-playback-compatible-p (backend &optional provider)
+  "Return non-nil if BACKEND can play for PROVIDER.
+PROVIDER defaults to the active one, `supersonic-provider'.  Only says
+what BACKEND declared when it registered, and so is nil for a backend
+never registered at all."
+  (let ((provider (or provider supersonic-provider))
+        (compatibility (gethash backend supersonic-playback--compatibility)))
+    (and (gethash backend supersonic-playback--backends)
+         (let ((providers (plist-get compatibility :providers)))
+           (or (null providers) (memq provider providers)))
+         (seq-every-p
+          (lambda (operation) (supersonic-provider-supports-p operation provider))
+          (plist-get compatibility :requires))
+         t)))
+
+(defun supersonic-playback--incompatible (backend)
+  "Signal a `user-error' saying BACKEND cannot play for the active provider."
+  (user-error "The `%s' playback backend cannot play for the `%s' provider" backend supersonic-provider))
 
 (defun supersonic-playback--implementation (operation)
   "Return the active backend's implementation of OPERATION.
 Signals a `user-error' if `supersonic-playback-backend' names a backend
 that was never registered -- typically because the file providing it
-has not been loaded -- or one that does not implement OPERATION.  Both
-are configuration problems the user can act on, hence `user-error'
-rather than a backtrace."
+has not been loaded -- or one that does not implement OPERATION, or
+one that cannot play for the active provider (unless OPERATION is one
+of `supersonic-playback--unchecked-operations').  All are
+configuration problems the user can act on, hence `user-error' rather
+than a backtrace."
   (let ((operations (gethash supersonic-playback-backend supersonic-playback--backends)))
     (unless operations
       (user-error "No playback backend named `%s' is registered" supersonic-playback-backend))
+    (unless (or (memq operation supersonic-playback--unchecked-operations)
+                (supersonic-playback-compatible-p supersonic-playback-backend))
+      (supersonic-playback--incompatible supersonic-playback-backend))
     (or (alist-get operation operations)
         (user-error "The `%s' playback backend cannot %s" supersonic-playback-backend operation))))
 
@@ -145,6 +213,11 @@ since a backend not yet loaded has never registered itself."
   (let (names)
     (maphash (lambda (name _operations) (push name names)) supersonic-playback--backends)
     (nreverse names)))
+
+(defun supersonic-playback-compatible-backend-names ()
+  "Return the names of the registered backends that fit the active provider.
+That is, every backend `supersonic-playback-compatible-p' accepts."
+  (seq-filter #'supersonic-playback-compatible-p (supersonic-playback-backend-names)))
 
 (defun supersonic-playback-start (ids)
   "Replace the play queue with IDS and start playing immediately."
@@ -261,8 +334,10 @@ an empty queue and no backend to ask look the same from here."
 ;;;###autoload
 (defun supersonic-playback-switch-backend (backend)
   "Make BACKEND the active playback backend.
-Interactively, prompts among the names
-`supersonic-playback-register-backend' has been called for.
+Interactively, prompts among the registered backends that can play for
+the active provider -- see `supersonic-playback-compatible-p'.  A
+BACKEND that is not registered, or cannot play for the active
+provider, is refused with a `user-error' before anything is stopped.
 
 Before `supersonic-playback-backend' actually changes, this calls
 `supersonic-playback-stop' against whichever backend is still active --
@@ -277,7 +352,11 @@ independently in."
    (list
     (intern
      (completing-read
-      "Switch to playback backend: " (mapcar #'symbol-name (supersonic-playback-backend-names)) nil t))))
+      "Switch to playback backend: " (mapcar #'symbol-name (supersonic-playback-compatible-backend-names)) nil t))))
+  (unless (supersonic-playback-compatible-p backend)
+    (if (gethash backend supersonic-playback--backends)
+        (supersonic-playback--incompatible backend)
+      (user-error "No playback backend named `%s' is registered" backend)))
   (unless (eq backend supersonic-playback-backend)
     (supersonic-playback-stop)
     (setq supersonic-playback-backend backend)))

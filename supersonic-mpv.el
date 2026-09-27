@@ -36,6 +36,12 @@
 ;; those hooks from the outside, the same way `supersonic-mpris.el'
 ;; observes and drives this file purely via `advice-add' rather than
 ;; being depended on by it.
+;;
+;; Nor does it know how to reach a track: it streams whatever URL the
+;; active provider's `supersonic-provider-stream-url' hands it, and
+;; reports what it played through `supersonic-provider-scrobble'.  mpv
+;; therefore plays for any provider that implements `stream-url', and
+;; says so when it registers.
 
 ;;; Code:
 (require 'json)
@@ -44,7 +50,7 @@
 (require 'aio)
 (require 'subr-x)
 (require 'supersonic-custom)
-(require 'supersonic-api)
+(require 'supersonic-provider)
 (require 'supersonic-playback)
 
 (defvar supersonic-mpv--process nil)
@@ -175,10 +181,17 @@ scrobbling and MPRIS metadata.  If the `loadfile' command could not
 actually be sent (e.g. mpv died between `supersonic-mpv-ensure-running'
 and this call), the tentative registration is rolled back and an error
 is signalled instead, so `supersonic-mpv--entry-counter' never runs
-ahead of the playlist entries mpv has actually seen."
-  (let ((entry-id (1+ supersonic-mpv--entry-counter)))
+ahead of the playlist entries mpv has actually seen.
+
+What mpv loads is the active provider's `supersonic-provider-stream-url'
+for ID, asked for before anything is registered, so a provider that
+cannot answer leaves nothing behind either.  It travels over the IPC
+socket rather than on mpv's command line, which is what keeps any
+credentials in it out of the process list."
+  (let ((url (supersonic-provider-stream-url id))
+        (entry-id (1+ supersonic-mpv--entry-counter)))
     (puthash entry-id id supersonic--playlist)
-    (if (supersonic-mpv-command "loadfile" (supersonic-build-url "/stream.view" `(("id" . ,id))) flag)
+    (if (supersonic-mpv-command "loadfile" url flag)
         (setq supersonic-mpv--entry-counter entry-id)
       (progn
         (remhash entry-id supersonic--playlist)
@@ -236,13 +249,16 @@ already playing undisturbed and simply queues IDS after it."
         (when (and (string-equal event "property-change") (string-equal (alist-get 'name parsed-response) "pause"))
           (setq supersonic--paused (eq (alist-get 'data parsed-response) t))
           (run-hooks 'supersonic-playback-state-change-hook))
-        (when supersonic-enable-scrobbling
-          (cond
-           ((string-equal event "end-file")
-            (supersonic-scrobble (gethash (alist-get 'playlist_entry_id parsed-response) supersonic--playlist)))
-           ((string-equal event "start-file")
-            (supersonic-scrobble (gethash (alist-get 'playlist_entry_id parsed-response) supersonic--playlist)
-                                 t)))))))))
+        ;; `supersonic-provider-scrobble' does its own gating on
+        ;; `supersonic-enable-scrobbling', on the provider being able
+        ;; to scrobble at all, and on the entry resolving to a track.
+        (cond
+         ((string-equal event "end-file")
+          (supersonic-provider-scrobble
+           (gethash (alist-get 'playlist_entry_id parsed-response) supersonic--playlist)))
+         ((string-equal event "start-file")
+          (supersonic-provider-scrobble
+           (gethash (alist-get 'playlist_entry_id parsed-response) supersonic--playlist) t))))))))
 
 (defun supersonic--mpv-socket-filter (_ output)
   "Filter the mpv socket connection.
@@ -388,6 +404,7 @@ current."
 ;; Registered as symbols rather than function values, so that dispatch
 ;; goes through each symbol's function cell and `supersonic-mpris.el''s
 ;; `advice-add' on `supersonic-mpv-start'/`-enqueue' still runs.
+;; Compatible with whichever provider can say where to stream from.
 (supersonic-playback-register-backend
  'mpv
  '((start . supersonic-mpv-start)
@@ -400,7 +417,8 @@ current."
    (seek-fraction . supersonic-mpv-seek-fraction)
    (live-p . supersonic-mpv-live-p)
    (status . supersonic-mpv-status)
-   (queue . supersonic-mpv-queue)))
+   (queue . supersonic-mpv-queue))
+ :requires '(stream-url))
 
 (provide 'supersonic-mpv)
 ;;; supersonic-mpv.el ends here

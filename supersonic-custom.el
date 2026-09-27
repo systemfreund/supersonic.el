@@ -550,7 +550,10 @@ The symbol a backend registered itself under via
 `supersonic-playback-register-backend'; every play, enqueue and
 transport command dispatches to it.  Only `mpv' is built in, and
 selecting a backend whose file has not been loaded is reported when a
-playback command is next used."
+playback command is next used.  So is one that cannot play for the
+active `supersonic-provider': mpv plays for any provider that can
+name a stream URL, the jukebox only for `subsonic'.  Switching with
+`supersonic-playback-switch-backend' offers only backends that fit."
   :type '(choice (const :tag "Local mpv process" mpv) (symbol :tag "Other registered backend"))
   :group 'supersonic)
 
