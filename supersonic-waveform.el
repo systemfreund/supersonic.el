@@ -54,6 +54,7 @@
 ;;; Code:
 (require 'cl-lib)
 (require 'svg)
+(require 'aio)
 (require 'supersonic-custom)
 (require 'supersonic-provider)
 (require 'supersonic-playback)
@@ -457,13 +458,13 @@ stop it -- see that function's GENERATION parameter."
             (message "[Supersonic] Failed to generate waveform: %s" (error-message-string err))
             (finish nil)))))))))
 
-(defun supersonic-waveform--start-transcode (id buckets cache-file callback &optional progress-callback)
-  "Spawn the disposable mpv subprocess that transcodes ID to WAV.
-Helper for `supersonic-waveform-ensure'; see
-`supersonic-waveform--transcode-sentinel' for what happens once it
-exits, and where CALLBACK and PROGRESS-CALLBACK end up (as
-`supersonic-waveform--job', installed here).  BUCKETS and CACHE-FILE
-are passed straight through to that sentinel.
+(defun supersonic-waveform--start-transcode (url buckets cache-file job)
+  "Spawn the disposable mpv that transcodes the stream at URL to WAV.
+Helper for `supersonic-waveform-ensure', on behalf of JOB -- the
+`supersonic-waveform--job' it installed; see
+`supersonic-waveform--transcode-sentinel' for what happens once the
+process exits, and where JOB's callbacks end up.  BUCKETS and
+CACHE-FILE are passed straight through to that sentinel.
 
 The output file deliberately does NOT get a \".wav\" (or other
 media-file) extension: a media-file minor mode (e.g. ready-player.el)
@@ -472,8 +473,8 @@ that intercepts reads of the file and hands back empty/placeholder
 content instead of the real bytes, on the assumption that nothing
 needs the raw data of a file it's offering to play instead.
 
-The stream URL, the active provider's `supersonic-provider-stream-url'
-for ID, is written to mpv's stdin as a one-line playlist
+URL, the active provider's `supersonic-provider-stream-url' for the
+track, is written to mpv's stdin as a one-line playlist
 \(`--playlist=fd://0') rather than passed as an argv element, because
 it may carry credentials -- Subsonic's carries its \"u\"/\"t\"/\"s\"
 token-auth triple -- and argv is world-readable via `ps' and /proc for
@@ -481,22 +482,19 @@ as long as the transcode runs.  That token never expires -- the server
 only ever checks md5(password + s) = t -- so a captured triple would
 authenticate indefinitely, which is exactly the exposure
 `supersonic--auth-query' switched to token auth to avoid in the first
-place.  The playback path
-has the same property for the same reason: it sends \"loadfile\" over
-mpv's IPC socket instead of naming the URL on a command line.
+place.  The playback path has the same property for the same reason:
+it sends \"loadfile\" over mpv's IPC socket instead of naming the URL
+on a command line.
 `--load-unsafe-playlists' is set because the sole entry is one we just
 wrote ourselves, and mpv otherwise refuses non-HTTP protocols
 \(e.g. the \"av://\" test streams) from a playlist."
   (unless (and supersonic-mpv (executable-find supersonic-mpv))
     (error "No mpv executable found"))
-  ;; Ask for the url first: the provider may signal (Subsonic does when
-  ;; there are no usable credentials), and between `make-temp-file' and the `setq' below
-  ;; the temp file exists while nothing yet points at it -- an error thrown
-  ;; in that window would strand it where not even
-  ;; `supersonic-waveform-cancel' could find it again.
-  (let* ((url (supersonic-provider-stream-url id))
-         (outfile (make-temp-file "supersonic-waveform-" nil ".tmp"))
-         (job (list :id id :callback callback :progress-callback progress-callback)))
+  ;; Nothing may signal between `make-temp-file' and the `setq' right
+  ;; after it: the temp file would exist while nothing points at it,
+  ;; stranded where not even `supersonic-waveform-cancel' could find it
+  ;; again.  That is why URL comes in already resolved.
+  (let ((outfile (make-temp-file "supersonic-waveform-" nil ".tmp")))
     (setq supersonic-waveform--outfile outfile)
     (setq supersonic-waveform--process
           (make-process
@@ -522,7 +520,6 @@ wrote ourselves, and mpv otherwise refuses non-HTTP protocols
            :connection-type 'pipe
            :noquery t
            :sentinel (supersonic-waveform--transcode-sentinel outfile buckets cache-file job)))
-    (setq supersonic-waveform--job job)
     (process-send-string supersonic-waveform--process (concat url "\n"))
     (process-send-eof supersonic-waveform--process)))
 
@@ -574,17 +571,40 @@ there's nothing partial about that case."
       nil)
      (t
       (supersonic-waveform-cancel)
-      (condition-case err
-          (supersonic-waveform--start-transcode id buckets cache-file callback progress-callback)
-        (error
-         ;; Cancel again on the way out: `supersonic-waveform--start-transcode'
-         ;; can fail with the process and the job already installed (writing
-         ;; the URL to a process that died on the spot), and a job left behind
-         ;; with nothing running would have the next call for this same track
-         ;; re-point it and then wait on it forever.
-         (supersonic-waveform-cancel)
-         (message "[Supersonic] Failed to start waveform generation: %s" (error-message-string err))
-         (funcall callback nil)))))))
+      (let ((job (list :id id :callback callback :progress-callback progress-callback)))
+        ;; Installed right away, before the stream URL is even asked
+        ;; for, so a repeat call for this track in the meantime re-points
+        ;; this job rather than starting a second one.
+        (setq supersonic-waveform--job job)
+        (supersonic-waveform--transcode-when-streamable id buckets cache-file job)
+        nil)))))
+
+(aio-defun
+ supersonic-waveform--transcode-when-streamable (id buckets cache-file job)
+ "Transcode track ID for JOB once the provider has named its stream URL.
+BUCKETS and CACHE-FILE are passed on to
+`supersonic-waveform--start-transcode'.  The URL arrives
+asynchronously, so JOB may no longer be `supersonic-waveform--job' by
+then -- cancelled, or replaced by a job for another track.  Nothing is
+spawned for it in that case, and its callback is called with nil, the
+same as a transcode cancelled while running would.  A failure to get
+the URL or to start the transcode is reported and likewise ends in
+nil."
+ (condition-case err
+     (let ((url (aio-await (supersonic-provider-stream-url id))))
+       (if (eq job supersonic-waveform--job)
+           (supersonic-waveform--start-transcode url buckets cache-file job)
+         (funcall (plist-get job :callback) nil)))
+   (error
+    ;; Cancel on the way out: `supersonic-waveform--start-transcode' can
+    ;; fail with the process already spawned (writing the URL to a
+    ;; process that died on the spot), and a job left behind with nothing
+    ;; running would have the next call for this same track re-point it
+    ;; and then wait on it forever.
+    (when (eq job supersonic-waveform--job)
+      (supersonic-waveform-cancel)
+      (message "[Supersonic] Failed to start waveform generation: %s" (error-message-string err)))
+    (funcall (plist-get job :callback) nil))))
 
 ;;;
 ;;; Rendering

@@ -77,7 +77,7 @@
     podcasts podcast-episodes add-podcast download-podcast-episode
     stream-url scrobble config-hints)
   "The library operations a provider can implement.
-All but `stream-url', `scrobble' and `config-hints' return a promise.
+All but `scrobble' and `config-hints' return a promise.
 
 - `artists' takes no arguments and resolves to a list of artists.
 - `artist-albums' takes an artist id and resolves to that artist's
@@ -103,14 +103,18 @@ All but `stream-url', `scrobble' and `config-hints' return a promise.
 - `download-podcast-episode' takes an episode id, has the provider
   fetch the episode so it can be played, and resolves once that has
   been set in motion.
-- `stream-url' takes a track id and returns, synchronously, a URL a
-  player can stream that track from.  It may carry credentials, so
-  whoever hands it to a subprocess does so over a pipe or socket and
-  never on a command line, where any local user could read it.
+- `stream-url' takes a track id and resolves to a URL a player can
+  stream that track from.  A promise even where the URL is built
+  locally, as for Subsonic, so that a provider which has to ask its
+  server first -- for a signed or short-lived URL, say -- fits the
+  same contract.  The URL may carry credentials, so whoever hands it
+  to a subprocess does so over a pipe or socket and never on a
+  command line, where any local user could read it.
 - `scrobble' takes a track id and a NOW-PLAYING flag and reports the
   track to the provider: as having just started when NOW-PLAYING is
-  non-nil, as having been played otherwise.  Fire and forget: its
-  return value means nothing and it need not wait for an answer.
+  non-nil, as having been played otherwise.  Fire and forget: it sets
+  the report in motion and returns, and its return value means
+  nothing -- nobody waits for a scrobble to land.
 - `config-hints' takes no arguments and returns a list of strings,
   each a hint on what to check in this provider's configuration when
   a request fails -- shown underneath the error in the list buffer
@@ -244,13 +248,12 @@ The result is a plist (:artists ARTISTS :albums ALBUMS :tracks TRACKS)."
  "Return a promise resolving once EPISODE-ID's download has been started."
  (aio-await (supersonic-provider--call 'download-podcast-episode episode-id)))
 
-(defun supersonic-provider-stream-url (track-id)
-  "Return a URL to stream the track with TRACK-ID from.
-Synchronous, unlike the library operations above: a player asks for
-it right as it loads the track, and building it is local work for
-every provider there is.  The URL may carry credentials -- keep it off
-any subprocess's command line."
-  (supersonic-provider--call 'stream-url track-id))
+(aio-defun
+ supersonic-provider-stream-url (track-id)
+ "Return a promise resolving to a URL to stream the track with TRACK-ID from.
+The URL may carry credentials -- keep it off any subprocess's command
+line."
+ (aio-await (supersonic-provider--call 'stream-url track-id)))
 
 (defun supersonic-provider-scrobble (track-id &optional now-playing)
   "Scrobble TRACK-ID, as now playing if NOW-PLAYING is non-nil.
@@ -258,9 +261,18 @@ Does nothing unless `supersonic-enable-scrobbling' is set, for a nil
 TRACK-ID -- a backend reporting an entry it never resolved -- or when
 the active provider cannot scrobble: a playback backend calls this at
 every track change, and a provider without scrobbling is no reason
-to interrupt playback, let alone to say so each time."
+to interrupt playback, let alone to say so each time.
+
+Never signals either.  A backend calls this from wherever it notices
+a track change -- mpv's socket filter, the jukebox's poll timer -- and
+a scrobble that fails, say for want of credentials, must not break
+that; it is reported in the echo area instead."
   (when (and supersonic-enable-scrobbling track-id (supersonic-provider-supports-p 'scrobble))
-    (supersonic-provider--call 'scrobble track-id now-playing)))
+    (condition-case err
+        (supersonic-provider--call 'scrobble track-id now-playing)
+      (error
+       (message "[Supersonic] Failed to scrobble: %s" (error-message-string err))))
+    nil))
 
 (defun supersonic-provider-config-hints ()
   "Return the active provider's configuration hints, a list of strings.

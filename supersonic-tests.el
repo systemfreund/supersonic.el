@@ -56,13 +56,12 @@ or register an entry in `supersonic--playlist' when the `loadfile'
 command could not actually be sent to mpv (e.g. no live IPC queue),
 so the client-side counter never runs ahead of what mpv has actually
 seen."
-  (cl-letf (((symbol-function 'supersonic-build-url) (lambda (_endpoint _extra-query) "dummy://url")))
-    (let ((supersonic-mpv--queue nil)
-          (supersonic-mpv--entry-counter 5)
-          (supersonic--playlist (make-hash-table)))
-      (should-error (supersonic--mpv-load-track "some-id" "replace"))
-      (should (= 5 supersonic-mpv--entry-counter))
-      (should (= 0 (hash-table-count supersonic--playlist))))))
+  (let ((supersonic-mpv--queue nil)
+        (supersonic-mpv--entry-counter 5)
+        (supersonic--playlist (make-hash-table)))
+    (should-error (supersonic--mpv-load-track "some-id" "dummy://url" "replace"))
+    (should (= 5 supersonic-mpv--entry-counter))
+    (should (= 0 (hash-table-count supersonic--playlist)))))
 
 (ert-deftest supersonic-tests-start-assigns-sequential-ids ()
   "`supersonic-mpv-start' maps mpv's playlist entry ids 1..n, in order."
@@ -396,9 +395,14 @@ point where what is playing may have changed runs
       (supersonic-tests--with-mpv
        (supersonic-mpv-start (list supersonic-tests--track-1))
        (should (supersonic-tests--wait-for (lambda () (> track-changes 0))))
+       ;; mpv answers the `observe_property' on "pause" with its current
+       ;; value right away, which counts as a state change of its own.
+       ;; Let it land before counting what the enqueue below causes.
+       (should (supersonic-tests--wait-for (lambda () (> state-changes 0))))
+       (setq state-changes 0)
        (should (= 0 queue-changes))
        (supersonic-mpv-enqueue (list supersonic-tests--track-2))
-       (should (= 1 queue-changes))
+       (should (supersonic-tests--wait-for (lambda () (= 1 queue-changes))))
        (should (= 0 state-changes))
        (supersonic-toggle-playing)
        (should (supersonic-tests--wait-for (lambda () (> state-changes 0))))
@@ -1168,7 +1172,7 @@ replaced: the process object stays the very same one."
        (unwind-protect
            (progn
              (supersonic-waveform-ensure "long-track" (lambda (e) (setq first-result e)))
-             (should (process-live-p supersonic-waveform--process))
+             (should (supersonic-tests--wait-for (lambda () (process-live-p supersonic-waveform--process))))
              (let ((proc supersonic-waveform--process)
                    (outfile supersonic-waveform--outfile))
                (supersonic-waveform-ensure "long-track" (lambda (e) (setq second-result e)))
@@ -1193,11 +1197,11 @@ is keyed on the track id, not on there simply being a job."
        (unwind-protect
            (progn
              (supersonic-waveform-ensure "track-a" #'ignore)
+             (should (supersonic-tests--wait-for (lambda () (process-live-p supersonic-waveform--process))))
              (let ((proc supersonic-waveform--process))
-               (should (process-live-p proc))
                (supersonic-waveform-ensure "track-b" #'ignore)
                (should-not (eq proc supersonic-waveform--process))
-               (should (process-live-p supersonic-waveform--process))))
+               (should (supersonic-tests--wait-for (lambda () (process-live-p supersonic-waveform--process))))))
          (supersonic-waveform-cancel)
          (delete-directory supersonic-cache-path t))))))
 
@@ -1210,7 +1214,6 @@ playlist instead of as a command-line argument."
         (sent nil)
         (url "https://example.invalid/rest/stream.view?u=bob&t=deadbeef&s=abc123&id=id"))
     (cl-letf (((symbol-function 'executable-find) (lambda (&rest _) "/usr/bin/mpv"))
-              ((symbol-function 'supersonic-build-url) (lambda (&rest _) url))
               ((symbol-function 'make-process)
                (lambda (&rest args)
                  (setq command (plist-get args :command))
@@ -1220,7 +1223,7 @@ playlist instead of as a command-line argument."
       (let ((supersonic-mpv "mpv"))
         (unwind-protect
             (progn
-              (supersonic-waveform--start-transcode "id" 10 "cache-file" #'ignore)
+              (supersonic-waveform--start-transcode url 10 "cache-file" (list :id "id" :callback #'ignore))
               (should-not (cl-some (lambda (arg) (string-match-p "stream\\.view" arg)) command))
               (should (member "--playlist=fd://0" command))
               (should (equal (list (concat url "\n")) sent)))
@@ -1239,11 +1242,12 @@ existed."
          (started nil)
          (result 'pending))
     (unwind-protect
-        (cl-letf (((symbol-function 'supersonic-waveform--start-transcode) (lambda (&rest _) (setq started t))))
+        (cl-letf (((symbol-function 'supersonic-build-url) (lambda (&rest _) "dummy://url"))
+                  ((symbol-function 'supersonic-waveform--start-transcode) (lambda (&rest _) (setq started t))))
           (let ((coding-system-for-write 'no-conversion))
             (write-region "truncated" nil cache-file nil 'no-message))
           (supersonic-waveform-ensure "id-1" (lambda (e) (setq result e)))
-          (should started)
+          (should (supersonic-tests--wait-for (lambda () started)))
           (should (eq result 'pending))
           (should-not (file-exists-p cache-file)))
       (delete-directory supersonic-cache-path t))))
@@ -1258,7 +1262,7 @@ its output file, so a quick track change never leaves either behind."
        (unwind-protect
            (progn
              (supersonic-waveform-ensure "long-track" #'ignore)
-             (should (process-live-p supersonic-waveform--process))
+             (should (supersonic-tests--wait-for (lambda () (process-live-p supersonic-waveform--process))))
              (let ((outfile supersonic-waveform--outfile))
                (supersonic-waveform-cancel)
                (should-not (process-live-p supersonic-waveform--process))
@@ -1283,7 +1287,7 @@ would look like something actually went wrong."
                         (push (apply #'format fmt args) messages)
                         nil)))
              (supersonic-waveform-ensure "long-track" (lambda (_envelope) (setq finished t)))
-             (should (process-live-p supersonic-waveform--process))
+             (should (supersonic-tests--wait-for (lambda () (process-live-p supersonic-waveform--process))))
              (supersonic-waveform-cancel)
              ;; Wait for the sentinel to actually finish (and, if it were
              ;; going to, log a message) instead of just for the process to
@@ -1343,17 +1347,17 @@ for such a path -- breaking analysis with no error at all, since mpv
 itself still succeeds regardless. This bit a real user; guard against
 it coming back."
   (cl-letf (((symbol-function 'executable-find) (lambda (&rest _) "/usr/bin/mpv"))
-            ((symbol-function 'supersonic-build-url) (lambda (&rest _) "dummy://url"))
             ((symbol-function 'make-process) (lambda (&rest _) nil))
             ;; The stubbed `make-process' hands back no process to feed
             ;; the stream URL to; only the output file's name is under
             ;; test here.
             ((symbol-function 'process-send-string) #'ignore)
             ((symbol-function 'process-send-eof) #'ignore))
-    (let ((supersonic-mpv "mpv"))
+    (let ((supersonic-mpv "mpv")
+          (url "dummy://url"))
       (unwind-protect
           (progn
-            (supersonic-waveform--start-transcode "id" 10 "cache-file" #'ignore)
+            (supersonic-waveform--start-transcode url 10 "cache-file" (list :id "id" :callback #'ignore))
             (should-not
              (member (file-name-extension supersonic-waveform--outfile) '("wav" "mp3" "ogg" "flac" "m4a" "opus"))))
         (supersonic-waveform-cancel)))))
@@ -3100,9 +3104,9 @@ different measurement of the same track rather than a reusable one."
   "`supersonic-waveform-samplerate' is what mpv is actually asked to
 transcode to, not just part of the cache key."
   (let ((command nil)
+        (url "dummy://url")
         (supersonic-waveform-samplerate 2500))
     (cl-letf (((symbol-function 'executable-find) (lambda (&rest _) "/usr/bin/mpv"))
-              ((symbol-function 'supersonic-build-url) (lambda (&rest _) "dummy://url"))
               ((symbol-function 'make-process)
                (lambda (&rest args)
                  (setq command (plist-get args :command))
@@ -3112,7 +3116,7 @@ transcode to, not just part of the cache key."
       (let ((supersonic-mpv "mpv"))
         (unwind-protect
             (progn
-              (supersonic-waveform--start-transcode "id" 10 "cache-file" #'ignore)
+              (supersonic-waveform--start-transcode url 10 "cache-file" (list :id "id" :callback #'ignore))
               (should (member "--audio-samplerate=2500" command)))
           (setq supersonic-waveform--process nil)
           (supersonic-waveform-cancel))))))
@@ -4177,13 +4181,22 @@ provider -- no Subsonic request is made -- and announces it."
 ;;; Streaming, scrobbling and backend compatibility
 ;;;
 
+(defun supersonic-tests--stream-url (&optional delays)
+  "Return a fake `stream-url' implementation, resolving ID to \"fake://ID\".
+DELAYS is an alist of track id to seconds: those ids resolve only
+after that long, the rest on the next tick."
+  (aio-lambda
+   (id)
+   (aio-await (aio-sleep (or (cdr (assoc id delays)) 0)))
+   (concat "fake://" id)))
+
 (ert-deftest supersonic-tests-provider-stream-url-dispatches-to-the-provider ()
-  "`supersonic-provider-stream-url' answers what the active provider's
-`stream-url' returns, synchronously, and reports a provider without one."
-  (supersonic-tests--with-provider `((stream-url . ,(lambda (id) (concat "fake://" id))))
-    (should (equal "fake://a/b" (supersonic-provider-stream-url "a/b"))))
+  "`supersonic-provider-stream-url' resolves to what the active provider's
+`stream-url' resolves to, and rejects for a provider without one."
+  (supersonic-tests--with-provider `((stream-url . ,(supersonic-tests--stream-url)))
+    (should (equal "fake://a/b" (supersonic-tests--resolve (supersonic-provider-stream-url "a/b")))))
   (supersonic-tests--with-provider '()
-    (should-error (supersonic-provider-stream-url "a") :type 'user-error)))
+    (should-error (supersonic-tests--resolve (supersonic-provider-stream-url "a")) :type 'user-error)))
 
 (ert-deftest supersonic-tests-provider-scrobble-is-gated-and-optional ()
   "`supersonic-provider-scrobble' hands the id and now-playing flag to
@@ -4205,6 +4218,17 @@ cannot scrobble."
       (let ((supersonic-enable-scrobbling t))
         (should-not (supersonic-provider-scrobble "a"))))))
 
+(ert-deftest supersonic-tests-provider-scrobble-reports-rather-than-signals ()
+  "A scrobble that fails is reported in the echo area and never
+signals: it runs from inside mpv's socket filter and the jukebox's poll,
+neither of which should break over it."
+  (let ((supersonic-enable-scrobbling t)
+        (messages nil))
+    (cl-letf (((symbol-function 'message) (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+      (supersonic-tests--with-provider `((scrobble . ,(lambda (&rest _) (user-error "No credentials"))))
+        (should-not (supersonic-provider-scrobble "a"))))
+    (should (equal '("[Supersonic] Failed to scrobble: No credentials") messages))))
+
 (ert-deftest supersonic-tests-subsonic-streams-and-scrobbles ()
   "The Subsonic provider implements `stream-url' with stream.view and
 `scrobble' with scrobble.view, submitting unless asked for now-playing."
@@ -4212,7 +4236,7 @@ cannot scrobble."
     (cl-letf (((symbol-function 'supersonic-build-url)
                (lambda (endpoint query) (push (cons endpoint query) requests) "dummy://url"))
               ((symbol-function 'url-retrieve) #'ignore))
-      (should (equal "dummy://url" (supersonic-subsonic--stream-url "t/1")))
+      (should (equal "dummy://url" (supersonic-tests--resolve (supersonic-subsonic--stream-url "t/1"))))
       (supersonic-subsonic--scrobble "t/1" t)
       (supersonic-subsonic--scrobble "t/1" nil))
     (should
@@ -4225,23 +4249,80 @@ cannot scrobble."
       (should (eq 'supersonic-subsonic--stream-url (alist-get 'stream-url operations)))
       (should (eq 'supersonic-subsonic--scrobble (alist-get 'scrobble operations))))))
 
+(defmacro supersonic-tests--with-fake-mpv (&rest body)
+  "Run BODY against an mpv that only records the commands sent to it.
+`supersonic-mpv-command' pushes its arguments onto `commands', which
+BODY can read, and mpv counts as started without any process, so
+loads can be exercised without mpv installed."
+  (declare (indent 0))
+  `(let ((supersonic--playlist (make-hash-table))
+         (supersonic-mpv--entry-counter 0)
+         (supersonic-mpv--pending-load nil)
+         (supersonic-mpv--load-generation 0)
+         (supersonic-playback-track-change-hook nil)
+         (supersonic-playback-queue-change-hook nil)
+         (commands nil))
+     (cl-letf (((symbol-function 'supersonic-build-url) (lambda (&rest _) (error "Subsonic was asked")))
+               ((symbol-function 'supersonic-mpv-ensure-running) #'ignore)
+               ((symbol-function 'supersonic-mpv-command) (lambda (&rest args) (push args commands) t)))
+       ,@body)))
+
+(defun supersonic-tests--loadfiles (commands)
+  "Return the (URL FLAG) of each loadfile among COMMANDS, oldest first."
+  (mapcar #'cdr (seq-filter (lambda (c) (equal "loadfile" (car c))) (reverse commands))))
+
 (ert-deftest supersonic-tests-mpv-loads-the-providers-stream-url ()
-  "mpv loads whatever URL the active provider's `stream-url' names, over
-its IPC socket, and builds no Subsonic URL of its own.  A provider that
-cannot name one fails the load before anything is registered."
-  (let ((supersonic--playlist (make-hash-table))
-        (supersonic-mpv--entry-counter 0)
-        (commands nil))
-    (cl-letf (((symbol-function 'supersonic-build-url) (lambda (&rest _) (error "Subsonic was asked")))
-              ((symbol-function 'supersonic-mpv-command) (lambda (&rest args) (push args commands) t)))
-      (supersonic-tests--with-provider `((stream-url . ,(lambda (id) (concat "fake://" id))))
-        (supersonic--mpv-load-track "a/1" "replace")
-        (should (equal '(("loadfile" "fake://a/1" "replace")) commands))
-        (should (equal "a/1" (gethash 1 supersonic--playlist))))
-      (supersonic-tests--with-provider '()
-        (should-error (supersonic--mpv-load-track "a/2" "append") :type 'user-error)
-        (should (= 1 supersonic-mpv--entry-counter))
-        (should (= 1 (hash-table-count supersonic--playlist)))))))
+  "mpv loads whatever URLs the active provider's `stream-url' resolves
+to, over its IPC socket, and builds no Subsonic URL of its own.  The
+start returns before they arrive."
+  (supersonic-tests--with-fake-mpv
+    (supersonic-tests--with-provider `((stream-url . ,(supersonic-tests--stream-url)))
+      (should-not (supersonic-mpv-start '("a/1" "a/2")))
+      (should-not commands)
+      (supersonic-tests--resolve supersonic-mpv--pending-load)
+      (should (equal '(("fake://a/1" "replace") ("fake://a/2" "append")) (supersonic-tests--loadfiles commands)))
+      (should (equal "a/2" (gethash 2 supersonic--playlist))))))
+
+(ert-deftest supersonic-tests-mpv-loads-land-in-the-order-requested ()
+  "An enqueue whose URLs arrive first still lands behind the start
+requested before it."
+  (supersonic-tests--with-fake-mpv
+    (supersonic-tests--with-provider `((stream-url . ,(supersonic-tests--stream-url '(("slow" . 0.2)))))
+      (supersonic-mpv-start '("slow"))
+      (supersonic-mpv-enqueue '("fast"))
+      (supersonic-tests--resolve supersonic-mpv--pending-load)
+      (should
+       (equal '(("fake://slow" "replace") ("fake://fast" "append-play")) (supersonic-tests--loadfiles commands))))))
+
+(ert-deftest supersonic-tests-mpv-stop-drops-loads-still-resolving ()
+  "Stopping mpv while a load is still waiting for its URLs drops the
+load: mpv is not started again behind the user's back."
+  (supersonic-tests--with-fake-mpv
+    (supersonic-tests--with-provider `((stream-url . ,(supersonic-tests--stream-url '(("slow" . 0.1)))))
+      (supersonic-mpv-start '("slow"))
+      (supersonic-mpv-kill)
+      (setq commands nil)
+      (supersonic-tests--resolve supersonic-mpv--pending-load)
+      (should-not commands))))
+
+(ert-deftest supersonic-tests-mpv-reports-a-provider-without-stream-url ()
+  "A provider that cannot name a stream URL leaves mpv untouched --
+nothing loaded, nothing registered -- and says so in the echo area
+instead of signalling from a promise nobody awaits.  Later loads are
+not held up by it."
+  (let ((messages nil))
+    (cl-letf (((symbol-function 'message) (lambda (fmt &rest args) (push (apply #'format fmt args) messages))))
+      (supersonic-tests--with-fake-mpv
+        (supersonic-tests--with-provider '()
+          (supersonic-mpv-start '("a/1"))
+          (supersonic-tests--resolve supersonic-mpv--pending-load)
+          (should-not commands)
+          (should (= 0 (hash-table-count supersonic--playlist))))
+        (supersonic-tests--with-provider `((stream-url . ,(supersonic-tests--stream-url)))
+          (supersonic-mpv-enqueue '("a/2"))
+          (supersonic-tests--resolve supersonic-mpv--pending-load)
+          (should (equal '(("fake://a/2" "append-play")) (supersonic-tests--loadfiles commands))))))
+    (should (cl-some (lambda (m) (string-prefix-p "[Supersonic] Failed to play: " m)) messages))))
 
 (ert-deftest supersonic-tests-mpv-scrobbles-through-the-provider ()
   "mpv's start-file and end-file events scrobble the entry's track
@@ -4264,7 +4345,8 @@ through the active provider: as now playing, and as played."
   "The waveform transcode streams from the active provider's
 `stream-url', handed over stdin rather than on the command line."
   (let ((command nil)
-        (sent nil))
+        (sent nil)
+        (supersonic-cache-path (make-temp-file "supersonic-tests-wf-cache-" t)))
     (cl-letf (((symbol-function 'executable-find) (lambda (&rest _) "/usr/bin/mpv"))
               ((symbol-function 'supersonic-build-url) (lambda (&rest _) (error "Subsonic was asked")))
               ((symbol-function 'make-process)
@@ -4274,14 +4356,38 @@ through the active provider: as now playing, and as played."
               ((symbol-function 'process-send-string) (lambda (_proc s) (push s sent)))
               ((symbol-function 'process-send-eof) #'ignore))
       (let ((supersonic-mpv "mpv"))
-        (supersonic-tests--with-provider `((stream-url . ,(lambda (id) (concat "fake://secret@" id))))
+        (supersonic-tests--with-provider `((stream-url . ,(supersonic-tests--stream-url)))
           (unwind-protect
               (progn
-                (supersonic-waveform--start-transcode "a/1" 10 "cache-file" #'ignore)
-                (should-not (cl-some (lambda (arg) (string-match-p "secret" arg)) command))
-                (should (equal '("fake://secret@a/1\n") sent)))
+                (supersonic-waveform-ensure "a/1" #'ignore)
+                (should (supersonic-tests--wait-for (lambda () sent)))
+                (should-not (cl-some (lambda (arg) (string-match-p "fake:" arg)) command))
+                (should (equal '("fake://a/1\n") sent)))
             (setq supersonic-waveform--process nil)
-            (supersonic-waveform-cancel)))))))
+            (supersonic-waveform-cancel)
+            (delete-directory supersonic-cache-path t)))))))
+
+(ert-deftest supersonic-tests-waveform-cancel-while-resolving-spawns-nothing ()
+  "A waveform job cancelled -- or replaced by another track's -- while
+its stream URL is still on the way never spawns a transcode, and its
+callback hears nil, the same as for a transcode cancelled mid-run."
+  (let ((spawned nil)
+        (first 'pending)
+        (supersonic-cache-path (make-temp-file "supersonic-tests-wf-cache-" t)))
+    (cl-letf (((symbol-function 'supersonic-waveform--start-transcode)
+               (lambda (url &rest _) (push url spawned))))
+      (supersonic-tests--with-provider `((stream-url . ,(supersonic-tests--stream-url '(("slow" . 0.1)))))
+        (unwind-protect
+            (progn
+              (supersonic-waveform-ensure "slow" (lambda (e) (setq first e)))
+              (supersonic-waveform-ensure "other" #'ignore)
+              (should (supersonic-tests--wait-for (lambda () (not (eq first 'pending)))))
+              (should-not first)
+              (should (supersonic-tests--wait-for (lambda () spawned)))
+              (sit-for 0.2)
+              (should (equal '("fake://other") spawned)))
+          (supersonic-waveform-cancel)
+          (delete-directory supersonic-cache-path t))))))
 
 (ert-deftest supersonic-tests-waveform-unavailable-without-stream-url ()
   "No `stream-url', no waveform: the seekbar is simply left out rather

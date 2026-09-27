@@ -58,7 +58,10 @@
 (defconst supersonic-playback-operations
   '(start enqueue toggle-play next prev stop seek seek-fraction live-p status queue)
   "The playback operations a backend can implement.
-`start' and `enqueue' each take a list of supersonic track ids; `seek'
+`start' and `enqueue' each take a list of supersonic track ids, and
+may finish asynchronously -- the jukebox has to ask the server, mpv
+the provider for stream URLs -- so a backend reports their failures
+itself rather than signalling them to the caller; `seek'
 takes an offset in seconds, which may be negative; `seek-fraction'
 takes a position in the current track as a fraction between 0.0 and
 1.0; `status' takes one of `supersonic-playback-status-keys'; `queue'
