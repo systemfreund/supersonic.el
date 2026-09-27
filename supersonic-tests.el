@@ -2647,7 +2647,7 @@ buffer over one such row."
     (let ((rows (supersonic-tracks-rows (supersonic-subsonic--album-tracks-from tracks))))
       (should (equal "" (aref (nth 1 (nth 0 rows)) 1)))
       (should (equal "1:05" (aref (nth 1 (nth 1 rows)) 1))))
-    (let ((rows (supersonic-podcast-episodes-parse episodes)))
+    (let ((rows (supersonic-podcast-episodes-rows (supersonic-subsonic--podcast-episodes-from episodes))))
       (should (equal "" (aref (nth 1 (nth 0 rows)) 1)))
       (should (equal "1:02:05" (aref (nth 1 (nth 1 rows)) 1))))))
 
@@ -3784,7 +3784,7 @@ refresh's own error handling gets to show it -- and
     (should-error (aio-wait-for (supersonic-provider-search "x")) :type 'user-error)
     (condition-case err
         (aio-wait-for (supersonic-provider-search "x"))
-      (user-error (should (string-match-p "cannot search" (error-message-string err)))))))
+      (user-error (should (string-match-p "does not support .search." (error-message-string err)))))))
 
 (ert-deftest supersonic-tests-provider-album-list-rejects-unknown-types ()
   "`supersonic-provider-album-list' only passes on the types it documents."
@@ -3939,6 +3939,84 @@ of the same name, and `supersonic-albums' still accepts it as a string."
         (when (get-buffer "*supersonic-albums*")
           (kill-buffer "*supersonic-albums*"))))
     (should (equal '(random newest random recent) asked))))
+
+(ert-deftest supersonic-tests-subsonic-podcast-operations ()
+  "The Subsonic provider's podcast operations ask the endpoints the
+podcast buffers always did, with the same parameters, and map channels
+and episodes into the facade's vocabulary."
+  (let (requests)
+    (cl-letf (((symbol-function 'supersonic-build-url)
+               (lambda (endpoint extra-query) (push (cons endpoint extra-query) requests) endpoint))
+              ((symbol-function 'supersonic-get-json)
+               (aio-lambda
+                (url)
+                (if (equal url "/getPodcasts.view")
+                    '(("subsonic-response" ("podcasts" ("channel" (("id" . 5) ("title" . "Show") ("coverArt" . "pod-5") ("episode" (("id" . "e-1") ("title" . "Pilot") ("duration" . 60) ("status" . "completed"))))))))
+                  '(("subsonic-response" ("status" . "ok")))))))
+      (should (equal '((:id "5" :title "Show" :art "pod-5")) (aio-wait-for (supersonic-subsonic--podcasts))))
+      (should (equal '("/getPodcasts.view" ("includeEpisodes" . "false")) (pop requests)))
+      (should (equal '((:id "e-1" :title "Pilot" :duration 60 :status "completed"))
+                     (aio-wait-for (supersonic-subsonic--podcast-episodes "5"))))
+      (should (equal '("/getPodcasts.view" ("id" . "5") ("includeEpisodes" . "true")) (pop requests)))
+      (aio-wait-for (supersonic-subsonic--add-podcast "https://example.org/feed?a=1"))
+      (should (equal '("/createPodcastChannel.view" ("url" . "https://example.org/feed?a=1")) (pop requests)))
+      (aio-wait-for (supersonic-subsonic--download-podcast-episode "e-1"))
+      (should (equal '("/downloadPodcastEpisode.view" ("id" . "e-1")) (pop requests))))))
+
+(ert-deftest supersonic-tests-podcast-buffers-render-a-non-subsonic-provider ()
+  "The podcast and episode buffers, and adding and downloading, go
+through whatever provider is active -- no Subsonic request is made --
+and an episode's id reaches playback verbatim."
+  (let (added downloaded started)
+    (cl-letf (((symbol-function 'supersonic-get-json) (lambda (&rest _) (error "Subsonic was asked")))
+              ((symbol-function 'supersonic-build-url) (lambda (&rest _) (error "Subsonic was asked")))
+              ((symbol-function 'supersonic-playback-start) (lambda (ids) (setq started ids))))
+      (supersonic-tests--with-provider
+          `((podcasts . ,(supersonic-tests--resolved '((:id "ma://podcast/1" :title "Show"))))
+            (podcast-episodes
+             . ,(lambda (id)
+                  (funcall (supersonic-tests--resolved
+                            (list (list :id (concat id "/ep-1") :title "Pilot" :duration 3725 :status "completed")
+                                  (list :id (concat id "/ep-2") :title "Next"))))))
+            (add-podcast . ,(lambda (url) (setq added url) (funcall (supersonic-tests--resolved nil))))
+            (download-podcast-episode
+             . ,(lambda (id) (setq downloaded id) (funcall (supersonic-tests--resolved nil)))))
+        (let ((buff (get-buffer-create "*supersonic-tests-podcasts*")))
+          (unwind-protect
+              (with-current-buffer buff
+                (aio-wait-for (supersonic-podcasts-refresh buff))
+                (should (equal '(("ma://podcast/1" ["Show" ""])) tabulated-list-entries))
+                (supersonic-podcast-episodes-mode)
+                (aio-wait-for (supersonic-podcasts-episode-refresh "ma://podcast/1" buff))
+                (should (equal '(("ma://podcast/1/ep-1" ["Pilot" "1:02:05" "completed"])
+                                 ("ma://podcast/1/ep-2" ["Next" "" ""]))
+                               tabulated-list-entries))
+                (goto-char (point-min))
+                (while (and (not (tabulated-list-get-id)) (not (eobp)))
+                  (forward-line))
+                (supersonic-play-podcast)
+                (should (equal '("ma://podcast/1/ep-1") started))
+                (aio-wait-for (supersonic-download-podcast-episode))
+                (should (equal "ma://podcast/1/ep-1" downloaded))
+                (aio-wait-for (supersonic-add-podcast "https://example.org/feed"))
+                (should (equal "https://example.org/feed" added)))
+            (kill-buffer buff)))))))
+
+(ert-deftest supersonic-tests-podcast-commands-refuse-a-provider-without-podcasts ()
+  "With a provider that has no podcasts, every podcast command reports
+that as a `user-error' up front -- before prompting for a feed URL,
+and without opening a list buffer that could only ever show an error."
+  (supersonic-tests--with-provider `((artists . ,(supersonic-tests--resolved nil)))
+    (cl-letf (((symbol-function 'read-string) (lambda (&rest _) (error "Prompted anyway"))))
+      (should-error (call-interactively #'supersonic-add-podcast) :type 'user-error)
+      (condition-case err
+          (call-interactively #'supersonic-add-podcast)
+        (user-error (should (string-match-p "does not support .add-podcast." (error-message-string err))))))
+    (should-error (supersonic-podcasts) :type 'user-error)
+    (should-error (supersonic-podcast-episodes "1") :type 'user-error)
+    (should-error (supersonic-download-podcast-episode) :type 'user-error)
+    (should-not (get-buffer "*supersonic-podcasts*"))
+    (should-not (get-buffer "*supersonic-podcast-episodes*"))))
 
 (provide 'supersonic-tests)
 
