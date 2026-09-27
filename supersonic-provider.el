@@ -42,6 +42,8 @@
 ;;   album   :id :name :artist :year :art
 ;;   track   :id :title :artist :album :duration :track :art
 ;;           :suffix :content-type :size
+;;   podcast :id :title :art
+;;   episode :id :title :duration :status
 ;;
 ;; Only `:id' is guaranteed; any other key may be missing, meaning the
 ;; provider does not know it.  `:duration' is in seconds, `:year' and
@@ -69,7 +71,9 @@
 (require 'supersonic-custom)
 
 (defconst supersonic-provider-operations
-  '(artists artist-albums album-list album-tracks search config-hints)
+  '(artists artist-albums album-list album-tracks search
+    podcasts podcast-episodes add-podcast download-podcast-episode
+    config-hints)
   "The library operations a provider can implement.
 All but `config-hints' return a promise.
 
@@ -84,6 +88,16 @@ All but `config-hints' return a promise.
   album order.
 - `search' takes a query string and resolves to a plist of three
   lists, (:artists ARTISTS :albums ALBUMS :tracks TRACKS).
+- `podcasts' takes no arguments and resolves to every podcast
+  channel subscribed to.
+- `podcast-episodes' takes a channel id and resolves to that
+  channel's episodes.  An episode's `:id' is a track id: it is what
+  gets handed to `supersonic-playback-start' to play it.
+- `add-podcast' takes a feed URL, subscribes to it, and resolves
+  once that is done.
+- `download-podcast-episode' takes an episode id, has the provider
+  fetch the episode so it can be played, and resolves once that has
+  been set in motion.
 - `config-hints' takes no arguments and returns a list of strings,
   each a hint on what to check in this provider's configuration when
   a request fails -- shown underneath the error in the list buffer
@@ -143,7 +157,15 @@ than a backtrace."
     (unless operations
       (user-error "No library provider named `%s' is registered" supersonic-provider))
     (or (alist-get operation operations)
-        (user-error "The `%s' provider cannot %s" supersonic-provider operation))))
+        (user-error "The `%s' provider does not support `%s'" supersonic-provider operation))))
+
+(defun supersonic-provider-require (operation)
+  "Signal a `user-error' unless the active provider implements OPERATION.
+For a command to call before it does anything else -- prompting for
+input, opening a buffer -- so that a provider without OPERATION is
+reported right away rather than only once the work is under way."
+  (supersonic-provider--implementation operation)
+  nil)
 
 (defun supersonic-provider--call (operation &rest args)
   "Call the active provider's implementation of OPERATION with ARGS."
@@ -182,6 +204,26 @@ TYPE is one of `supersonic-provider-album-list-types'."
  "Return a promise resolving to the active provider's results for QUERY.
 The result is a plist (:artists ARTISTS :albums ALBUMS :tracks TRACKS)."
  (aio-await (supersonic-provider--call 'search query)))
+
+(aio-defun
+ supersonic-provider-podcasts ()
+ "Return a promise resolving to every podcast channel subscribed to."
+ (aio-await (supersonic-provider--call 'podcasts)))
+
+(aio-defun
+ supersonic-provider-podcast-episodes (channel-id)
+ "Return a promise resolving to the episodes of podcast channel CHANNEL-ID."
+ (aio-await (supersonic-provider--call 'podcast-episodes channel-id)))
+
+(aio-defun
+ supersonic-provider-add-podcast (url)
+ "Return a promise resolving once the podcast feed at URL is subscribed to."
+ (aio-await (supersonic-provider--call 'add-podcast url)))
+
+(aio-defun
+ supersonic-provider-download-podcast-episode (episode-id)
+ "Return a promise resolving once EPISODE-ID's download has been started."
+ (aio-await (supersonic-provider--call 'download-podcast-episode episode-id)))
 
 (defun supersonic-provider-config-hints ()
   "Return the active provider's configuration hints, a list of strings.

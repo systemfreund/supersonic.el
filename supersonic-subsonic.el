@@ -86,6 +86,14 @@ DATA's \"id\" as a string."
      (:content-type . "contentType")
      (:size . "size"))))
 
+(defun supersonic-subsonic--podcast (data)
+  "Turn a Subsonic podcast channel alist DATA into a facade podcast plist."
+  (supersonic-subsonic--plist data '((:title . "title") (:art . "coverArt"))))
+
+(defun supersonic-subsonic--episode (data)
+  "Turn a Subsonic podcast episode alist DATA into a facade episode plist."
+  (supersonic-subsonic--plist data '((:title . "title") (:duration . "duration") (:status . "status"))))
+
 (defun supersonic-subsonic--artists-from (data)
   "Return the facade artists in a parsed getArtists response DATA.
 Flattens every letter bucket of the \"index\" array, in bucket order."
@@ -124,6 +132,18 @@ the response at the wrong key."
      :albums (mapcar #'supersonic-subsonic--album (assoc-default "album" results))
      :tracks (mapcar #'supersonic-subsonic--track (assoc-default "song" results)))))
 
+(defun supersonic-subsonic--podcasts-from (data)
+  "Return the facade podcast channels in a parsed getPodcasts response DATA."
+  (mapcar #'supersonic-subsonic--podcast (supersonic-recursive-assoc data '("subsonic-response" "podcasts" "channel"))))
+
+(defun supersonic-subsonic--podcast-episodes-from (data)
+  "Return the facade episodes in a parsed getPodcasts response DATA.
+DATA is the answer to a request for one channel with its episodes, so
+only the first channel in it is read."
+  (mapcar
+   #'supersonic-subsonic--episode
+   (assoc-default "episode" (car (supersonic-recursive-assoc data '("subsonic-response" "podcasts" "channel"))))))
+
 ;;;
 ;;; Operations
 ;;;
@@ -143,8 +163,9 @@ the response at the wrong key."
  supersonic-subsonic--album-list
  (type count)
  "Return a promise resolving to at most COUNT albums of list TYPE.
-Asks getAlbumList2.  TYPE is one of `supersonic-provider-album-list-types', each of which
-is also the name getAlbumList2 knows that list under."
+Asks getAlbumList2.  TYPE is one of
+`supersonic-provider-album-list-types', each of which is also the
+name getAlbumList2 knows that list under."
  (supersonic-subsonic--album-list-from
   (aio-await
    (supersonic-get-json
@@ -169,6 +190,32 @@ getMusicDirectory -- ID then being a directory -- otherwise."
  (supersonic-subsonic--search-from
   (aio-await (supersonic-get-json (supersonic-build-url "/search3.view" `(("query" . ,query)))))))
 
+(aio-defun
+ supersonic-subsonic--podcasts () "Return a promise resolving to every channel, via getPodcasts."
+ (supersonic-subsonic--podcasts-from
+  (aio-await (supersonic-get-json (supersonic-build-url "/getPodcasts.view" '(("includeEpisodes" . "false")))))))
+
+(aio-defun
+ supersonic-subsonic--podcast-episodes
+ (id)
+ "Return a promise resolving to the episodes of podcast channel ID.
+Asks getPodcasts for that one channel, episodes included."
+ (supersonic-subsonic--podcast-episodes-from
+  (aio-await
+   (supersonic-get-json (supersonic-build-url "/getPodcasts.view" `(("id" . ,id) ("includeEpisodes" . "true")))))))
+
+(aio-defun
+ supersonic-subsonic--add-podcast (url) "Subscribe to the podcast feed at URL, via createPodcastChannel."
+ (aio-await (supersonic-get-json (supersonic-build-url "/createPodcastChannel.view" `(("url" . ,url)))))
+ nil)
+
+(aio-defun
+ supersonic-subsonic--download-podcast-episode
+ (id)
+ "Have the server download podcast episode ID, via downloadPodcastEpisode."
+ (aio-await (supersonic-get-json (supersonic-build-url "/downloadPodcastEpisode.view" `(("id" . ,id)))))
+ nil)
+
 (defun supersonic-subsonic--config-hints ()
   "Return what to check when a request to the Subsonic server fails."
   '("Check that supersonic-host is configured correctly"
@@ -182,6 +229,10 @@ getMusicDirectory -- ID then being a directory -- otherwise."
    (album-list . supersonic-subsonic--album-list)
    (album-tracks . supersonic-subsonic--album-tracks)
    (search . supersonic-subsonic--search)
+   (podcasts . supersonic-subsonic--podcasts)
+   (podcast-episodes . supersonic-subsonic--podcast-episodes)
+   (add-podcast . supersonic-subsonic--add-podcast)
+   (download-podcast-episode . supersonic-subsonic--download-podcast-episode)
    (config-hints . supersonic-subsonic--config-hints)))
 
 (provide 'supersonic-subsonic)

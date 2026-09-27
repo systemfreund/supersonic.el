@@ -1672,25 +1672,18 @@ one as a string is accepted too."
 ;;;
 ;;; Podcasts
 ;;;
-(defun supersonic-podcasts-parse (data)
-  "Retrieve a list of podcasts from some parsed json DATA."
-  (let* ((podcasts (supersonic-recursive-assoc data '("subsonic-response" "podcasts" "channel")))
-         (result
-          (mapcar
-           (lambda (channel)
-             (list (supersonic-get-id-as-string channel) (vector (assoc-default "title" channel) "")))
-           podcasts)))
-    result))
+(defun supersonic-podcasts-rows (podcasts)
+  "Turn PODCASTS, as resolved by `supersonic-provider-podcasts', into entries."
+  (mapcar (lambda (channel) (list (plist-get channel :id) (vector (or (plist-get channel :title) "") ""))) podcasts))
 
 (aio-defun
  supersonic-podcasts-refresh (buff) "Refresh the list of podcasts into BUFF."
  (supersonic--with-async-error-handling
   buff "fetch podcasts"
-  (let ((data
-         (aio-await (supersonic-get-json (supersonic-build-url "/getPodcasts.view" '(("includeEpisodes" . "false")))))))
+  (let ((podcasts (aio-await (supersonic-provider-podcasts))))
     (when (buffer-live-p buff)
       (with-current-buffer buff
-        (setq tabulated-list-entries (supersonic-podcasts-parse data))
+        (setq tabulated-list-entries (supersonic-podcasts-rows podcasts))
         (tabulated-list-print t)
         (supersonic-get-images tabulated-list-entries 1 buff))))))
 
@@ -1700,12 +1693,21 @@ one as a string is accepted too."
   (interactive)
   (supersonic-podcast-episodes (tabulated-list-get-id)))
 
+(defun supersonic-add-podcast (url)
+  "Subscribe to the podcast feed at URL.
+Interactively, prompts for URL -- unless the active library provider
+has no podcasts to subscribe to, which is reported before asking."
+  (interactive
+   (progn
+     (supersonic-provider-require 'add-podcast)
+     (list (read-string "feed url: "))))
+  (supersonic--add-podcast url))
+
 (aio-defun
- supersonic-add-podcast () "Add a new podcast." (interactive)
+ supersonic--add-podcast (url) "Subscribe to URL, reporting how that went in the echo area."
  (supersonic--with-async-error-handling
   nil "add podcast"
-  (aio-await
-   (supersonic-get-json (supersonic-build-url "/createPodcastChannel.view" `(("url" . ,(read-string "feed url: "))))))
+  (aio-await (supersonic-provider-add-podcast url))
   (message "Podcast added")))
 
 (transient-define-prefix
@@ -1726,6 +1728,7 @@ one as a string is accepted too."
 (defun supersonic-podcasts ()
   "List podcasts."
   (interactive)
+  (supersonic-provider-require 'podcasts)
   (let ((new-buff (get-buffer-create "*supersonic-podcasts*")))
     (supersonic--init-list-buffer new-buff #'supersonic-podcast-mode "Loading podcasts...")
     (ignore (supersonic-podcasts-refresh new-buff))
@@ -1745,21 +1748,18 @@ one as a string is accepted too."
 ;;; Podcast episodes
 ;;;
 
-(defun supersonic-podcast-episodes-parse (data)
-  "Retrieve a list of podcast episodes from some parsed json DATA."
-  (let* ((episodes
-          (assoc-default "episode" (car (supersonic-recursive-assoc data '("subsonic-response" "podcasts" "channel")))))
-         (result
-          (mapcar
-           (lambda (episode)
-             (list
-              (supersonic-get-id-as-string episode)
-              (vector
-               (assoc-default "title" episode)
-               (supersonic--format-duration "%h:%.2m:%.2s" (assoc-default "duration" episode))
-               (assoc-default "status" episode))))
-           episodes)))
-    result))
+(defun supersonic-podcast-episodes-rows (episodes)
+  "Turn podcast EPISODES into tabulated-list entries.
+EPISODES is as resolved by `supersonic-provider-podcast-episodes'."
+  (mapcar
+   (lambda (episode)
+     (list
+      (plist-get episode :id)
+      (vector
+       (or (plist-get episode :title) "")
+       (supersonic--format-duration "%h:%.2m:%.2s" (plist-get episode :duration))
+       (or (plist-get episode :status) ""))))
+   episodes))
 
 (defun supersonic-play-podcast ()
   "Play a podcast episode at point."
@@ -1770,22 +1770,24 @@ one as a string is accepted too."
  supersonic-podcasts-episode-refresh (id buff) "Refresh the list of podcast episodes for a podcast ID into BUFF."
  (supersonic--with-async-error-handling
   buff "fetch episodes"
-  (let ((data
-         (aio-await
-          (supersonic-get-json
-           (supersonic-build-url "/getPodcasts.view" `(("id" . ,id) ("includeEpisodes" . "true")))))))
+  (let ((episodes (aio-await (supersonic-provider-podcast-episodes id))))
     (when (buffer-live-p buff)
       (with-current-buffer buff
-        (setq tabulated-list-entries (supersonic-podcast-episodes-parse data))
+        (setq tabulated-list-entries (supersonic-podcast-episodes-rows episodes))
         (tabulated-list-print t))))))
 
+(defun supersonic-download-podcast-episode ()
+  "Have the library provider download the podcast episode at point."
+  (interactive)
+  (supersonic-provider-require 'download-podcast-episode)
+  (supersonic--download-podcast-episode (tabulated-list-get-id)))
+
 (aio-defun
- supersonic-download-podcast-episode () "Tell the supersonic server to download an episode at point." (interactive)
+ supersonic--download-podcast-episode (id) "Start downloading episode ID, reporting how that went."
  (supersonic--with-async-error-handling
   nil "download episode"
-  (let ((id (tabulated-list-get-id)))
-    (aio-await (supersonic-get-json (supersonic-build-url "/downloadPodcastEpisode.view" `(("id" . ,id)))))
-    (message "Episode download started"))))
+  (aio-await (supersonic-provider-download-podcast-episode id))
+  (message "Episode download started")))
 
 (transient-define-prefix
  supersonic-podcast-episode-help () "Help transient for podcast episodes."
@@ -1804,6 +1806,7 @@ one as a string is accepted too."
 
 (defun supersonic-podcast-episodes (id)
   "Open a buffer with a list of podcast episodes from podcast ID."
+  (supersonic-provider-require 'podcast-episodes)
   (let ((new-buff (get-buffer-create "*supersonic-podcast-episodes*")))
     (supersonic--init-list-buffer new-buff #'supersonic-podcast-episodes-mode "Loading episodes...")
     (ignore (supersonic-podcasts-episode-refresh id new-buff))
