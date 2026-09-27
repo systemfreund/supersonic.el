@@ -4339,8 +4339,10 @@ can be switched away from and the buffers watching it keep working."
     (cl-letf (((symbol-function 'supersonic-mpv-command) (lambda (&rest args) (push args commands))))
       (supersonic-tests--with-provider '()
         (let ((err (should-error (supersonic-toggle-playing) :type 'user-error)))
-          (should (string-match-p "`mpv'" (cadr err)))
-          (should (string-match-p "`supersonic-tests-fake'" (cadr err))))
+          ;; Names only: how the quotes around them come out depends on
+          ;; `text-quoting-style'.
+          (should (string-match-p "mpv" (cadr err)))
+          (should (string-match-p "supersonic-tests-fake" (cadr err))))
         (should-error (supersonic-playback-start '("a")) :type 'user-error)
         (should-not commands)
         (should-not (supersonic-playback-live-p))
