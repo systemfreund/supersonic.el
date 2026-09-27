@@ -21,10 +21,10 @@
 ;;; Commentary:
 
 ;; Subsonic HTTP/auth/JSON plumbing for supersonic.el: building
-;; authenticated request URLs, fetching and decoding JSON responses, and
-;; the generic async-error-handling helpers the various list buffers
-;; wrap their refreshes in.  No knowledge of mpv or of any particular
-;; buffer/UI here.
+;; authenticated request URLs and fetching and decoding JSON responses.
+;; No knowledge of mpv or of any particular buffer/UI here.  Browsing
+;; reaches it only through the Subsonic provider in
+;; `supersonic-subsonic.el'; see `supersonic-provider.el'.
 
 ;;; Code:
 (require 'json)
@@ -189,59 +189,12 @@ started or finished."
      ;; `url-http-activate-callback').
      (lambda (_status) (kill-buffer (current-buffer))))))
 
-(defun supersonic--report-async-error (description err)
-  "Tell the user that DESCRIPTION failed with ERR via the echo area.
-DESCRIPTION is a short present-tense phrase, e.g. \"fetch tracks\"."
-  (message "[Supersonic] Failed to %s: %s" description (error-message-string err)))
-
-(defun supersonic--handle-async-error (buffer description err)
-  "Report that DESCRIPTION failed with ERR, both in BUFFER and the echo area.
-BUFFER is the tabulated-list buffer whose refresh failed; its contents
-are replaced with the error and configuration hints.  The same failure
-is also echoed via `supersonic--report-async-error'."
-  (when (buffer-live-p buffer)
-    (with-current-buffer buffer
-      (let ((inhibit-read-only t))
-        (erase-buffer)
-        (insert (format "Error: Failed to %s: %s\n\n" description (error-message-string err)))
-        (insert "Configuration hint:\n")
-        (insert "  - Check that supersonic-host is configured correctly\n")
-        (insert "  - Ensure the scheme (http:// or https://) matches your server\n")
-        (insert "  - Verify .authinfo has the correct host (must match supersonic-host exactly)\n"))))
-  (supersonic--report-async-error description err))
-
-(defmacro supersonic--with-async-error-handling (buff description &rest body)
-  "Run BODY, reporting any error via DESCRIPTION instead of propagating it.
-BUFF, if non-nil, is a tabulated-list buffer whose contents are replaced
-with the error and configuration hints, in addition to an echo-area
-message; if BUFF is nil, only the echo-area message is shown.
-DESCRIPTION is a short present-tense phrase, e.g. \"fetch tracks\",
-combined into \"Failed to DESCRIPTION: ERR\".
-
-Wraps BODY in a `condition-case'.  Safe to use inside an `aio-defun':
-generator.el fully macroexpands a function body -- including calls to
-this macro -- before transforming it, and the `condition-case' this
-expands to is itself transform-aware."
-  (declare (indent 2))
-  `(condition-case err
-       (progn
-         ,@body)
-     (error
-      (if ,buff
-          (supersonic--handle-async-error ,buff ,description err)
-        (supersonic--report-async-error ,description err)))))
-
-(defun supersonic--init-list-buffer (buff mode-fn placeholder)
-  "Ready BUFF as a fresh tabulated-list buffer while an async refresh runs.
-Turns on MODE-FN (a derived tabulated-list mode) and shows PLACEHOLDER
-text (e.g. \"Loading tracks...\") until the refresh that follows
-replaces it with real entries."
-  (with-current-buffer buff
-    (setq buffer-read-only nil)
-    (erase-buffer)
-    (insert placeholder "\n")
-    (setq buffer-read-only t)
-    (funcall mode-fn)))
+(defun supersonic-get-id-as-string (data)
+  "Return DATA's \"id\" field as a string, converting from a number if necessary."
+  (let ((id (assoc-default "id" data)))
+    (if (numberp id)
+        (number-to-string id)
+      id)))
 
 (provide 'supersonic-api)
 ;;; supersonic-api.el ends here

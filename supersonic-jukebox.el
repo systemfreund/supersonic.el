@@ -84,6 +84,7 @@
 (require 'aio)
 (require 'supersonic-custom)
 (require 'supersonic-api)
+(require 'supersonic-provider)
 (require 'supersonic-playback)
 
 (defvar supersonic-jukebox--timer nil

@@ -528,6 +528,16 @@ that the other one has no equivalent of."
   :type 'boolean
   :group 'supersonic)
 
+(defcustom supersonic-provider 'subsonic
+  "Which library provider supersonic.el browses.
+The symbol a provider registered itself under via
+`supersonic-provider-register': where the artist, album and track
+lists and search results come from, and what the ids in them mean.
+Only `subsonic' is built in, and selecting a provider whose file has
+not been loaded is reported when a list buffer is next opened."
+  :type '(choice (const :tag "Subsonic-compatible server" subsonic) (symbol :tag "Other registered provider"))
+  :group 'supersonic)
+
 (defcustom supersonic-playback-backend 'mpv
   "Which playback backend plays what supersonic.el is asked to play.
 The symbol a backend registered itself under via

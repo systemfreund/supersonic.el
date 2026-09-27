@@ -44,6 +44,8 @@
 
 (require 'supersonic-custom)
 (require 'supersonic-api)
+(require 'supersonic-provider)
+(require 'supersonic-subsonic)
 (require 'supersonic-art)
 (require 'supersonic-playback)
 (require 'supersonic-mpv)
@@ -1332,44 +1334,34 @@ the list buffer down with it."
       (format-seconds format seconds)
     ""))
 
-(defun supersonic-get-id-as-string (data)
-  "Return DATA's \"id\" field as a string, converting from a number if necessary."
-  (let ((id (assoc-default "id" data)))
-    (if (numberp id)
-        (number-to-string id)
-      id)))
-
 ;;;
 ;;; Search
 ;;;
-(defun supersonic-search-parse (data)
-  "Retrieve a list of search results from some parsed json DATA."
-  (let* ((search-results (supersonic-recursive-assoc data '("subsonic-response" "searchResult3")))
-         (result
-          (append
-           (mapcar
-            (lambda (artist)
-              (list
-               `(,(supersonic-get-id-as-string artist) . "artist") (vector "Artist" (assoc-default "name" artist))))
-            (assoc-default "artist" search-results))
-           (mapcar
-            (lambda (album)
-              (list `(,(supersonic-get-id-as-string album) . "album") (vector "Album" (assoc-default "name" album))))
-            (assoc-default "album" search-results))
-           (mapcar
-            (lambda (song)
-              (list `(,(supersonic-get-id-as-string song) . "song") (vector "Song" (assoc-default "title" song))))
-            (assoc-default "song" search-results)))))
-    result))
+(defun supersonic-search-rows (results)
+  "Turn search RESULTS into tabulated-list entries.
+RESULTS is as resolved by `supersonic-provider-search'.  Each entry's
+id is (ID . TYPE), TYPE being \"artist\", \"album\" or \"song\", so
+`supersonic-open-search-appropriate-result' knows what ID is an id of."
+  (append
+   (mapcar
+    (lambda (artist)
+      (list (cons (plist-get artist :id) "artist") (vector "Artist" (or (plist-get artist :name) ""))))
+    (plist-get results :artists))
+   (mapcar
+    (lambda (album) (list (cons (plist-get album :id) "album") (vector "Album" (or (plist-get album :name) ""))))
+    (plist-get results :albums))
+   (mapcar
+    (lambda (track) (list (cons (plist-get track :id) "song") (vector "Song" (or (plist-get track :title) ""))))
+    (plist-get results :tracks))))
 
 (aio-defun
  supersonic-search-refresh (query buff) "Refresh the list of search results from QUERY into BUFF."
  (supersonic--with-async-error-handling
   buff "search"
-  (let ((data (aio-await (supersonic-get-json (supersonic-build-url "/search3.view" `(("query" . ,query)))))))
+  (let ((results (aio-await (supersonic-provider-search query))))
     (when (buffer-live-p buff)
       (with-current-buffer buff
-        (setq tabulated-list-entries (supersonic-search-parse data))
+        (setq tabulated-list-entries (supersonic-search-rows results))
         (tabulated-list-print t))))))
 
 (defun supersonic-open-search-appropriate-result (result)
@@ -1426,55 +1418,32 @@ Plays/enqueues \"this one and everything after it\", which is what both
 entry at point.  An ID that isn't in the list at all yields nil."
   (mapcar #'car (seq-drop-while (lambda (entry) (not (equal (car entry) id))) tabulated-list-entries)))
 
-(defun supersonic--tracks-extract-path ()
-  "Return the json path to a track list, per current `supersonic-browse-by-tags'.
-Computed fresh on every call rather than cached, so that toggling
-`supersonic-browse-by-tags' at runtime stays consistent with
-`supersonic-tracks-json', which also reads it live to pick the
-endpoint -- a cached path here would otherwise go stale and parse
-the response at the wrong key."
-  (if supersonic-browse-by-tags
-      '("subsonic-response" "album" "song")
-    '("subsonic-response" "directory" "child")))
-
-(defun supersonic-tracks-parse (data)
-  "Parse tracks from json DATA."
-  (let* ((tracks (supersonic-recursive-assoc data (supersonic--tracks-extract-path)))
-         (result
-          (mapcar
-           (lambda (track)
-             (let* ((duration (assoc-default "duration" track)))
-               (list
-                (supersonic-get-id-as-string track)
-                (vector
-                 (assoc-default "title" track)
-                 (supersonic--format-duration "%m:%.2s" duration)
-                 (format "%d" (or (assoc-default "track" track) 0))))))
-           tracks)))
-    result))
-
-(aio-defun
- supersonic-tracks-json (id) "Fetch the raw getAlbum/getMusicDirectory json response for ID."
- (aio-await
-  (supersonic-get-json
-   (if supersonic-browse-by-tags
-       (supersonic-build-url "/getAlbum.view" `(("id" . ,id)))
-     (supersonic-build-url "/getMusicDirectory.view" `(("id" . ,id)))))))
+(defun supersonic-tracks-rows (tracks)
+  "Turn TRACKS, as resolved by `supersonic-provider-album-tracks', into entries."
+  (mapcar
+   (lambda (track)
+     (list
+      (plist-get track :id)
+      (vector
+       (or (plist-get track :title) "")
+       (supersonic--format-duration "%m:%.2s" (plist-get track :duration))
+       (format "%d" (or (plist-get track :track) 0)))))
+   tracks))
 
 (aio-defun
  supersonic-get-album-track-ids
  (id)
- "Return the list of track ids for album/directory ID."
- (mapcar #'car (supersonic-tracks-parse (aio-await (supersonic-tracks-json id)))))
+ "Return the list of track ids for album ID."
+ (mapcar (lambda (track) (plist-get track :id)) (aio-await (supersonic-provider-album-tracks id))))
 
 (aio-defun
  supersonic-tracks-refresh (id buff) "Refresh the list of tracks from ID into BUFF."
  (supersonic--with-async-error-handling
   buff "fetch tracks"
-  (let ((data (aio-await (supersonic-tracks-json id))))
+  (let ((tracks (aio-await (supersonic-provider-album-tracks id))))
     (when (buffer-live-p buff)
       (with-current-buffer buff
-        (setq tabulated-list-entries (supersonic-tracks-parse data))
+        (setq tabulated-list-entries (supersonic-tracks-rows tracks))
         (tabulated-list-print t))))))
 
 (defun supersonic-play-tracks ()
@@ -1516,58 +1485,51 @@ the response at the wrong key."
 ;;; Albums
 ;;;
 
-(defun supersonic-albums-parse (data)
-  "Retrieve a list of albums from some parsed json DATA."
-  (let* ((albums (supersonic-recursive-assoc data '("subsonic-response" "artist" "album")))
-         (result
-          (mapcar
-           (lambda (album)
-             (list
-              (supersonic-get-id-as-string album)
-              (vector (format "%d" (or (assoc-default "year" album) 0))
-                      (propertize (assoc-default "name" album) 'face 'supersonic-albums-name)
-                      "")))
-           albums)))
-    result))
+(defun supersonic-albums-rows (albums)
+  "Turn one artist's ALBUMS into year/name/art tabulated-list entries.
+ALBUMS is as resolved by `supersonic-provider-artist-albums'."
+  (mapcar
+   (lambda (album)
+     (list
+      (plist-get album :id)
+      (vector (format "%d" (or (plist-get album :year) 0))
+              (propertize (or (plist-get album :name) "") 'face 'supersonic-albums-name)
+              "")))
+   albums))
 
-(defun supersonic-albums-type-parse (data)
-  "Retrieve a list of albums from some parsed json DATA."
-  (let* ((albums (supersonic-recursive-assoc data '("subsonic-response" "albumList2" "album")))
-         (result
-          (mapcar
-           (lambda (album)
-             (list
-              (supersonic-get-id-as-string album)
-              (vector (propertize (assoc-default "name" album) 'face 'supersonic-albums-name)
-                      (propertize (assoc-default "artist" album) 'face 'supersonic-albums-artist)
-                      "")))
-           albums)))
-    result))
+(defun supersonic-albums-type-rows (albums)
+  "Turn ALBUMS from across artists into name/artist/art tabulated-list entries.
+ALBUMS is as resolved by `supersonic-provider-album-list'."
+  (mapcar
+   (lambda (album)
+     (list
+      (plist-get album :id)
+      (vector (propertize (or (plist-get album :name) "") 'face 'supersonic-albums-name)
+              (propertize (or (plist-get album :artist) "") 'face 'supersonic-albums-artist)
+              "")))
+   albums))
 
 (aio-defun
  supersonic-albums-refresh (id buff) "Refresh the albums list for a given artist ID into BUFF."
  (supersonic--with-async-error-handling
   buff "fetch albums"
-  (let ((data (aio-await (supersonic-get-json (supersonic-build-url "/getArtist.view" `(("id" . ,id)))))))
+  (let ((albums (aio-await (supersonic-provider-artist-albums id))))
     (when (buffer-live-p buff)
       (with-current-buffer buff
-        (setq tabulated-list-entries (supersonic-albums-parse data))
+        (setq tabulated-list-entries (supersonic-albums-rows albums))
         (tabulated-list-print t)
         (supersonic-get-images tabulated-list-entries 2 buff))))))
 
 
 (aio-defun
- supersonic-albums-refresh-type (type buff) "Refresh the albums list for a given albumlist TYPE into BUFF."
+ supersonic-albums-refresh-type (type buff) "Refresh the albums list for a given album list TYPE into BUFF.
+TYPE is one of `supersonic-provider-album-list-types'."
  (supersonic--with-async-error-handling
   buff "fetch albums"
-  (let ((data
-         (aio-await
-          (supersonic-get-json
-           (supersonic-build-url
-            "/getAlbumList2.view" `(("type" . ,type) ("size" . ,(number-to-string supersonic-album-list-count))))))))
+  (let ((albums (aio-await (supersonic-provider-album-list type supersonic-album-list-count))))
     (when (buffer-live-p buff)
       (with-current-buffer buff
-        (setq tabulated-list-entries (supersonic-albums-type-parse data))
+        (setq tabulated-list-entries (supersonic-albums-type-rows albums))
         (tabulated-list-print t)
         (supersonic-get-images tabulated-list-entries 2 buff))))))
 
@@ -1603,22 +1565,26 @@ the response at the wrong key."
 (defun supersonic-recent-albums ()
   "Show a list of recently played albums."
   (interactive)
-  (supersonic-albums nil "recent"))
+  (supersonic-albums nil 'recent))
 
 ;;;###autoload
 (defun supersonic-random-albums ()
   "Show a list of random albums."
   (interactive)
-  (supersonic-albums nil "random"))
+  (supersonic-albums nil 'random))
 
 ;;;###autoload
 (defun supersonic-newest-albums ()
   "Show a list of recently added albums."
   (interactive)
-  (supersonic-albums nil "newest"))
+  (supersonic-albums nil 'newest))
 
 (defun supersonic-albums (&optional id type)
-  "Open a buffer of albums for artist ID or list TYPE."
+  "Open a buffer of albums for artist ID or list TYPE.
+TYPE is one of `supersonic-provider-album-list-types'; the name of
+one as a string is accepted too."
+  (when (stringp type)
+    (setq type (intern type)))
   (cond
    (id
     (let ((new-buff (get-buffer-create "*supersonic-artist-albums*")))
@@ -1659,29 +1625,22 @@ the response at the wrong key."
   (interactive)
   (supersonic-albums (tabulated-list-get-id)))
 
-(defun supersonic-artists-parse (data)
-  "Retrieve a list of artists from some parsed json DATA."
-  (let ((artists (supersonic-recursive-assoc data '("subsonic-response" "artists" "index"))))
-    (mapcan
-     (lambda (artist-index)
-       (mapcar
-        (lambda (artist)
-          (list (supersonic-get-id-as-string artist) (vector (assoc-default "name" artist))))
-        (assoc-default "artist" artist-index)))
-     artists)))
+(defun supersonic-artists-rows (artists)
+  "Turn ARTISTS, as resolved by `supersonic-provider-artists', into entries."
+  (mapcar (lambda (artist) (list (plist-get artist :id) (vector (or (plist-get artist :name) "")))) artists))
 
 (aio-defun
  supersonic-artists-refresh (buff) "Refresh the list of artists into BUFF."
  (supersonic--with-async-error-handling
   buff "fetch artists"
-  (let ((data (aio-await (supersonic-get-json (supersonic-build-url "/getArtists.view" '())))))
+  (let ((artists (aio-await (supersonic-provider-artists))))
     (when (buffer-live-p buff)
       (with-current-buffer buff
-        (setq tabulated-list-entries (supersonic-artists-parse data))
+        (setq tabulated-list-entries (supersonic-artists-rows artists))
         (tabulated-list-print t))))))
 
 (defun supersonic-artists-revert ()
-  "Refresh the artists buffer from the Subsonic server."
+  "Refresh the artists buffer from the active library provider."
   (interactive)
   (supersonic-artists-refresh (current-buffer)))
 
