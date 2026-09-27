@@ -43,7 +43,6 @@
 (require 'transient)
 
 (require 'supersonic-custom)
-(require 'supersonic-api)
 (require 'supersonic-provider)
 (require 'supersonic-subsonic)
 (require 'supersonic-art)
