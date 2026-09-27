@@ -5,7 +5,7 @@
 
 This is a subsonic client for emacs using [mpv](https://mpv.io/) for music playing. It
 works with any server implementing the Subsonic API, such as
-[Navidrome](https://www.navidrome.org/), [Airsonic](https://airsonic.github.io/),
+[Navidrome](https://www.navidrome.org/), [Nextcloud Music](https://apps.nextcloud.com/apps/music), [Airsonic](https://airsonic.github.io/),
 [Gonic](https://github.com/sentriz/gonic) or [Ampache](https://ampache.org/).
 
 <img width="1445" height="1041" alt="image" src="https://github.com/user-attachments/assets/095571c2-0c8c-4c38-9fa8-d1ae1b5c10ec" />
