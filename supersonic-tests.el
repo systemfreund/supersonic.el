@@ -564,7 +564,7 @@ open connection per row."
         (sem (aio-sem 2)))
     (unwind-protect
         (cl-letf (((symbol-function 'supersonic-build-url) (lambda (_endpoint _extra-query) "dummy://url"))
-                  ((symbol-function 'aio-url-retrieve)
+                  ((symbol-function 'supersonic-url-retrieve)
                    (aio-lambda
                     (_url) (cl-incf in-flight) (setq peak (max peak in-flight))
                     ;; Stay "on the wire" long enough for the other fetches
@@ -2432,12 +2432,12 @@ an ordinary, empty result."
   (supersonic--signal-if-failed '(("subsonic-response" ("status" . "ok") ("song" ("id" . "1"))))))
 
 (defmacro supersonic-tests--with-stubbed-response (body-json &rest body)
-  "Run BODY with `aio-url-retrieve' stubbed to a 200 OK reply of BODY-JSON.
+  "Run BODY with `supersonic-url-retrieve' stubbed to a 200 OK reply of BODY-JSON.
 Mimics the buffer shape (headers, then `url-http-end-of-headers', then
 the body) that `supersonic-get-json' expects to parse, so BODY can
 exercise it end to end without a real supersonic server."
   (declare (indent 1))
-  `(cl-letf (((symbol-function 'aio-url-retrieve)
+  `(cl-letf (((symbol-function 'supersonic-url-retrieve)
               (aio-lambda
                (_url)
                (let ((buff (generate-new-buffer " *supersonic-tests-response*")))
@@ -2456,6 +2456,29 @@ ordinary, empty-looking result."
   (supersonic-tests--with-stubbed-response
       "{\"subsonic-response\":{\"status\":\"failed\",\"error\":{\"code\":40,\"message\":\"Wrong username or password.\"}}}"
     (should-error (aio-wait-for (supersonic-get-json "dummy://url")) :type 'error)))
+
+(ert-deftest supersonic-tests-get-json-kills-the-url-retrieve-buffer ()
+  "`supersonic-get-json' kills the very buffer `url-retrieve' handed its
+callback, not a copy of it -- `aio-url-retrieve' resolves to a
+`clone-buffer' of that buffer (skeeto/emacs-aio#33), so killing what
+it returns left the original ` *http host:port*' buffer behind on
+every request, and the jukebox poll alone piled up thousands of them
+overnight (#42)."
+  (let ((response (generate-new-buffer " *supersonic-tests-response*")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'url-retrieve)
+                   (lambda (_url callback &rest _)
+                     (with-current-buffer response
+                       (insert "HTTP/1.1 200 OK\n\n")
+                       (setq-local url-http-end-of-headers (1- (point)))
+                       (insert "{\"subsonic-response\":{\"status\":\"ok\"}}")
+                       (funcall callback nil)))))
+          (let ((before (length (buffer-list))))
+            (aio-wait-for (supersonic-get-json "dummy://url"))
+            (should-not (buffer-live-p response))
+            (should (= (length (buffer-list)) (1- before)))))
+      (when (buffer-live-p response)
+        (kill-buffer response)))))
 
 (ert-deftest supersonic-tests-refresh-shows-error-on-bad-credentials ()
   "A refresh function surfaces a Subsonic-level \"failed\" response (e.g.
