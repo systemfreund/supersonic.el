@@ -23,6 +23,7 @@
 (require 'cl-lib)
 (require 'supersonic)
 (require 'supersonic-jukebox)
+(require 'supersonic-upnp)
 (require 'aio)
 
 (defvar supersonic-tests--track-1 "av://lavfi:sine=frequency=440:duration=2")
@@ -4198,6 +4199,25 @@ after that long, the rest on the next tick."
   (supersonic-tests--with-provider '()
     (should-error (supersonic-tests--resolve (supersonic-provider-stream-url "a")) :type 'user-error)))
 
+(ert-deftest supersonic-tests-provider-stream-url-passes-format-only-when-given ()
+  "A FORMAT hint reaches the active provider as a second argument, but
+only when the caller actually supplies one -- so a provider written
+before the hint existed, whose `stream-url' takes just an id, is never
+called with more arguments than it knows about."
+  (let (seen)
+    (supersonic-tests--with-provider
+        `((stream-url . ,(lambda (id &optional format) (push (list id format) seen) (concat "fake://" id))))
+      (should (equal "fake://a" (supersonic-tests--resolve (supersonic-provider-stream-url "a"))))
+      (should
+       (equal
+        "fake://b"
+        (supersonic-tests--resolve (supersonic-provider-stream-url "b" '(:format "mp3" :max-bit-rate 192)))))
+      (should (equal '(("a" nil) ("b" (:format "mp3" :max-bit-rate 192))) (reverse seen)))))
+  ;; A provider registered before FORMAT existed, taking only an id, is
+  ;; unaffected by a caller that never asks for one.
+  (supersonic-tests--with-provider `((stream-url . ,(lambda (id) (concat "fake://" id))))
+    (should (equal "fake://a" (supersonic-tests--resolve (supersonic-provider-stream-url "a"))))))
+
 (ert-deftest supersonic-tests-provider-scrobble-is-gated-and-optional ()
   "`supersonic-provider-scrobble' hands the id and now-playing flag to
 the provider -- but only with `supersonic-enable-scrobbling' set and a
@@ -4248,6 +4268,94 @@ neither of which should break over it."
     (let ((operations (gethash 'subsonic supersonic-provider--providers)))
       (should (eq 'supersonic-subsonic--stream-url (alist-get 'stream-url operations)))
       (should (eq 'supersonic-subsonic--scrobble (alist-get 'scrobble operations))))))
+
+(ert-deftest supersonic-tests-subsonic-stream-url-honors-the-format-hint ()
+  "A FORMAT hint's `:format' and `:max-bit-rate' become stream.view's own
+`format' and `maxBitRate' parameters; either left out of FORMAT is left
+out of the request, the same as omitting FORMAT altogether."
+  (let (requests)
+    (cl-letf (((symbol-function 'supersonic-build-url) (lambda (endpoint query) (push query requests) "url")))
+      (supersonic-tests--resolve (supersonic-subsonic--stream-url "t/1"))
+      (supersonic-tests--resolve (supersonic-subsonic--stream-url "t/1" '(:format "mp3")))
+      (supersonic-tests--resolve (supersonic-subsonic--stream-url "t/1" '(:max-bit-rate 128)))
+      (supersonic-tests--resolve (supersonic-subsonic--stream-url "t/1" '(:format "mp3" :max-bit-rate 128))))
+    (should
+     (equal
+      '((("id" . "t/1"))
+        (("id" . "t/1") ("format" . "mp3"))
+        (("id" . "t/1") ("maxBitRate" . "128"))
+        (("id" . "t/1") ("format" . "mp3") ("maxBitRate" . "128")))
+      (reverse requests)))))
+
+;;;
+;;; UPnP DIDL-Lite / protocolInfo helpers
+;;;
+
+(ert-deftest supersonic-tests-upnp-content-type-prefers-the-format-hint ()
+  "A requested FORMAT's `:format' overrides TRACK's own `:content-type',
+since after transcoding that is no longer the truth; without a
+FORMAT, TRACK's `:content-type' is used; with neither, a generic
+fallback is used rather than a guess."
+  (should (equal "audio/mpeg" (supersonic-upnp--content-type '(:content-type "audio/flac") '(:format "mp3"))))
+  (should (equal "audio/flac" (supersonic-upnp--content-type '(:content-type "audio/flac"))))
+  (should (equal "application/octet-stream" (supersonic-upnp--content-type nil))))
+
+(ert-deftest supersonic-tests-upnp-protocol-info-matches-the-content-type ()
+  "`protocolInfo' wraps whatever `supersonic-upnp--content-type' resolves
+to, in the four-field http-get form DLNA clients expect."
+  (should
+   (equal
+    "http-get:*:audio/mpeg:*" (supersonic-upnp--protocol-info '(:content-type "audio/flac") '(:format "mp3"))))
+  (should (equal "http-get:*:audio/flac:*" (supersonic-upnp--protocol-info '(:content-type "audio/flac")))))
+
+(ert-deftest supersonic-tests-upnp-didl-lite-is-well-formed-and-escapes-values ()
+  "The DIDL-Lite document parses as XML, and a title/artist/album
+containing `&', `<', `>' or a quote round-trips through it instead of
+breaking out of its element or unbalancing the document."
+  (let* ((xml
+          (supersonic-upnp--didl-lite
+           "http://host/stream?id=1&x=2"
+           '(:id "t/1" :title "A & B" :artist "X <Y>" :album "Z\"s" :content-type "audio/flac")))
+         (parsed (with-temp-buffer
+                   (insert xml)
+                   (libxml-parse-xml-region (point-min) (point-max)))))
+    (should parsed)
+    (let* ((item (assq 'item (cddr parsed)))
+           (fields (cddr item)))
+      (should (equal "t/1" (alist-get 'id (cadr item))))
+      (should (equal "A & B" (caddr (assq 'title fields))))
+      (should (equal "X <Y>" (caddr (assq 'artist fields))))
+      (should (equal "Z\"s" (caddr (assq 'album fields))))
+      (should (equal "http://host/stream?id=1&x=2" (caddr (assq 'res fields))))
+      (should (equal "http-get:*:audio/flac:*" (alist-get 'protocolInfo (cadr (assq 'res fields))))))))
+
+(ert-deftest supersonic-tests-upnp-didl-lite-omits-missing-optional-fields ()
+  "A track with no artist or album produces a document with no
+`upnp:artist'/`upnp:album' element at all, rather than an empty one --
+so a renderer's display shows nothing for them instead of a blank
+line."
+  (let* ((xml (supersonic-upnp--didl-lite "http://host/s" '(:id "t/1")))
+         (fields (cddr (assq 'item (cddr (with-temp-buffer
+                                            (insert xml)
+                                            (libxml-parse-xml-region (point-min) (point-max))))))))
+    (should-not (assq 'artist fields))
+    (should-not (assq 'album fields))
+    (should (assq 'title fields))))
+
+(ert-deftest supersonic-tests-upnp-didl-lite-reflects-a-requested-format ()
+  "Casting the same FORMAT hint through to the DIDL builder keeps
+`protocolInfo' truthful about what the renderer will actually
+receive, exercising the two functions together the way #65's SOAP
+client eventually will."
+  (let* ((track '(:id "t/1" :content-type "audio/flac"))
+         (format '(:format "mp3"))
+         (xml (supersonic-upnp--didl-lite "http://host/s" track format))
+         (res
+          (assq
+           'res (cddr (assq 'item (cddr (with-temp-buffer
+                                           (insert xml)
+                                           (libxml-parse-xml-region (point-min) (point-max)))))))))
+    (should (equal "http-get:*:audio/mpeg:*" (alist-get 'protocolInfo (cadr res))))))
 
 (defmacro supersonic-tests--with-fake-mpv (&rest body)
   "Run BODY against an mpv that only records the commands sent to it.

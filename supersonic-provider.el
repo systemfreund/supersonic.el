@@ -106,13 +106,21 @@ promise.
 - `download-podcast-episode' takes an episode id, has the provider
   fetch the episode so it can be played, and resolves once that has
   been set in motion.
-- `stream-url' takes a track id and resolves to a URL a player can
-  stream that track from.  A promise even where the URL is built
-  locally, as for Subsonic, so that a provider which has to ask its
-  server first -- for a signed or short-lived URL, say -- fits the
-  same contract.  The URL may carry credentials, so whoever hands it
-  to a subprocess does so over a pipe or socket and never on a
-  command line, where any local user could read it.
+- `stream-url' takes a track id and an optional FORMAT plist and
+  resolves to a URL a player can stream that track from.  A promise
+  even where the URL is built locally, as for Subsonic, so that a
+  provider which has to ask its server first -- for a signed or
+  short-lived URL, say -- fits the same contract.  The URL may carry
+  credentials, so whoever hands it to a subprocess does so over a
+  pipe or socket and never on a command line, where any local user
+  could read it.  FORMAT, when given, is `(:format EXT :max-bit-rate
+  KBPS)', a hint that a caller which cares what it gets back --
+  transcoding for a picky UPnP renderer, say -- can ask for; a
+  provider is free to ignore either key, or FORMAT altogether, and
+  hand back whatever it would have without it.  A caller that has no
+  opinion, such as mpv or the waveform transcoder, simply omits
+  FORMAT, and every existing provider implementation keeps working
+  unchanged.
 - `scrobble' takes a track id and a NOW-PLAYING flag and reports the
   track to the provider: as having just started when NOW-PLAYING is
   non-nil, as having been played otherwise.  Fire and forget: it sets
@@ -260,11 +268,20 @@ The result is a plist (:artists ARTISTS :albums ALBUMS :tracks TRACKS)."
  (aio-await (supersonic-provider--call 'download-podcast-episode episode-id)))
 
 (aio-defun
- supersonic-provider-stream-url (track-id)
+ supersonic-provider-stream-url (track-id &optional format)
  "Return a promise resolving to a URL to stream the track with TRACK-ID from.
 The URL may carry credentials -- keep it off any subprocess's command
-line."
- (aio-await (supersonic-provider--call 'stream-url track-id)))
+line.
+
+FORMAT, if given, is the plist `supersonic-provider-operations'
+documents for `stream-url' -- `(:format EXT :max-bit-rate KBPS)'.  It
+is passed on to the active provider only when non-nil, so a provider
+implementation written before this hint existed, expecting just
+TRACK-ID, is never called with more arguments than it knows about."
+ (aio-await
+  (if format
+      (supersonic-provider--call 'stream-url track-id format)
+    (supersonic-provider--call 'stream-url track-id))))
 
 (defun supersonic-provider-scrobble (track-id &optional now-playing)
   "Scrobble TRACK-ID, as now playing if NOW-PLAYING is non-nil.
