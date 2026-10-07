@@ -88,7 +88,7 @@
 (require 'supersonic-playback)
 
 (defvar supersonic-jukebox--timer nil
-  "Poll timer driving `supersonic-jukebox--poll'.
+  "Poll timer driving `supersonic-jukebox--poll-tick'.
 Runs only while `jukebox' is the active backend -- see
 `supersonic-jukebox--watch-backend' -- so polling never spends a
 request against a server nobody is currently asking to hear from.")
@@ -123,6 +123,13 @@ already reported, so `supersonic-jukebox--poll' can report exactly
 once per outage: never leaving even the first failure silent, and
 never narrating a server that stays unreachable once per poll on top
 of that.")
+
+(defvar supersonic-jukebox--poll-in-flight nil
+  "Promise resolved once the poll in flight is done, or nil if none is.
+See `supersonic-jukebox--poll'.  A poll stays in flight until its
+request settles, which `supersonic-request-timeout' bounds: without
+that, one request the server never answered would hold up every
+later poll for good.")
 
 (defun supersonic-jukebox-live-p ()
   "Return non-nil if the jukebox backend's last poll succeeded."
@@ -268,22 +275,46 @@ current. Reports a failure to the user exactly once per outage --
 see `supersonic-jukebox--poll-failing' -- rather than never (the very
 first poll's failure has no earlier success to fall from) or once per
 `supersonic-jukebox-poll-interval' for as long as the server stays
-unreachable."
- (let ((previous supersonic-jukebox--snapshot))
-   (condition-case err
-       (let* ((response (aio-await (supersonic-jukebox--request "get")))
-              (polled-at (float-time))
-              (playlist (supersonic-recursive-assoc response '("subsonic-response" "jukeboxPlaylist"))))
-         (setq supersonic-jukebox--snapshot (supersonic-jukebox--parse-snapshot playlist polled-at))
-         (setq supersonic-jukebox--live t)
-         (setq supersonic-jukebox--poll-failing nil)
-         (supersonic-jukebox--announce-changes previous supersonic-jukebox--snapshot))
-     (error
-      (setq supersonic-jukebox--live nil)
-      (unless supersonic-jukebox--poll-failing
-        (setq supersonic-jukebox--poll-failing t)
-        (supersonic--report-async-error "poll the jukebox" err)
-        (run-hooks 'supersonic-playback-track-change-hook))))))
+unreachable.
+
+Never runs alongside another poll: with one in flight, this waits for
+it and then sends a `get' of its own.  An action polling for its own
+effect can't make do with the answer to a poll sent before it, and two
+polls in flight at once could land out of order, an older snapshot
+overwriting a newer one.  The timer polls through
+`supersonic-jukebox--poll-tick' instead, which skips rather than waits."
+ (while supersonic-jukebox--poll-in-flight
+   (aio-await supersonic-jukebox--poll-in-flight))
+ (let ((done (aio-promise)))
+   (setq supersonic-jukebox--poll-in-flight done)
+   (unwind-protect
+       (let ((previous supersonic-jukebox--snapshot))
+         (condition-case err
+             (let* ((response (aio-await (supersonic-jukebox--request "get")))
+                    (polled-at (float-time))
+                    (playlist (supersonic-recursive-assoc response '("subsonic-response" "jukeboxPlaylist"))))
+               (setq supersonic-jukebox--snapshot (supersonic-jukebox--parse-snapshot playlist polled-at))
+               (setq supersonic-jukebox--live t)
+               (setq supersonic-jukebox--poll-failing nil)
+               (supersonic-jukebox--announce-changes previous supersonic-jukebox--snapshot))
+           (error
+            (setq supersonic-jukebox--live nil)
+            (unless supersonic-jukebox--poll-failing
+              (setq supersonic-jukebox--poll-failing t)
+              (supersonic--report-async-error "poll the jukebox" err)
+              (run-hooks 'supersonic-playback-track-change-hook)))))
+     (setq supersonic-jukebox--poll-in-flight nil)
+     (aio-resolve done #'ignore))))
+
+(defun supersonic-jukebox--poll-tick ()
+  "Poll the jukebox, unless a poll is still waiting on the server.
+What `supersonic-jukebox--timer' runs.  A tick used to poll
+regardless, so a server that stopped answering piled up one more
+open connection every `supersonic-jukebox-poll-interval' until Emacs
+ran out of file descriptors (#70).  Skipping loses nothing: the poll
+in flight is about to report the same state."
+  (unless supersonic-jukebox--poll-in-flight
+    (ignore (supersonic-jukebox--poll))))
 
 ;;;
 ;;; The facade's status/queue/live-p operations
@@ -505,8 +536,8 @@ hence `supersonic-jukebox-live-p' -- reflects real state as soon as
 possible after `jukebox' becomes the active backend."
   (unless supersonic-jukebox--timer
     (setq supersonic-jukebox--timer
-          (run-at-time supersonic-jukebox-poll-interval supersonic-jukebox-poll-interval #'supersonic-jukebox--poll))
-    (ignore (supersonic-jukebox--poll))))
+          (run-at-time supersonic-jukebox-poll-interval supersonic-jukebox-poll-interval #'supersonic-jukebox--poll-tick))
+    (supersonic-jukebox--poll-tick)))
 
 (defun supersonic-jukebox--stop-polling ()
   "Stop the jukebox poll timer and discard whatever it last knew.

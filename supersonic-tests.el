@@ -568,7 +568,7 @@ open connection per row."
         (sem (aio-sem 2)))
     (unwind-protect
         (cl-letf (((symbol-function 'supersonic-build-url) (lambda (_endpoint _extra-query) "dummy://url"))
-                  ((symbol-function 'aio-url-retrieve)
+                  ((symbol-function 'supersonic-url-retrieve)
                    (aio-lambda
                     (_url) (cl-incf in-flight) (setq peak (max peak in-flight))
                     ;; Stay "on the wire" long enough for the other fetches
@@ -2436,12 +2436,12 @@ an ordinary, empty result."
   (supersonic--signal-if-failed '(("subsonic-response" ("status" . "ok") ("song" ("id" . "1"))))))
 
 (defmacro supersonic-tests--with-stubbed-response (body-json &rest body)
-  "Run BODY with `aio-url-retrieve' stubbed to a 200 OK reply of BODY-JSON.
+  "Run BODY with `supersonic-url-retrieve' stubbed to a 200 OK reply of BODY-JSON.
 Mimics the buffer shape (headers, then `url-http-end-of-headers', then
 the body) that `supersonic-get-json' expects to parse, so BODY can
 exercise it end to end without a real supersonic server."
   (declare (indent 1))
-  `(cl-letf (((symbol-function 'aio-url-retrieve)
+  `(cl-letf (((symbol-function 'supersonic-url-retrieve)
               (aio-lambda
                (_url)
                (let ((buff (generate-new-buffer " *supersonic-tests-response*")))
@@ -2481,6 +2481,49 @@ of them overnight (#42)."
             (aio-wait-for (supersonic-get-json "dummy://url"))
             (should-not (buffer-live-p response))
             (should (= (length (buffer-list)) (1- before)))))
+      (when (buffer-live-p response)
+        (kill-buffer response)))))
+
+(ert-deftest supersonic-tests-get-json-gives-up-after-the-request-timeout ()
+  "A request the server never answers rejects after
+`supersonic-request-timeout', and takes its connection and response
+buffer down with it -- asynchronous `url-retrieve' has no timeout of
+its own, so without one such a request held a file descriptor open for
+the rest of the session, and a poll every few seconds against a server
+that stopped answering ran Emacs out of them (#70)."
+  (let* ((supersonic-request-timeout 0.05)
+         (response (generate-new-buffer " *supersonic-tests-response*"))
+         (connection (make-pipe-process :name "supersonic-tests-connection" :buffer response :noquery t)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'url-retrieve) (lambda (&rest _) response)))
+          (let ((err (should-error (supersonic-tests--resolve (supersonic-get-json "dummy://url?t=token")))))
+            (should (equal "No answer from dummy://url within 0.05 seconds" (error-message-string err))))
+          (should-not (buffer-live-p response))
+          (should-not (process-live-p connection)))
+      (when (process-live-p connection)
+        (delete-process connection))
+      (when (buffer-live-p response)
+        (kill-buffer response)))))
+
+(ert-deftest supersonic-tests-get-json-in-time-leaves-no-timeout-behind ()
+  "A reply that arrives before `supersonic-request-timeout' cancels the
+timeout, rather than leaving a timer behind for every request ever made."
+  (let ((supersonic-request-timeout 5)
+        (response (generate-new-buffer " *supersonic-tests-response*")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'url-retrieve)
+                   (lambda (_url callback &rest _)
+                     (run-at-time 0.01 nil
+                                  (lambda ()
+                                    (with-current-buffer response
+                                      (insert "HTTP/1.1 200 OK\n\n")
+                                      (setq-local url-http-end-of-headers (1- (point)))
+                                      (insert "{\"subsonic-response\":{\"status\":\"ok\"}}")
+                                      (funcall callback nil))))
+                     response)))
+          (supersonic-tests--resolve (supersonic-get-json "dummy://url"))
+          (should-not (seq-find (lambda (timer) (eq (timer--function timer) #'supersonic--abort-request))
+                                timer-list)))
       (when (buffer-live-p response)
         (kill-buffer response)))))
 
@@ -3161,6 +3204,7 @@ microseconds the test happened to take."
   `(let ((supersonic-jukebox--snapshot nil)
          (supersonic-jukebox--live nil)
          (supersonic-jukebox--poll-failing nil)
+         (supersonic-jukebox--poll-in-flight nil)
          (supersonic-jukebox--timer nil)
          (supersonic-tests--jukebox-requests nil)
          (supersonic-tests--jukebox-playlist nil)
@@ -3402,6 +3446,7 @@ no earlier success to transition from."
   (let ((supersonic-jukebox--snapshot nil)
         (supersonic-jukebox--live nil)
         (supersonic-jukebox--poll-failing nil)
+        (supersonic-jukebox--poll-in-flight nil)
         (supersonic-playback-track-change-hook nil)
         (track-changes 0)
         (reports 0))
@@ -3442,6 +3487,70 @@ forever after the first one."
        (cl-letf (((symbol-function 'supersonic-get-json) (aio-lambda (_url) (error "boom"))))
          (supersonic-tests--resolve (supersonic-jukebox--poll))
          (should (= 2 reports)))))))
+
+(defmacro supersonic-tests--with-held-jukebox-polls (&rest body)
+  "Run BODY inside `supersonic-tests--with-jukebox' with every `get' held.
+Each `get' records itself in `supersonic-tests--jukebox-requests' as
+usual, but resolves only once `supersonic-tests--release-jukebox-poll'
+releases it, oldest first -- a server taking its time to answer."
+  (declare (indent 0))
+  `(supersonic-tests--with-jukebox
+    (let ((held nil))
+      (cl-letf (((symbol-function 'supersonic-get-json)
+                 (lambda (query)
+                   (push query supersonic-tests--jukebox-requests)
+                   (let ((promise (aio-promise)))
+                     (setq held (append held (list promise)))
+                     promise)))
+                ((symbol-function 'supersonic-tests--release-jukebox-poll)
+                 (lambda ()
+                   (aio-resolve (pop held)
+                                (lambda () `(("subsonic-response" ("jukeboxPlaylist" ("currentIndex" . -1)))))))))
+        ,@body))))
+
+(defun supersonic-tests--release-jukebox-poll ()
+  "Release the oldest `get' held by `supersonic-tests--with-held-jukebox-polls'."
+  (error "Only inside `supersonic-tests--with-held-jukebox-polls'"))
+
+(defun supersonic-tests--settle ()
+  "Run whatever timers aio has queued for promises that just resolved."
+  (dotimes (_ 5) (accept-process-output nil 0.01)))
+
+(ert-deftest supersonic-tests-jukebox-poll-tick-skips-while-a-poll-is-in-flight ()
+  "A poll tick does not send another `get' while the last one is still
+waiting on the server: each tick used to send one regardless, so a
+server that stopped answering piled up a connection every
+`supersonic-jukebox-poll-interval' until Emacs ran out of file
+descriptors (#70)."
+  (supersonic-tests--with-held-jukebox-polls
+    (supersonic-jukebox--poll-tick)
+    (supersonic-jukebox--poll-tick)
+    (should (equal '("get") (supersonic-tests--jukebox-request-actions)))
+    (supersonic-tests--release-jukebox-poll)
+    (supersonic-tests--settle)
+    (supersonic-jukebox--poll-tick)
+    (should (equal '("get" "get") (supersonic-tests--jukebox-request-actions)))
+    (supersonic-tests--release-jukebox-poll)
+    (supersonic-tests--settle)))
+
+(ert-deftest supersonic-tests-jukebox-poll-waits-for-the-one-in-flight ()
+  "An explicit poll -- the one every action runs to pick up its own
+effect -- does not skip because a tick's poll is in flight, since that
+one's answer may predate the action; nor does it run alongside it,
+since the two answers could land out of order.  It waits, then sends
+a `get' of its own."
+  (supersonic-tests--with-held-jukebox-polls
+    (supersonic-jukebox--poll-tick)
+    (let ((explicit (supersonic-jukebox--poll)))
+      (supersonic-tests--settle)
+      (should (equal '("get") (supersonic-tests--jukebox-request-actions)))
+      (supersonic-tests--release-jukebox-poll)
+      (supersonic-tests--settle)
+      (should (equal '("get" "get") (supersonic-tests--jukebox-request-actions)))
+      (should-not (aio-result explicit))
+      (supersonic-tests--release-jukebox-poll)
+      (supersonic-tests--resolve explicit)
+      (should (supersonic-jukebox-live-p)))))
 
 (ert-deftest supersonic-tests-jukebox-start-replaces-playlist-and-starts ()
   "`supersonic-jukebox-start' sends `set' with every id, then `start',
@@ -3702,7 +3811,8 @@ being `jukebox' again, driven purely by the ordinary customization
 variable, with no separate mode to turn on."
   (let ((supersonic-jukebox--timer nil)
         (supersonic-jukebox--snapshot nil)
-        (supersonic-jukebox--live nil))
+        (supersonic-jukebox--live nil)
+        (supersonic-jukebox--poll-in-flight nil))
     (unwind-protect
         (cl-letf (((symbol-function 'supersonic-build-url) (lambda (&rest _) "dummy://url"))
                   ((symbol-function 'supersonic-get-json)
@@ -4507,7 +4617,7 @@ request rejects."
       (supersonic-tests--with-stubbed-response "PNG-BYTES"
         (should (equal "PNG-BYTES" (supersonic-tests--resolve (supersonic-provider-cover-art "al-1" 300)))))
       (should (equal '(("/getCoverArt.view" ("id" . "al-1") ("size" . "300"))) requests))
-      (cl-letf (((symbol-function 'aio-url-retrieve)
+      (cl-letf (((symbol-function 'supersonic-url-retrieve)
                  (aio-lambda (_url) (cons '(:error (error "404")) (generate-new-buffer " *supersonic-tests*")))))
         (should-error (supersonic-tests--resolve (supersonic-provider-cover-art "al-1" 300)))))))
 

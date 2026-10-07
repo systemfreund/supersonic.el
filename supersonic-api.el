@@ -64,9 +64,57 @@ the plain `concat' this used to do."
 ;; fix byte-compiler complaints
 (defvar url-http-end-of-headers)
 
+(defun supersonic-url-retrieve (url)
+  "Wrap `url-retrieve' of URL in a promise of (STATUS . BUFFER).
+Like `aio-url-retrieve', except that it gives up once the server has
+not answered within `supersonic-request-timeout': the promise then
+rejects, and the connection and BUFFER are gone already.  Otherwise
+BUFFER is the response buffer, which the caller must kill.
+
+`aio-url-retrieve' can't do this from the outside, since it never
+hands out the buffer `url-retrieve' returns -- and closing the
+connection is the point: a request that merely stopped being waited
+for would still hold a file descriptor open (#70)."
+  (let* ((promise (aio-promise))
+         (timer nil)
+         (buffer
+          (condition-case err
+              (url-retrieve url
+                            (lambda (status)
+                              (when timer
+                                (cancel-timer timer))
+                              (let ((value (cons status (current-buffer))))
+                                (aio-resolve promise (lambda () value)))))
+            (error (aio-resolve promise (lambda () (signal (car err) (cdr err))))
+                   nil))))
+    ;; `url-retrieve' calls back before returning for some URLs (and
+    ;; connection errors), in which case there is nothing left to time.
+    (when (and buffer (not (aio-result promise)))
+      (setq timer (run-at-time supersonic-request-timeout nil
+                               #'supersonic--abort-request promise buffer url supersonic-request-timeout)))
+    promise))
+
+(defun supersonic--abort-request (promise buffer url timeout)
+  "Give up on the request for URL behind PROMISE, unanswered after TIMEOUT.
+Close BUFFER's connection, kill BUFFER and reject PROMISE.  The
+sentinel goes first so that `url-http' doesn't call back about the
+closed connection as well, the same as `url-queue-kill-job'."
+  (unless (aio-result promise)
+    (when (buffer-live-p buffer)
+      (let (process)
+        (while (setq process (get-buffer-process buffer))
+          (set-process-sentinel process #'ignore)
+          (delete-process process)))
+      (kill-buffer buffer))
+    ;; Without the query string: it carries the auth token and salt.
+    (let ((endpoint (car (split-string url "?"))))
+      (aio-resolve promise
+                   (lambda ()
+                     (error "No answer from %s within %s seconds" endpoint timeout))))))
+
 (aio-defun
  supersonic-get-json (url) "Return a promise resolving to the parsed json response from URL."
- (pcase-let ((`(,status . ,buffer) (aio-await (aio-url-retrieve url))))
+ (pcase-let ((`(,status . ,buffer) (aio-await (supersonic-url-retrieve url))))
    (unwind-protect
        (progn
          (when (plist-get status :error)
