@@ -585,6 +585,26 @@ server per interval."
   :type 'number
   :group 'supersonic)
 
+(defcustom supersonic-upnp-stream-format nil
+  "What to ask the provider to stream to a UPnP renderer.
+A plist `(:format EXT :max-bit-rate KBPS)', passed as the FORMAT hint
+of `supersonic-provider-stream-url'; either key may be left out, and
+nil, the default, streams whatever the provider would hand mpv.  Many
+cheap renderers cannot decode FLAC or Opus; for those, ask for
+`(:format \"mp3\" :max-bit-rate 320)'.  The
+`protocolInfo' a renderer is told always follows this, so it is never
+promised one format while receiving another."
+  :type '(choice (const :tag "Whatever the provider serves" nil)
+                 (plist :options ((:format string) (:max-bit-rate integer))))
+  :group 'supersonic)
+
+(defcustom supersonic-upnp-art-size 600
+  "Size in pixels of the cover art a UPnP renderer is pointed at.
+A hint the provider may scale to; a renderer shows it on its own
+display, if it has one."
+  :type 'integer
+  :group 'supersonic)
+
 (defcustom supersonic-waveform-samplerate 3000
   "Sample rate in Hz mpv transcodes a track to for waveform analysis.
 Every sample is walked individually in Lisp and every byte of the

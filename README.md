@@ -169,6 +169,39 @@ playback commands report that the two do not fit, and
 `supersonic-playback-switch-backend` does not offer `jukebox`. mpv
 plays for any provider that can name a URL to stream from.
 
+## UPnP/DLNA playback
+
+A `upnp` backend that plays to UPnP/DLNA renderers (AV receivers,
+network speakers, smart TVs) is in progress, see
+[#63](https://github.com/systemfreund/supersonic.el/issues/63).
+
+A renderer fetches the audio itself, so it is handed the same stream
+URL mpv would play, plus a cover art URL for its display. With the
+`subsonic` provider, both URLs carry your Subsonic username and the
+non-expiring token derived from your password. They are sent:
+
+- to whichever device you select, without asking first,
+- in plain text over your LAN, since UPnP control is unencrypted
+  SOAP over HTTP,
+- to a device that may log or cache them.
+
+Anyone holding those URLs can use the Subsonic API as that user
+until the password changes. For casting, use a dedicated Subsonic
+user with as few privileges as possible (no admin, no settings or
+upload rights).
+
+The renderer also has to reach `supersonic-host` on its own: a
+`localhost` address, a VPN-only address or a reverse proxy with its
+own login will not work from the renderer.
+
+By default a renderer gets the same stream mpv would. Many cheap
+renderers cannot decode FLAC or Opus; for those, have the server
+transcode with `supersonic-upnp-stream-format`:
+
+```
+(setq supersonic-upnp-stream-format '(:format "mp3" :max-bit-rate 320))
+```
+
 ## Authentication
 
 Add a `~/.authinfo.gpg` or `~/.authinfo` file with the following contents

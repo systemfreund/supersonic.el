@@ -26,7 +26,7 @@
 ;; that actually sends `SetAVTransportURI'.
 ;;
 ;; A renderer receives one plain URL and a DIDL-Lite XML fragment
-;; describing it -- title, artist, album, and a `res' element whose
+;; describing it -- title, artist, album, cover art, and a `res' element whose
 ;; `protocolInfo' names the exact MIME type of what that URL serves.
 ;; Getting `protocolInfo' wrong (claiming MP3 while the URL actually
 ;; serves FLAC, say) is a common way for cheap renderers to simply
@@ -36,17 +36,26 @@
 ;; That is where `supersonic-provider-stream-url''s optional FORMAT
 ;; hint comes in: when a caller asked the active provider to transcode
 ;; to a given format, `protocolInfo' has to say so instead of trusting
-;; the track's own, pre-transcoding `:content-type'.  This file knows
-;; nothing about which format to ask for, or when -- that policy, and
-;; the renderer connection itself, belongs to the backend in #65.
+;; the track's own, pre-transcoding `:content-type'.  Which format to
+;; ask for is `supersonic-upnp-stream-format';
+;; `supersonic-upnp--item' resolves a track id to the URL and metadata
+;; for it in one go.  The renderer connection itself belongs to the
+;; backend in #65.
+;;
+;; Both the stream URL and the cover art URL carry whatever
+;; credentials the provider puts in them -- for Subsonic, the
+;; non-expiring token-auth triple -- and are handed to the renderer
+;; as they are.  That is deliberate; the README says what this exposes.
 ;;
 ;; This file has no `supersonic-playback-register-backend' call yet
 ;; and nothing in the package requires it: it is only ever pulled in
 ;; by `supersonic-tests.el' until #65 gives it a caller.
 
 ;;; Code:
+(require 'aio)
 (require 'xml)
 (require 'supersonic-custom)
+(require 'supersonic-provider)
 
 (defconst supersonic-upnp--content-types
   '(("mp3" . "audio/mpeg")
@@ -92,8 +101,9 @@ DLNA clients are expected to accept from an HTTP source with nothing
 more specific to say."
   (format "http-get:*:%s:*" (supersonic-upnp--content-type track format)))
 
-(defun supersonic-upnp--didl-lite (url track &optional format)
+(defun supersonic-upnp--didl-lite (url track &optional format art-url)
   "Return a DIDL-Lite XML document describing URL, a stream of TRACK.
+ART-URL, if given, becomes the item's `albumArtURI'.
 FORMAT is as `supersonic-provider-stream-url' takes it, and decides
 `protocolInfo' via `supersonic-upnp--protocol-info' -- see there for
 why it must reflect what was actually requested rather than TRACK's
@@ -107,14 +117,7 @@ containing \\='&\\=', \\='<\\=' or a quote would otherwise end the
 element early or unbalance the document; TRACK's `:id' becomes the
 DIDL item's own `id' attribute for the same reason ids elsewhere are
 opaque strings -- a renderer never has reason to parse it, only to
-hand it back verbatim in whatever it reports playing.
-
-Cover art (`albumArtURI') is deliberately left out of this first
-slice: it would mean deciding whether the same URL a renderer already
-gets for the stream -- and everything that implies about who a
-credentialed art URL is handed to -- is acceptable to also hand it for
-art, and that decision belongs with the backend that actually casts,
-not with this XML-shaping helper."
+hand it back verbatim in whatever it reports playing."
   (let ((title (or (plist-get track :title) (plist-get track :id) ""))
         (artist (plist-get track :artist))
         (album (plist-get track :album))
@@ -128,11 +131,33 @@ not with this XML-shaping helper."
      (format "<dc:title>%s</dc:title>" (xml-escape-string title))
      (and artist (format "<upnp:artist>%s</upnp:artist>" (xml-escape-string artist)))
      (and album (format "<upnp:album>%s</upnp:album>" (xml-escape-string album)))
+     (and art-url (format "<upnp:albumArtURI>%s</upnp:albumArtURI>" (xml-escape-string art-url)))
      "<upnp:class>object.item.audioItem.musicTrack</upnp:class>"
      (format
       "<res protocolInfo=\"%s\">%s</res>" (xml-escape-string protocol-info) (xml-escape-string url))
      "</item>"
      "</DIDL-Lite>")))
+
+(aio-defun
+ supersonic-upnp--item (track-id)
+ "Return a promise resolving to what a renderer is told to play TRACK-ID.
+That is a plist (:url URL :metadata DIDL): the active provider's
+stream URL, asked for in `supersonic-upnp-stream-format', and the
+DIDL-Lite document describing it, for `SetAVTransportURI' and
+`SetNextAVTransportURI' to pass on as they are.
+
+The track's cover art goes along as `albumArtURI' whenever the track
+has any and the provider can name a URL for it; otherwise the
+document simply has none, since a renderer plays fine without."
+ (let* ((format supersonic-upnp-stream-format)
+        (track (aio-await (supersonic-provider-track track-id)))
+        (url (aio-await (supersonic-provider-stream-url track-id format)))
+        (art (plist-get track :art))
+        (art-url
+         (and art
+              (supersonic-provider-supports-p 'cover-art-url)
+              (aio-await (supersonic-provider-cover-art-url art supersonic-upnp-art-size)))))
+   (list :url url :metadata (supersonic-upnp--didl-lite url track format art-url))))
 
 (provide 'supersonic-upnp)
 ;;; supersonic-upnp.el ends here

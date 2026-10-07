@@ -4572,6 +4572,99 @@ client eventually will."
                                            (libxml-parse-xml-region (point-min) (point-max)))))))))
     (should (equal "http-get:*:audio/mpeg:*" (alist-get 'protocolInfo (cadr res))))))
 
+(defun supersonic-tests--didl-fields (xml)
+  "Return the child elements of the one item in DIDL-Lite document XML."
+  (cddr (assq 'item (cddr (with-temp-buffer
+                            (insert xml)
+                            (libxml-parse-xml-region (point-min) (point-max)))))))
+
+(ert-deftest supersonic-tests-upnp-didl-lite-includes-cover-art-when-given ()
+  "An ART-URL becomes the item's `upnp:albumArtURI', escaped like every
+other value; without one, the document has no such element."
+  (let ((fields (supersonic-tests--didl-fields
+                 (supersonic-upnp--didl-lite "http://host/s" '(:id "t/1") nil "http://host/art?id=1&size=600"))))
+    (should (equal "http://host/art?id=1&size=600" (caddr (assq 'albumArtURI fields)))))
+  (should-not
+   (assq 'albumArtURI (supersonic-tests--didl-fields (supersonic-upnp--didl-lite "http://host/s" '(:id "t/1"))))))
+
+(defun supersonic-tests--upnp-provider (seen &rest overrides)
+  "Return a fake provider's operations for `supersonic-upnp--item'.
+Each call is pushed onto the list in symbol SEEN as (OPERATION ARGS...).
+OVERRIDES is an alist whose entries replace the defaults."
+  (append
+   overrides
+   `((track . ,(lambda (id)
+                 (push (list 'track id) (symbol-value seen))
+                 (funcall (supersonic-tests--resolved
+                           `(:id ,id :title "T" :art "al/1" :content-type "audio/flac")))))
+     (stream-url . ,(lambda (id &optional format)
+                      (push (list 'stream-url id format) (symbol-value seen))
+                      (funcall (supersonic-tests--resolved (concat "http://host/stream/" id)))))
+     (cover-art-url . ,(lambda (art size)
+                         (push (list 'cover-art-url art size) (symbol-value seen))
+                         (funcall (supersonic-tests--resolved (concat "http://host/art/" art))))))))
+
+(defvar supersonic-tests--upnp-seen nil
+  "Calls the fake provider of `supersonic-tests--upnp-provider' saw.")
+
+(ert-deftest supersonic-tests-upnp-item-streams-in-the-configured-format-with-art ()
+  "`supersonic-upnp--item' asks for the stream in
+`supersonic-upnp-stream-format', describes it with a matching
+`protocolInfo', and always sends the cover art along."
+  (let ((supersonic-tests--upnp-seen nil)
+        (supersonic-upnp-stream-format '(:format "mp3" :max-bit-rate 320))
+        (supersonic-upnp-art-size 500))
+    (supersonic-tests--with-provider (supersonic-tests--upnp-provider 'supersonic-tests--upnp-seen)
+      (let* ((item (supersonic-tests--resolve (supersonic-upnp--item "t/1")))
+             (fields (supersonic-tests--didl-fields (plist-get item :metadata))))
+        (should (equal "http://host/stream/t/1" (plist-get item :url)))
+        (should (equal "http://host/stream/t/1" (caddr (assq 'res fields))))
+        (should (equal "http-get:*:audio/mpeg:*" (alist-get 'protocolInfo (cadr (assq 'res fields)))))
+        (should (equal "http://host/art/al/1" (caddr (assq 'albumArtURI fields))))))
+    (should (member '(stream-url "t/1" (:format "mp3" :max-bit-rate 320)) supersonic-tests--upnp-seen))
+    (should (member '(cover-art-url "al/1" 500) supersonic-tests--upnp-seen))))
+
+(ert-deftest supersonic-tests-upnp-item-without-a-stream-format ()
+  "With `supersonic-upnp-stream-format' nil, the stream is asked for
+without a FORMAT hint and `protocolInfo' follows the track's own
+content type."
+  (let ((supersonic-tests--upnp-seen nil)
+        (supersonic-upnp-stream-format nil))
+    (supersonic-tests--with-provider (supersonic-tests--upnp-provider 'supersonic-tests--upnp-seen)
+      (let ((fields (supersonic-tests--didl-fields
+                     (plist-get (supersonic-tests--resolve (supersonic-upnp--item "t/1")) :metadata))))
+        (should (equal "http-get:*:audio/flac:*" (alist-get 'protocolInfo (cadr (assq 'res fields)))))))
+    (should (member '(stream-url "t/1" nil) supersonic-tests--upnp-seen))))
+
+(ert-deftest supersonic-tests-upnp-item-without-cover-art ()
+  "A track without `:art', or a provider without `cover-art-url', gives
+a document without `albumArtURI' rather than an error."
+  (let ((supersonic-tests--upnp-seen nil))
+    (supersonic-tests--with-provider
+        (supersonic-tests--upnp-provider
+         'supersonic-tests--upnp-seen `(track . ,(supersonic-tests--resolved '(:id "t/1" :title "T"))))
+      (should-not
+       (assq 'albumArtURI (supersonic-tests--didl-fields
+                           (plist-get (supersonic-tests--resolve (supersonic-upnp--item "t/1")) :metadata)))))
+    (should-not (assq 'cover-art-url supersonic-tests--upnp-seen))
+    (supersonic-tests--with-provider
+        (assq-delete-all 'cover-art-url (supersonic-tests--upnp-provider 'supersonic-tests--upnp-seen))
+      (should-not
+       (assq 'albumArtURI (supersonic-tests--didl-fields
+                           (plist-get (supersonic-tests--resolve (supersonic-upnp--item "t/1")) :metadata)))))))
+
+(ert-deftest supersonic-tests-subsonic-cover-art-url-is-get-cover-art ()
+  "The Subsonic provider's `cover-art-url' is the same getCoverArt URL
+its `cover-art' fetches, built without asking the server."
+  (let ((requests nil))
+    (cl-letf (((symbol-function 'supersonic-build-url)
+               (lambda (endpoint query) (push (cons endpoint query) requests) "dummy://art"))
+              ((symbol-function 'url-retrieve) (lambda (&rest _) (error "The server was asked"))))
+      (should (equal "dummy://art" (supersonic-tests--resolve (supersonic-subsonic--cover-art-url "al/1" 600)))))
+    (should (equal '(("/getCoverArt.view" ("id" . "al/1") ("size" . "600"))) requests))
+    (should (eq 'supersonic-subsonic--cover-art-url
+                (alist-get 'cover-art-url (gethash 'subsonic supersonic-provider--providers))))))
+
 (defmacro supersonic-tests--with-fake-mpv (&rest body)
   "Run BODY against an mpv that only records the commands sent to it.
 `supersonic-mpv-command' pushes its arguments onto `commands', which

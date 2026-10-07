@@ -77,7 +77,7 @@
 (defconst supersonic-provider-operations
   '(artists artist-albums album-list album-tracks track search
     podcasts podcast-episodes add-podcast download-podcast-episode
-    stream-url scrobble cover-art cache-namespace config-hints)
+    stream-url scrobble cover-art cover-art-url cache-namespace config-hints)
   "The library operations a provider can implement.
 All but `scrobble', `cache-namespace' and `config-hints' return a
 promise.
@@ -130,6 +130,10 @@ promise.
   resolves to the image's bytes, as a unibyte string.  SIZE is a hint
   only: a provider that cannot scale on its side returns the image as
   it is, and Emacs scales it for display.
+- `cover-art-url' takes the same ART and SIZE and resolves to a URL
+  the image can be fetched from instead of its bytes, for a device
+  that fetches it itself -- a UPnP renderer showing it on its own
+  display.  Like `stream-url''s, the URL may carry credentials.
 - `cache-namespace' takes no arguments and returns a string naming
   the library this provider is currently connected to -- a server
   address, a music directory -- so that what is cached from one never
@@ -307,6 +311,13 @@ that; it is reported in the echo area instead."
  "Return a promise resolving to the bytes of cover art ART at about SIZE pixels.
 ART is an item's `:art' reference, never the item's own id."
  (aio-await (supersonic-provider--call 'cover-art art size)))
+
+(aio-defun
+ supersonic-provider-cover-art-url (art size)
+ "Return a promise resolving to a URL for cover art ART at about SIZE pixels.
+ART is an item's `:art' reference, never the item's own id.  The URL
+may carry credentials, as `supersonic-provider-stream-url''s may."
+ (aio-await (supersonic-provider--call 'cover-art-url art size)))
 
 (defun supersonic-provider-cache-name (id)
   "Return a file name for ID that is safe, bounded and unique to the library.
