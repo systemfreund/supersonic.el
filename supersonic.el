@@ -818,6 +818,23 @@ of the buffer each time."
               (goto-char (prop-match-beginning match))
               (insert (propertize value 'supersonic-now-playing-field field)))))))))
 
+(defun supersonic-now-playing--field-present-p (buff field)
+  "Return non-nil if BUFF has text tagged FIELD for updates to land in."
+  (with-current-buffer buff
+    (and (text-property-any (point-min) (point-max) 'supersonic-now-playing-field field) t)))
+
+(defun supersonic-now-playing--update-waveform-field (buff envelope progress)
+  "Draw ENVELOPE at PROGRESS into BUFF's standalone `waveform' row, if any.
+Checks for the row before building the image rather than leaving that
+to `supersonic-now-playing--update-field': the image is that call's
+argument, so it would be built in full -- tens of milliseconds of
+blocked input at a large `supersonic-waveform-width' x
+`supersonic-waveform-height', every bucket change -- only to be thrown
+away under a layout without `supersonic-now-playing-layout-waveform',
+the default one."
+  (when (supersonic-now-playing--field-present-p buff 'waveform)
+    (supersonic-now-playing--update-field buff 'waveform (supersonic-waveform-propertize envelope progress))))
+
 (defun supersonic-now-playing--progress-ratio (position duration)
   "Return POSITION/DURATION clamped to 0..1, or 0 if either is unavailable.
 POSITION is coerced to a float first: mpv reports \"time-pos\" as one,
@@ -862,8 +879,9 @@ whichever of `supersonic-now-playing-animate-art-overlay'/`-scroll' is
 configured picks the fresh envelope/progress back up off
 `supersonic-now-playing--waveform' the next time it draws.  Both run
 unconditionally, independent of each other:
-`supersonic-now-playing--update-field' is already a no-op when the
-`waveform' field it looks for is not there, and re-running
+`supersonic-now-playing--update-waveform-field' is already a no-op --
+without even building the image -- when the `waveform' field it looks
+for is not there, and re-running
 `supersonic-now-playing-animation-functions'
 costs a redraw with nothing new to show whenever none of them target
 the art overlay, the same small, unavoidable price
@@ -878,8 +896,7 @@ or not."
                (bucket (supersonic-now-playing--progress-bucket envelope progress)))
           (unless (eql bucket supersonic-now-playing--waveform-bucket)
             (setq supersonic-now-playing--waveform-bucket bucket)
-            (supersonic-now-playing--update-field
-             buff 'waveform (supersonic-waveform-propertize envelope progress))
+            (supersonic-now-playing--update-waveform-field buff envelope progress)
             (supersonic-now-playing--run-field-functions supersonic-now-playing-animation-functions buff 0)))))))
 
 (defun supersonic-now-playing--insert-button (label command)
@@ -1240,7 +1257,7 @@ position that render could have passed along is stale."
                (supersonic-now-playing--progress-ratio
                 supersonic-now-playing--position supersonic-now-playing--duration)))
           (setq supersonic-now-playing--waveform-bucket (supersonic-now-playing--progress-bucket envelope progress))
-          (supersonic-now-playing--update-field buff 'waveform (supersonic-waveform-propertize envelope progress)))))))
+          (supersonic-now-playing--update-waveform-field buff envelope progress))))))
 
 (defun supersonic-now-playing-maybe-fetch-waveform (buff position)
   "Kick off waveform generation for BUFF's current track, if not already asked.
@@ -1251,13 +1268,18 @@ calling convention; BUFF's current track id is read back off
 `supersonic-waveform-available-p', BUFF is actually on display -- a
 full-track transcode is real CPU and network work, not worth spending
 on a buffer nobody is looking at (see `supersonic-now-playing--tick'
-for how a buffer that becomes visible again still gets one) -- and
-`supersonic-now-playing--waveform-requested' is still nil for the
-current track: `supersonic-waveform-ensure' answers a repeat call for a
-cached track straight out of that cache rather than doing nothing, so
-without this check every position update would re-read the cache file
-from disk for as long as the track plays.  Fires and forgets rather
-than being awaited by the caller, so a cold-cache waveform never delays
+for how a buffer that becomes visible again still gets one), something
+in BUFF would actually show the waveform -- a standalone `waveform' row,
+or cover art for the overlay to draw its lane onto
+\(`supersonic-art-available-p'); otherwise the envelope would only feed
+redraws of nothing, and the same tick-by-tick retry picks it up once
+art is turned on -- and `supersonic-now-playing--waveform-requested' is
+still nil for the current track: `supersonic-waveform-ensure' answers a
+repeat call for a cached track straight out of that cache rather than
+doing nothing, so without this check every position update would
+re-read the cache file from disk for as long as the track plays.
+Fires and forgets rather than being awaited by the caller, so a
+cold-cache waveform never delays
 the rest of the buffer from appearing.  The seekbar fills in
 progressively, bucket by bucket, rather than only appearing once the
 whole track has been analyzed -- see `supersonic-waveform-ensure''s
@@ -1268,7 +1290,8 @@ PROGRESS-CALLBACK."
                track-id
                (buffer-live-p buff)
                (get-buffer-window buff t)
-               (not (buffer-local-value 'supersonic-now-playing--waveform-requested buff)))
+               (not (buffer-local-value 'supersonic-now-playing--waveform-requested buff))
+               (or (supersonic-now-playing--field-present-p buff 'waveform) (supersonic-art-available-p)))
       (with-current-buffer buff
         (setq supersonic-now-playing--waveform-requested t))
       (supersonic-waveform-ensure
