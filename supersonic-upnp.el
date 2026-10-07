@@ -391,15 +391,17 @@ same model often share a name."
 ;;;###autoload
 (aio-defun
  supersonic-upnp-select-renderer (&optional by-url)
- "Select the UPnP renderer to play to, and save it for future sessions.
+ "Select the UPnP renderer to play to.
 Searches the local network for renderers and offers them by name.
 Instead of picking one, the URL of a renderer's device description can
 be entered, for a renderer whose answers do not reach Emacs -- where
 multicast does not get through to it, say.  With prefix argument
 BY-URL, no search is made and only the URL is asked for.
 
-The choice is saved as `supersonic-upnp-renderer' via
-`customize-save-variable'."
+The choice becomes `supersonic-upnp-renderer' for this session, and
+is saved for future ones only if confirmed: saving writes to
+`custom-file', or to the init file without one, which not everyone
+wants touched -- their configuration may set the renderer itself."
  (interactive "P")
  (supersonic--with-async-error-handling
   nil "select a UPnP renderer"
@@ -424,10 +426,14 @@ The choice is saved as `supersonic-upnp-renderer' via
                   (or (aio-await (supersonic-upnp--describe input))
                       (user-error "No UPnP renderer with AVTransport is described at %s" input))
                 (user-error "Neither a UPnP renderer found nor a description URL: %s" input)))))
-    (customize-save-variable
-     'supersonic-upnp-renderer
-     (list :location (plist-get renderer :location) :udn (plist-get renderer :udn) :name (plist-get renderer :name)))
-    (message "Selected UPnP renderer %s" (plist-get renderer :name)))))
+    (let ((name (plist-get renderer :name)))
+      (customize-set-variable
+       'supersonic-upnp-renderer (list :location (plist-get renderer :location) :udn (plist-get renderer :udn) :name name))
+      (if (y-or-n-p (format "Selected UPnP renderer %s; save it for future sessions? " name))
+          (progn
+            (customize-save-variable 'supersonic-upnp-renderer supersonic-upnp-renderer)
+            (message "Saved UPnP renderer %s" name))
+        (message "Selected UPnP renderer %s for this session" name))))))
 
 (provide 'supersonic-upnp)
 ;;; supersonic-upnp.el ends here

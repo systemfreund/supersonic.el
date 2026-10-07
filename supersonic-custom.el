@@ -606,8 +606,9 @@ without running discovery; UDN is its unique device name, so that a
 renderer turning up under a different address can still be recognized;
 NAME is its friendly name, only ever shown to the user.
 
-`supersonic-upnp-select-renderer' sets and saves this, by discovery or
-from a description URL entered by hand; nil means none is selected."
+`supersonic-upnp-select-renderer' sets this, by discovery or from a
+description URL entered by hand, and saves it if asked to; nil means
+none is selected."
   :type '(choice (const :tag "None selected" nil)
                  (plist :options ((:location string) (:udn string) (:name string))))
   :group 'supersonic)

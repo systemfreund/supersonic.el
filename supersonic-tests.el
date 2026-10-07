@@ -4879,13 +4879,22 @@ description cannot be fetched -- without failing the rest."
 (defmacro supersonic-tests--with-renderer-selection (renderers describe input &rest body)
   "Run BODY with discovery finding RENDERERS and the user typing INPUT.
 DESCRIBE stands in for `supersonic-upnp--describe'.  Within BODY,
-`saved' is the value `customize-save-variable' was asked to save,
-`prompts' the prompts shown and `messages' what was echoed."
+`selected' is the value `supersonic-upnp-renderer' was set to,
+`saved' the value `customize-save-variable' was asked to save,
+`prompts' the prompts shown and `messages' what was echoed.  Asked
+whether to save, the user answers `save-answer', t unless BODY sets
+it otherwise first."
   (declare (indent 3))
-  `(let (saved prompts messages)
+  `(let (selected saved prompts messages (save-answer t) (supersonic-upnp-renderer nil))
      (cl-letf (((symbol-function 'supersonic-upnp--discover) (supersonic-tests--resolved ,renderers))
                ((symbol-function 'supersonic-upnp--describe) ,describe)
                ((symbol-function 'completing-read) (lambda (prompt &rest _) (push prompt prompts) ,input))
+               ((symbol-function 'y-or-n-p) (lambda (prompt) (push prompt prompts) save-answer))
+               ((symbol-function 'customize-set-variable)
+                (lambda (variable value &rest _)
+                  (should (eq 'supersonic-upnp-renderer variable))
+                  (setq selected value
+                        supersonic-upnp-renderer value)))
                ((symbol-function 'customize-save-variable)
                 (lambda (variable value &rest _)
                   (should (eq 'supersonic-upnp-renderer variable))
@@ -4899,20 +4908,35 @@ DESCRIBE stands in for `supersonic-upnp--describe'.  Within BODY,
   "A renderer as `supersonic-upnp--discover' resolves to it.")
 
 (ert-deftest supersonic-tests-upnp-select-renderer-saves-the-pick ()
-  "Picking a discovered renderer by name saves its location, UDN and
+  "Picking a discovered renderer by name selects its location, UDN and
 name -- not its control URL, which is looked up again from the
-description."
+description -- and saves them once confirmed."
   (supersonic-tests--with-renderer-selection
       (list supersonic-tests--discovered-renderer)
       (lambda (_) (error "No description should be fetched"))
       "[LG] webOS TV (10.20.30.65)"
     (supersonic-tests--resolve (supersonic-upnp-select-renderer))
-    (should (equal '(:location "http://10.20.30.65:1123/" :udn "uuid:tv" :name "[LG] webOS TV") saved))))
+    (should (equal '(:location "http://10.20.30.65:1123/" :udn "uuid:tv" :name "[LG] webOS TV") selected))
+    (should (equal selected saved))))
+
+(ert-deftest supersonic-tests-upnp-select-renderer-saves-only-when-confirmed ()
+  "Declining to save still selects the renderer for this session, but
+leaves the custom file alone."
+  (supersonic-tests--with-renderer-selection
+      (list supersonic-tests--discovered-renderer)
+      (lambda (_) (error "No description should be fetched"))
+      "[LG] webOS TV (10.20.30.65)"
+    (setq save-answer nil)
+    (supersonic-tests--resolve (supersonic-upnp-select-renderer))
+    (should (equal "http://10.20.30.65:1123/" (plist-get selected :location)))
+    (should (string-match-p "save it for future sessions" (car prompts)))
+    (should-not saved)
+    (should (equal "Selected UPnP renderer [LG] webOS TV for this session" (car messages)))))
 
 (ert-deftest supersonic-tests-upnp-select-renderer-by-description-url ()
   "With a prefix argument, no discovery runs and the description URL
-typed in is fetched and saved; a URL describing no renderer is
-reported, not saved."
+typed in is fetched and selected; a URL describing no renderer is
+reported, not selected."
   (supersonic-tests--with-renderer-selection
       (list supersonic-tests--discovered-renderer)
       (lambda (location)
@@ -4921,7 +4945,7 @@ reported, not saved."
       " http://10.20.30.65:1123/ "
     (supersonic-tests--resolve (supersonic-upnp-select-renderer t))
     (should-not (member "Searching for UPnP renderers..." messages))
-    (should (equal '("Description URL of the UPnP renderer: ") prompts))
+    (should (equal "Description URL of the UPnP renderer: " (car (last prompts))))
     (should (equal '(:location "http://10.20.30.65:1123/"
                                :udn "uuid:7bff80fb-3517-2239-76c9-dac4eb748a20"
                                :name "[LG] webOS TV OLED48C17LB")
@@ -4929,17 +4953,17 @@ reported, not saved."
   (supersonic-tests--with-renderer-selection
       nil (supersonic-tests--resolved nil) "http://10.20.30.46:80/description.xml"
     (supersonic-tests--resolve (supersonic-upnp-select-renderer t))
-    (should-not saved)
+    (should-not selected)
     (should (string-match-p "No UPnP renderer with AVTransport" (car messages)))))
 
 (ert-deftest supersonic-tests-upnp-select-renderer-when-nothing-answers ()
   "With no renderer found, the prompt says so and asks for a URL;
-input that is neither a renderer nor a URL is reported, not saved."
+input that is neither a renderer nor a URL is reported, not selected."
   (supersonic-tests--with-renderer-selection
       nil (lambda (_) (error "No description should be fetched")) "living room"
     (supersonic-tests--resolve (supersonic-upnp-select-renderer))
     (should (equal '("No UPnP renderer found; description URL: ") prompts))
-    (should-not saved)
+    (should-not selected)
     (should (string-match-p "Neither a UPnP renderer found nor a description URL" (car messages)))))
 
 (ert-deftest supersonic-tests-subsonic-cover-art-url-is-get-cover-art ()
