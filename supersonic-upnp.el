@@ -52,14 +52,29 @@
 ;; it answers `SetAVTransportURI' with a bare "Resource not found".
 ;; `supersonic-upnp--item' warns about that case instead.
 ;;
+;; Which renderer to play to is `supersonic-upnp-renderer', picked with
+;; `supersonic-upnp-select-renderer' (#64).  That command finds
+;; renderers with an SSDP search: an `M-SEARCH' sent to the UPnP
+;; multicast group, answered by unicast from each device with the URL
+;; of its XML device description.  Only a device whose description
+;; names it a MediaRenderer with an `AVTransport' service is offered;
+;; anything else that happens to answer (a lighting bridge, say) is
+;; left out, as is a device whose description cannot be fetched at all.
+;; Where multicast does not get through, the description URL can be
+;; entered by hand instead.
+;;
 ;; This file has no `supersonic-playback-register-backend' call yet
-;; and nothing in the package requires it: it is only ever pulled in
-;; by `supersonic-tests.el' until #65 gives it a caller.
+;; and nothing in the package requires it: until #65 turns it into a
+;; backend, it has to be loaded explicitly to select a renderer.
 
 ;;; Code:
 (require 'aio)
+(require 'dom)
+(require 'seq)
+(require 'subr-x)
 (require 'url-parse)
 (require 'xml)
+(require 'supersonic-api)
 (require 'supersonic-custom)
 (require 'supersonic-provider)
 
@@ -196,6 +211,223 @@ renderer may run on this machine itself."
               (supersonic-provider-supports-p 'cover-art-url)
               (aio-await (supersonic-provider-cover-art-url art supersonic-upnp-art-size)))))
    (list :url url :metadata (supersonic-upnp--didl-lite url track format art-url))))
+
+;;;
+;;; Renderer discovery and selection
+
+(defconst supersonic-upnp--ssdp-address [239 255 255 250 1900]
+  "The SSDP multicast group and port, as `set-process-datagram-address' takes it.")
+
+(defconst supersonic-upnp--renderer-device-type "urn:schemas-upnp-org:device:MediaRenderer:1"
+  "The device type an SSDP search asks for.")
+
+(defun supersonic-upnp--m-search (timeout)
+  "Return an SSDP `M-SEARCH' request for MediaRenderers, for a TIMEOUT search.
+Its `MX' header is how many seconds a device may wait at random before
+answering, so that not all of them answer at once.  One second less
+than TIMEOUT leaves the slowest a second to arrive; the specification
+allows one to five."
+  (concat
+   "M-SEARCH * HTTP/1.1\r\n"
+   "HOST: 239.255.255.250:1900\r\n"
+   "MAN: \"ssdp:discover\"\r\n"
+   (format "MX: %d\r\n" (max 1 (min 5 (1- (ceiling timeout)))))
+   "ST: " supersonic-upnp--renderer-device-type "\r\n"
+   "\r\n"))
+
+(defun supersonic-upnp--ssdp-location (response)
+  "Return the `LOCATION' header of SSDP search RESPONSE, or nil.
+That is the URL of the answering device's description.  Header names
+are matched regardless of case, since devices differ in how they
+spell them.  A RESPONSE that is not a `200 OK' has none."
+  (let ((case-fold-search t))
+    (and (string-match-p "\\`HTTP/1\\.[01] 200" response)
+         (string-match "^location:\\(.*\\)$" response)
+         (let ((location (string-trim (match-string 1 response))))
+           (and (not (string-empty-p location)) location)))))
+
+(defun supersonic-upnp--ssdp-search (timeout)
+  "Return a promise of the description URLs an SSDP search finds.
+Sends one `M-SEARCH' to the multicast group and collects the
+`LOCATION' of every answer that arrives within TIMEOUT seconds, each
+URL once, however often its device answered.
+
+The socket is a datagram server, not a client connected to the
+multicast group: a connected UDP socket only receives from the address
+it is connected to, but answers come by unicast from each device's
+own address."
+  (let* ((promise (aio-promise))
+         (locations nil)
+         (process
+          (make-network-process
+           :name "supersonic-upnp-ssdp"
+           :type 'datagram
+           :server t
+           :family 'ipv4
+           :host "0.0.0.0"
+           :service 0
+           :coding 'binary
+           :noquery t
+           :filter
+           (lambda (_process response)
+             (let ((location (supersonic-upnp--ssdp-location response)))
+               (when (and location (not (member location locations)))
+                 (push location locations)))))))
+    (set-process-datagram-address process supersonic-upnp--ssdp-address)
+    (process-send-string process (supersonic-upnp--m-search timeout))
+    (run-at-time timeout nil
+                 (lambda ()
+                   (delete-process process)
+                   (let ((found (reverse locations)))
+                     (aio-resolve promise (lambda () found)))))
+    promise))
+
+(defun supersonic-upnp--child-text (node tag)
+  "Return the trimmed text of NODE's child element TAG, or nil.
+Collected by hand: `dom-text' and `dom-texts' are obsolete as of Emacs
+31.1, but their replacement `dom-inner-text' does not exist in 28.1."
+  (let ((child (dom-child-by-tag node tag)))
+    (and child (string-trim (apply #'concat (seq-filter #'stringp (dom-children child)))))))
+
+(defun supersonic-upnp--av-transport-control-url (device)
+  "Return the relative or absolute control URL of DEVICE's `AVTransport'.
+DEVICE is a `device' element of a device description; nil if it has
+no such service."
+  (seq-some
+   (lambda (service)
+     (and (string-prefix-p "urn:schemas-upnp-org:service:AVTransport:"
+                           (or (supersonic-upnp--child-text service 'serviceType) ""))
+          (supersonic-upnp--child-text service 'controlURL)))
+   (dom-by-tag (dom-child-by-tag device 'serviceList) 'service)))
+
+(defun supersonic-upnp--parse-description (xml location)
+  "Return the renderer the device description XML, from LOCATION, describes.
+That is a plist (:name NAME :udn UDN :location LOCATION :control-url
+URL), where URL is the `AVTransport' service's control URL made
+absolute.  Relative URLs in a description are relative to its
+`URLBase', if it has one, or else to LOCATION itself.
+
+A description may describe more than one device, the root one
+embedding others.  The first that is a MediaRenderer, of any version,
+with an `AVTransport' service is the renderer; with none, or for XML
+that does not parse, the value is nil."
+  (let* ((root (with-temp-buffer
+                 (insert xml)
+                 (libxml-parse-xml-region (point-min) (point-max))))
+         (base (or (and root (supersonic-upnp--child-text root 'URLBase)) location)))
+    (and root
+         (seq-some
+          (lambda (device)
+            (let ((control-url (supersonic-upnp--av-transport-control-url device)))
+              (and control-url
+                   (string-prefix-p "urn:schemas-upnp-org:device:MediaRenderer:"
+                                    (or (supersonic-upnp--child-text device 'deviceType) ""))
+                   (list :name (or (supersonic-upnp--child-text device 'friendlyName) location)
+                         :udn (supersonic-upnp--child-text device 'UDN)
+                         :location location
+                         :control-url (url-expand-file-name control-url base)))))
+          (dom-by-tag root 'device)))))
+
+;; fix byte-compiler complaints
+(defvar url-http-end-of-headers)
+
+(aio-defun
+ supersonic-upnp--describe (location)
+ "Return a promise of the renderer whose device description is at LOCATION.
+See `supersonic-upnp--parse-description' for what it resolves to,
+including nil for a device that is not a renderer.  The promise
+rejects if the description cannot be fetched."
+ (pcase-let ((`(,status . ,buffer) (aio-await (supersonic-url-retrieve location))))
+   (unwind-protect
+       (progn
+         (when (plist-get status :error)
+           (error "Failed to fetch %s: %S" location (plist-get status :error)))
+         (with-current-buffer buffer
+           ;; Device descriptions are UTF-8 by the UPnP specification.
+           (supersonic-upnp--parse-description
+            (decode-coding-string (buffer-substring (1+ url-http-end-of-headers) (point-max)) 'utf-8)
+            location)))
+     (kill-buffer buffer))))
+
+(defun supersonic-upnp--describe-all (locations)
+  "Start fetching the device descriptions at LOCATIONS, all at once.
+Return a list of promises, one per location, as `aio-catch' wraps
+them.  Each fetch gives up after `supersonic-upnp-discovery-timeout'
+rather than `supersonic-request-timeout', which is about a server
+that is known to be there."
+  (let ((supersonic-request-timeout supersonic-upnp-discovery-timeout))
+    (mapcar (lambda (location) (aio-catch (supersonic-upnp--describe location))) locations)))
+
+(aio-defun
+ supersonic-upnp--discover ()
+ "Return a promise of the UPnP renderers on the local network.
+A list of renderers as `supersonic-upnp--parse-description' returns
+them, in the order they answered the SSDP search, each device once.
+
+A device is left out, rather than failing the whole search, if its
+description cannot be fetched or does not describe a renderer that
+can be played to -- whatever else answers a search is not ours to
+judge."
+ (let ((pending (supersonic-upnp--describe-all
+                 (aio-await (supersonic-upnp--ssdp-search supersonic-upnp-discovery-timeout))))
+       (renderers nil))
+   (dolist (promise pending)
+     (let* ((outcome (aio-await promise))
+            (renderer (and (eq (car outcome) :success) (cdr outcome))))
+       (when (and renderer
+                  (not (seq-find (lambda (known) (equal (plist-get known :udn) (plist-get renderer :udn)))
+                                 renderers)))
+         (push renderer renderers))))
+   (nreverse renderers)))
+
+(defun supersonic-upnp--renderer-label (renderer)
+  "Return how RENDERER is offered for selection.
+Its friendly name, followed by its host, since two renderers of the
+same model often share a name."
+  (format "%s (%s)"
+          (plist-get renderer :name)
+          (url-host (url-generic-parse-url (plist-get renderer :location)))))
+
+;;;###autoload
+(aio-defun
+ supersonic-upnp-select-renderer (&optional by-url)
+ "Select the UPnP renderer to play to, and save it for future sessions.
+Searches the local network for renderers and offers them by name.
+Instead of picking one, the URL of a renderer's device description can
+be entered, for a renderer whose answers do not reach Emacs -- where
+multicast does not get through to it, say.  With prefix argument
+BY-URL, no search is made and only the URL is asked for.
+
+The choice is saved as `supersonic-upnp-renderer' via
+`customize-save-variable'."
+ (interactive "P")
+ (supersonic--with-async-error-handling
+  nil "select a UPnP renderer"
+  (let* ((renderers
+          (unless by-url
+            (message "Searching for UPnP renderers...")
+            (aio-await (supersonic-upnp--discover))))
+         (choices (mapcar (lambda (renderer) (cons (supersonic-upnp--renderer-label renderer) renderer)) renderers))
+         (input
+          (string-trim
+           (completing-read (cond
+                             (choices
+                              "UPnP renderer (or description URL): ")
+                             (by-url
+                              "Description URL of the UPnP renderer: ")
+                             (t
+                              "No UPnP renderer found; description URL: "))
+                            choices)))
+         (renderer
+          (or (cdr (assoc input choices))
+              (if (string-match-p "\\`https?://" input)
+                  (or (aio-await (supersonic-upnp--describe input))
+                      (user-error "No UPnP renderer with AVTransport is described at %s" input))
+                (user-error "Neither a UPnP renderer found nor a description URL: %s" input)))))
+    (customize-save-variable
+     'supersonic-upnp-renderer
+     (list :location (plist-get renderer :location) :udn (plist-get renderer :udn) :name (plist-get renderer :name)))
+    (message "Selected UPnP renderer %s" (plist-get renderer :name)))))
 
 (provide 'supersonic-upnp)
 ;;; supersonic-upnp.el ends here

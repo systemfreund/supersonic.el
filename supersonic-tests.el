@@ -4684,6 +4684,264 @@ host gets none."
         (supersonic-tests--resolve (supersonic-upnp--item "t/1")))
       (should (= 1 (length warnings))))))
 
+;;;
+;;; UPnP renderer discovery and selection
+
+(defconst supersonic-tests--ssdp-renderer-reply
+  (concat "HTTP/1.1 200 OK\r\n"
+          "Location: http://10.20.30.65:1123/\r\n"
+          "Cache-Control: max-age=1800\r\n"
+          "Server: Linux/i686 UPnP/1,0 DLNADOC/1.50 LGE WebOS TV/Version 0.9\r\n"
+          "EXT: \r\n"
+          "USN: uuid:7bff80fb-3517-2239-76c9-dac4eb748a20::urn:schemas-upnp-org:device:MediaRenderer:1\r\n"
+          "ST: urn:schemas-upnp-org:device:MediaRenderer:1\r\n"
+          "\r\n")
+  "An LG TV's answer to an SSDP search, header names in mixed case.")
+
+(defconst supersonic-tests--ssdp-bridge-reply
+  (concat "HTTP/1.1 200 OK\r\n"
+          "HOST: 239.255.255.250:1900\r\n"
+          "EXT:\r\n"
+          "CACHE-CONTROL: max-age=100\r\n"
+          "LOCATION: http://10.20.30.46:80/description.xml\r\n"
+          "SERVER: Hue/1.0 UPnP/1.0 IpBridge/1.78.0\r\n"
+          "ST: upnp:rootdevice\r\n"
+          "USN: uuid:2f402f80-da50-11e1-9b23-ecb5faa821e4::upnp:rootdevice\r\n"
+          "\r\n")
+  "A lighting bridge's answer to an SSDP search for MediaRenderers.
+It answers whatever is searched for.")
+
+(defconst supersonic-tests--renderer-description
+  "<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<root xmlns=\"urn:schemas-upnp-org:device-1-0\" xmlns:pnpx=\"http://schemas.microsoft.com/windows/pnpx/2005/11\">
+  <specVersion><major>1</major><minor>0</minor></specVersion>
+  <device>
+    <deviceType>urn:schemas-upnp-org:device:MediaRenderer:1</deviceType>
+    <friendlyName>[LG] webOS TV OLED48C17LB</friendlyName>
+    <UDN>uuid:7bff80fb-3517-2239-76c9-dac4eb748a20</UDN>
+    <pnpx:X_compatibleId>MS_DigitalMediaDeviceClass_DMR_V001</pnpx:X_compatibleId>
+    <serviceList>
+      <service>
+        <serviceType>urn:schemas-upnp-org:service:ConnectionManager:1</serviceType>
+        <controlURL>/ConnectionManager/control.xml</controlURL>
+      </service>
+      <service>
+        <serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType>
+        <serviceId>urn:upnp-org:serviceId:AVTransport</serviceId>
+        <controlURL>/AVTransport/7bff80fb/control.xml</controlURL>
+      </service>
+    </serviceList>
+  </device>
+</root>"
+  "An LG TV's device description, abridged.")
+
+(defconst supersonic-tests--bridge-description
+  "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>
+<root xmlns=\"urn:schemas-upnp-org:device-1-0\">
+<specVersion><major>1</major><minor>0</minor></specVersion>
+<URLBase>http://10.20.30.46:80/</URLBase>
+<device>
+<deviceType>urn:schemas-upnp-org:device:Basic:1</deviceType>
+<friendlyName>Hue Bridge (10.20.30.46)</friendlyName>
+<UDN>uuid:2f402f80-da50-11e1-9b23-ecb5faa821e4</UDN>
+</device>
+</root>"
+  "A lighting bridge's device description: no renderer, no services.")
+
+(ert-deftest supersonic-tests-upnp-m-search-asks-for-renderers ()
+  "The `M-SEARCH' asks for MediaRenderers, ends in an empty line, and
+gives devices one second less than the search lasts to answer, within
+the one to five seconds the specification allows."
+  (let ((request (supersonic-upnp--m-search 3)))
+    (should (string-prefix-p "M-SEARCH * HTTP/1.1\r\n" request))
+    (should (string-match-p "^ST: urn:schemas-upnp-org:device:MediaRenderer:1\r$" request))
+    (should (string-match-p "^MAN: \"ssdp:discover\"\r$" request))
+    (should (string-match-p "^MX: 2\r$" request))
+    (should (string-suffix-p "\r\n\r\n" request)))
+  (should (string-match-p "^MX: 1\r$" (supersonic-upnp--m-search 0.5)))
+  (should (string-match-p "^MX: 5\r$" (supersonic-upnp--m-search 30))))
+
+(ert-deftest supersonic-tests-upnp-ssdp-location-reads-the-header ()
+  "The description URL is read from `LOCATION' however the device spells
+the header name; a reply that is not `200 OK', or has no location,
+gives nil."
+  (should (equal "http://10.20.30.65:1123/" (supersonic-upnp--ssdp-location supersonic-tests--ssdp-renderer-reply)))
+  (should (equal "http://10.20.30.46:80/description.xml"
+                 (supersonic-upnp--ssdp-location supersonic-tests--ssdp-bridge-reply)))
+  (should-not (supersonic-upnp--ssdp-location "HTTP/1.1 404 Not Found\r\nLOCATION: http://h/\r\n\r\n"))
+  (should-not (supersonic-upnp--ssdp-location "HTTP/1.1 200 OK\r\nST: upnp:rootdevice\r\n\r\n"))
+  (should-not (supersonic-upnp--ssdp-location "HTTP/1.1 200 OK\r\nLOCATION: \r\n\r\n")))
+
+(ert-deftest supersonic-tests-upnp-ssdp-search-collects-each-location-once ()
+  "The search sends one `M-SEARCH' to the multicast group, and once
+its time is up, closes the socket and resolves to the location of
+every reply, in the order they came and each only once."
+  (let (filter sent address timer deleted promise)
+    (cl-letf (((symbol-function 'make-network-process)
+               (lambda (&rest args)
+                 (setq filter (plist-get args :filter))
+                 'socket))
+              ((symbol-function 'set-process-datagram-address) (lambda (_process addr) (setq address addr)))
+              ((symbol-function 'process-send-string) (lambda (_process string) (push string sent)))
+              ((symbol-function 'delete-process) (lambda (process) (setq deleted process)))
+              ((symbol-function 'run-at-time) (lambda (_time _repeat function) (setq timer function))))
+      (setq promise (supersonic-upnp--ssdp-search 3))
+      (should (equal [239 255 255 250 1900] address))
+      (should (equal (list (supersonic-upnp--m-search 3)) sent))
+      (funcall filter 'socket supersonic-tests--ssdp-renderer-reply)
+      (funcall filter 'socket supersonic-tests--ssdp-bridge-reply)
+      (funcall filter 'socket supersonic-tests--ssdp-renderer-reply)
+      (funcall filter 'socket "garbage")
+      (should-not (aio-result promise))
+      (funcall timer)
+      (should (eq 'socket deleted)))
+    ;; Outside the `run-at-time' stub, which `with-timeout' needs.
+    (should (equal '("http://10.20.30.65:1123/" "http://10.20.30.46:80/description.xml")
+                   (supersonic-tests--resolve promise)))))
+
+(ert-deftest supersonic-tests-upnp-parse-description-finds-the-renderer ()
+  "A MediaRenderer's description gives its friendly name, UDN and the
+`AVTransport' control URL, made absolute against the location the
+description came from -- port included."
+  (should
+   (equal
+    '(:name "[LG] webOS TV OLED48C17LB"
+            :udn "uuid:7bff80fb-3517-2239-76c9-dac4eb748a20"
+            :location "http://10.20.30.65:1123/"
+            :control-url "http://10.20.30.65:1123/AVTransport/7bff80fb/control.xml")
+    (supersonic-upnp--parse-description supersonic-tests--renderer-description "http://10.20.30.65:1123/"))))
+
+(ert-deftest supersonic-tests-upnp-parse-description-rejects-non-renderers ()
+  "A device that is not a MediaRenderer, a MediaRenderer without
+`AVTransport', and XML that does not parse all give nil."
+  (should-not (supersonic-upnp--parse-description
+               supersonic-tests--bridge-description "http://10.20.30.46:80/description.xml"))
+  (should-not (supersonic-upnp--parse-description
+               (replace-regexp-in-string "AVTransport:1" "RenderingControl:1" supersonic-tests--renderer-description)
+               "http://10.20.30.65:1123/"))
+  (should-not (supersonic-upnp--parse-description "not xml at all" "http://10.20.30.65:1123/")))
+
+(ert-deftest supersonic-tests-upnp-parse-description-finds-an-embedded-renderer ()
+  "A renderer embedded in a root device of another type is found, and
+its relative control URL resolves against the description's `URLBase'
+rather than its location."
+  (let ((xml "<?xml version=\"1.0\"?>
+<root xmlns=\"urn:schemas-upnp-org:device-1-0\">
+  <URLBase>http://10.0.0.9:8200/upnp/</URLBase>
+  <device>
+    <deviceType>urn:schemas-upnp-org:device:MediaServer:1</deviceType>
+    <friendlyName>NAS</friendlyName>
+    <UDN>uuid:root</UDN>
+    <deviceList>
+      <device>
+        <deviceType>urn:schemas-upnp-org:device:MediaRenderer:2</deviceType>
+        <friendlyName>Living room</friendlyName>
+        <UDN>uuid:embedded</UDN>
+        <serviceList>
+          <service>
+            <serviceType>urn:schemas-upnp-org:service:AVTransport:2</serviceType>
+            <controlURL>avt/control</controlURL>
+          </service>
+        </serviceList>
+      </device>
+    </deviceList>
+  </device>
+</root>"))
+    (should (equal '(:name "Living room"
+                           :udn "uuid:embedded"
+                           :location "http://10.0.0.9:8200/desc.xml"
+                           :control-url "http://10.0.0.9:8200/upnp/avt/control")
+                   (supersonic-upnp--parse-description xml "http://10.0.0.9:8200/desc.xml")))))
+
+(defun supersonic-tests--rejected (message)
+  "Return a promise that rejects with an `error' of MESSAGE."
+  (let ((promise (aio-promise)))
+    (aio-resolve promise (lambda () (error "%s" message)))
+    promise))
+
+(ert-deftest supersonic-tests-upnp-discover-skips-what-cannot-be-played-to ()
+  "Discovery offers each renderer once, however many of its locations
+answered, and leaves out a device that is no renderer or whose
+description cannot be fetched -- without failing the rest."
+  (let ((renderer '(:name "TV" :udn "uuid:tv" :location "http://tv/a" :control-url "http://tv/c")))
+    (cl-letf (((symbol-function 'supersonic-upnp--ssdp-search)
+               (supersonic-tests--resolved '("http://tv/a" "http://bridge/" "http://gone/" "http://tv/b")))
+              ((symbol-function 'supersonic-upnp--describe)
+               (lambda (location)
+                 (pcase location
+                   ("http://tv/a" (funcall (supersonic-tests--resolved renderer)))
+                   ("http://tv/b" (funcall (supersonic-tests--resolved (plist-put (copy-sequence renderer)
+                                                                                  :location "http://tv/b"))))
+                   ("http://bridge/" (funcall (supersonic-tests--resolved nil)))
+                   ("http://gone/" (supersonic-tests--rejected "Connection refused"))))))
+      (should (equal (list renderer) (supersonic-tests--resolve (supersonic-upnp--discover)))))))
+
+(defmacro supersonic-tests--with-renderer-selection (renderers describe input &rest body)
+  "Run BODY with discovery finding RENDERERS and the user typing INPUT.
+DESCRIBE stands in for `supersonic-upnp--describe'.  Within BODY,
+`saved' is the value `customize-save-variable' was asked to save,
+`prompts' the prompts shown and `messages' what was echoed."
+  (declare (indent 3))
+  `(let (saved prompts messages)
+     (cl-letf (((symbol-function 'supersonic-upnp--discover) (supersonic-tests--resolved ,renderers))
+               ((symbol-function 'supersonic-upnp--describe) ,describe)
+               ((symbol-function 'completing-read) (lambda (prompt &rest _) (push prompt prompts) ,input))
+               ((symbol-function 'customize-save-variable)
+                (lambda (variable value &rest _)
+                  (should (eq 'supersonic-upnp-renderer variable))
+                  (setq saved value)))
+               ((symbol-function 'message)
+                (lambda (format-string &rest args) (push (apply #'format format-string args) messages))))
+       ,@body)))
+
+(defconst supersonic-tests--discovered-renderer
+  '(:name "[LG] webOS TV" :udn "uuid:tv" :location "http://10.20.30.65:1123/" :control-url "http://10.20.30.65:1123/c")
+  "A renderer as `supersonic-upnp--discover' resolves to it.")
+
+(ert-deftest supersonic-tests-upnp-select-renderer-saves-the-pick ()
+  "Picking a discovered renderer by name saves its location, UDN and
+name -- not its control URL, which is looked up again from the
+description."
+  (supersonic-tests--with-renderer-selection
+      (list supersonic-tests--discovered-renderer)
+      (lambda (_) (error "No description should be fetched"))
+      "[LG] webOS TV (10.20.30.65)"
+    (supersonic-tests--resolve (supersonic-upnp-select-renderer))
+    (should (equal '(:location "http://10.20.30.65:1123/" :udn "uuid:tv" :name "[LG] webOS TV") saved))))
+
+(ert-deftest supersonic-tests-upnp-select-renderer-by-description-url ()
+  "With a prefix argument, no discovery runs and the description URL
+typed in is fetched and saved; a URL describing no renderer is
+reported, not saved."
+  (supersonic-tests--with-renderer-selection
+      (list supersonic-tests--discovered-renderer)
+      (lambda (location)
+        (funcall (supersonic-tests--resolved
+                  (supersonic-upnp--parse-description supersonic-tests--renderer-description location))))
+      " http://10.20.30.65:1123/ "
+    (supersonic-tests--resolve (supersonic-upnp-select-renderer t))
+    (should-not (member "Searching for UPnP renderers..." messages))
+    (should (equal '("Description URL of the UPnP renderer: ") prompts))
+    (should (equal '(:location "http://10.20.30.65:1123/"
+                               :udn "uuid:7bff80fb-3517-2239-76c9-dac4eb748a20"
+                               :name "[LG] webOS TV OLED48C17LB")
+                   saved)))
+  (supersonic-tests--with-renderer-selection
+      nil (supersonic-tests--resolved nil) "http://10.20.30.46:80/description.xml"
+    (supersonic-tests--resolve (supersonic-upnp-select-renderer t))
+    (should-not saved)
+    (should (string-match-p "No UPnP renderer with AVTransport" (car messages)))))
+
+(ert-deftest supersonic-tests-upnp-select-renderer-when-nothing-answers ()
+  "With no renderer found, the prompt says so and asks for a URL;
+input that is neither a renderer nor a URL is reported, not saved."
+  (supersonic-tests--with-renderer-selection
+      nil (lambda (_) (error "No description should be fetched")) "living room"
+    (supersonic-tests--resolve (supersonic-upnp-select-renderer))
+    (should (equal '("No UPnP renderer found; description URL: ") prompts))
+    (should-not saved)
+    (should (string-match-p "Neither a UPnP renderer found nor a description URL" (car messages)))))
+
 (ert-deftest supersonic-tests-subsonic-cover-art-url-is-get-cover-art ()
   "The Subsonic provider's `cover-art-url' is the same getCoverArt URL
 its `cover-art' fetches, built without asking the server."
