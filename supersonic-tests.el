@@ -2778,6 +2778,23 @@ left a gap where the image had been until something else redrew it."
             (should-not (supersonic-tests--waveform-image-shown-p buff)))
         (kill-buffer buff)))))
 
+(ert-deftest supersonic-tests-now-playing-buffer-records-no-undo ()
+  "The now-playing buffer keeps no undo history.  Every field update
+deletes the old text, display property and all, and undo kept each one
+-- a superseded cover art overlay or seekbar image spec per entry, for
+a buffer nobody edits.  `truncate_undo_list' only weighs the deleted
+text, a single space, so a few thousand entries and over 10 MB of dead
+images stuck around."
+  (let ((buff (get-buffer-create "*supersonic-tests-now-playing*")))
+    (unwind-protect
+        (with-current-buffer buff
+          (supersonic-now-playing-mode)
+          (supersonic-now-playing--render buff '(:id "t" :title "Song" :duration 100) nil 0 "t")
+          (supersonic-now-playing-update-duration-field buff 1)
+          (supersonic-now-playing-update-duration-field buff 2)
+          (should (eq buffer-undo-list t)))
+      (kill-buffer buff))))
+
 (ert-deftest supersonic-tests-now-playing-recolor-skips-unmoved-buckets ()
   "The seekbar image only changes when the played/unplayed boundary
 crosses into another bucket -- once every twelve seconds for a
