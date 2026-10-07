@@ -128,14 +128,37 @@ rather than guessing wrong and asserting it with confidence."
       (plist-get track :content-type)
       "application/octet-stream"))
 
+(defconst supersonic-upnp--dlna-flags "01700000000000000000000000000000"
+  "The `DLNA.ORG_FLAGS' every stream is described with.
+Streaming transfer mode, background transfer mode and connection
+stall allowed, in DLNA 1.5 terms: an ordinary HTTP stream, nothing a
+renderer needs to treat specially.")
+
+(defun supersonic-upnp--range-seekable-p (format)
+  "Return non-nil if a stream requested with FORMAT serves HTTP ranges.
+A renderer seeks within a stream by requesting the byte range from
+there on.  The file as it is stored does serve ranges; a transcoded
+stream does not, since its length is not known before it has been
+transcoded -- Navidrome answers it with `Accept-Ranges: none'.  So
+only a stream requested without a FORMAT hint, or with Subsonic's
+\"raw\" format and no bit rate to keep under, counts as seekable."
+  (or (null format)
+      (and (equal (plist-get format :format) "raw")
+           (not (plist-get format :max-bit-rate)))))
+
 (defun supersonic-upnp--protocol-info (track &optional format)
   "Return the DIDL `res' element's `protocolInfo' for TRACK and FORMAT.
 See `supersonic-upnp--content-type' for how the content type itself is
-worked out.  The rest of the four colon-separated fields UPnP defines
-\(protocol, network, content type, additional info\) are the wildcard
-DLNA clients are expected to accept from an HTTP source with nothing
-more specific to say."
-  (format "http-get:*:%s:*" (supersonic-upnp--content-type track format)))
+worked out.  Of the four colon-separated fields UPnP defines
+\(protocol, network, content type, additional info\), the last says
+whether the stream can be seeked within, as DLNA's `DLNA.ORG_OP':
+`01' for byte ranges, see `supersonic-upnp--range-seekable-p', and
+`00' for not at all.  It matters: LG and Samsung TVs answer `Seek' on
+a stream that does not say `01' with success, and then ignore it."
+  (format "http-get:*:%s:DLNA.ORG_OP=%s;DLNA.ORG_FLAGS=%s"
+          (supersonic-upnp--content-type track format)
+          (if (supersonic-upnp--range-seekable-p format) "01" "00")
+          supersonic-upnp--dlna-flags))
 
 (defun supersonic-upnp--didl-lite (url track &optional format art-url)
   "Return a DIDL-Lite XML document describing URL, a stream of TRACK.

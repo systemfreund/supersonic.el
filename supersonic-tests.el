@@ -4515,13 +4515,29 @@ fallback is used rather than a guess."
   (should (equal "audio/flac" (supersonic-upnp--content-type '(:content-type "audio/flac"))))
   (should (equal "application/octet-stream" (supersonic-upnp--content-type nil))))
 
+(defconst supersonic-tests--seekable "DLNA.ORG_OP=01;DLNA.ORG_FLAGS=01700000000000000000000000000000"
+  "The `protocolInfo' additional info of a stream that serves byte ranges.")
+
+(defconst supersonic-tests--unseekable "DLNA.ORG_OP=00;DLNA.ORG_FLAGS=01700000000000000000000000000000"
+  "The `protocolInfo' additional info of a stream that cannot be seeked within.")
+
 (ert-deftest supersonic-tests-upnp-protocol-info-matches-the-content-type ()
-  "`protocolInfo' wraps whatever `supersonic-upnp--content-type' resolves
+  "`protocolInfo' names whatever `supersonic-upnp--content-type' resolves
 to, in the four-field http-get form DLNA clients expect."
   (should
-   (equal
-    "http-get:*:audio/mpeg:*" (supersonic-upnp--protocol-info '(:content-type "audio/flac") '(:format "mp3"))))
-  (should (equal "http-get:*:audio/flac:*" (supersonic-upnp--protocol-info '(:content-type "audio/flac")))))
+   (equal (concat "http-get:*:audio/mpeg:" supersonic-tests--unseekable)
+          (supersonic-upnp--protocol-info '(:content-type "audio/flac") '(:format "mp3"))))
+  (should (equal (concat "http-get:*:audio/flac:" supersonic-tests--seekable)
+                 (supersonic-upnp--protocol-info '(:content-type "audio/flac")))))
+
+(ert-deftest supersonic-tests-upnp-protocol-info-says-whether-ranges-are-served ()
+  "Only a stream of the stored file -- no format asked for, or \"raw\"
+without a bit rate -- is described as seekable by byte range; a
+transcoded one is described as not seekable at all."
+  (dolist (format '(nil (:format "raw")))
+    (should (string-suffix-p supersonic-tests--seekable (supersonic-upnp--protocol-info nil format))))
+  (dolist (format '((:format "mp3") (:max-bit-rate 320) (:format "raw" :max-bit-rate 320)))
+    (should (string-suffix-p supersonic-tests--unseekable (supersonic-upnp--protocol-info nil format)))))
 
 (ert-deftest supersonic-tests-upnp-didl-lite-is-well-formed-and-escapes-values ()
   "The DIDL-Lite document parses as XML, and a title/artist/album
@@ -4542,7 +4558,8 @@ breaking out of its element or unbalancing the document."
       (should (equal "X <Y>" (caddr (assq 'artist fields))))
       (should (equal "Z\"s" (caddr (assq 'album fields))))
       (should (equal "http://host/stream?id=1&x=2" (caddr (assq 'res fields))))
-      (should (equal "http-get:*:audio/flac:*" (alist-get 'protocolInfo (cadr (assq 'res fields))))))))
+      (should (equal (concat "http-get:*:audio/flac:" supersonic-tests--seekable)
+                     (alist-get 'protocolInfo (cadr (assq 'res fields))))))))
 
 (ert-deftest supersonic-tests-upnp-didl-lite-omits-missing-optional-fields ()
   "A track with no artist or album produces a document with no
@@ -4570,7 +4587,8 @@ client eventually will."
            'res (cddr (assq 'item (cddr (with-temp-buffer
                                            (insert xml)
                                            (libxml-parse-xml-region (point-min) (point-max)))))))))
-    (should (equal "http-get:*:audio/mpeg:*" (alist-get 'protocolInfo (cadr res))))))
+    (should (equal (concat "http-get:*:audio/mpeg:" supersonic-tests--unseekable)
+                   (alist-get 'protocolInfo (cadr res))))))
 
 (defun supersonic-tests--didl-fields (xml)
   "Return the child elements of the one item in DIDL-Lite document XML."
@@ -4619,7 +4637,8 @@ OVERRIDES is an alist whose entries replace the defaults."
              (fields (supersonic-tests--didl-fields (plist-get item :metadata))))
         (should (equal "http://host/stream/t/1" (plist-get item :url)))
         (should (equal "http://host/stream/t/1" (caddr (assq 'res fields))))
-        (should (equal "http-get:*:audio/mpeg:*" (alist-get 'protocolInfo (cadr (assq 'res fields)))))
+        (should (equal (concat "http-get:*:audio/mpeg:" supersonic-tests--unseekable)
+                       (alist-get 'protocolInfo (cadr (assq 'res fields)))))
         (should (equal "http://host/art/al/1" (caddr (assq 'albumArtURI fields))))))
     (should (member '(stream-url "t/1" (:format "mp3" :max-bit-rate 320)) supersonic-tests--upnp-seen))
     (should (member '(cover-art-url "al/1" 500) supersonic-tests--upnp-seen))))
@@ -4633,7 +4652,8 @@ content type."
     (supersonic-tests--with-provider (supersonic-tests--upnp-provider 'supersonic-tests--upnp-seen)
       (let ((fields (supersonic-tests--didl-fields
                      (plist-get (supersonic-tests--resolve (supersonic-upnp--item "t/1")) :metadata))))
-        (should (equal "http-get:*:audio/flac:*" (alist-get 'protocolInfo (cadr (assq 'res fields)))))))
+        (should (equal (concat "http-get:*:audio/flac:" supersonic-tests--seekable)
+                       (alist-get 'protocolInfo (cadr (assq 'res fields)))))))
     (should (member '(stream-url "t/1" nil) supersonic-tests--upnp-seen))))
 
 (ert-deftest supersonic-tests-upnp-item-without-cover-art ()

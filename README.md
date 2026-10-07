@@ -228,6 +228,10 @@ transcode with `supersonic-upnp-stream-format`:
 (setq supersonic-upnp-stream-format '(:format "mp3" :max-bit-rate 320))
 ```
 
+A transcoded stream cannot be seeked within, though: its length is
+not known in advance, so the server cannot serve the part of it a
+renderer would jump to.
+
 ## Authentication
 
 Add a `~/.authinfo.gpg` or `~/.authinfo` file with the following contents
