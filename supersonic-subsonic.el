@@ -279,14 +279,16 @@ for itself exactly as it always has."
    ;; `url-http-activate-callback').
    (lambda (_status) (kill-buffer (current-buffer)))))
 
+(defun supersonic-subsonic--cover-art-request-url (art size)
+  "Return the getCoverArt URL for cover art ART, scaled to SIZE."
+  (supersonic-build-url "/getCoverArt.view" `(("id" . ,art) ("size" . ,(int-to-string size)))))
+
 (aio-defun
  supersonic-subsonic--cover-art (art size)
  "Return a promise resolving to the bytes of cover art ART at SIZE.
 Asks getCoverArt, which scales the image to SIZE on the server."
  (pcase-let ((`(,status . ,buffer)
-              (aio-await
-               (supersonic-url-retrieve
-                (supersonic-build-url "/getCoverArt.view" `(("id" . ,art) ("size" . ,(int-to-string size))))))))
+              (aio-await (supersonic-url-retrieve (supersonic-subsonic--cover-art-request-url art size)))))
    (unwind-protect
        (let ((err (plist-get status :error)))
          (when err
@@ -294,6 +296,13 @@ Asks getCoverArt, which scales the image to SIZE on the server."
          (with-current-buffer buffer
            (buffer-substring-no-properties (1+ url-http-end-of-headers) (point-max))))
      (kill-buffer buffer))))
+
+(aio-defun
+ supersonic-subsonic--cover-art-url (art size)
+ "Return a promise resolving to the getCoverArt URL for ART at SIZE.
+Built locally, and carrying the same token-auth triple as
+`supersonic-subsonic--stream-url'."
+ (supersonic-subsonic--cover-art-request-url art size))
 
 (defun supersonic-subsonic--cache-namespace ()
   "Return the Subsonic server's address, `supersonic-host'.
@@ -322,6 +331,7 @@ cached art and waveforms apart from another's."
    (stream-url . supersonic-subsonic--stream-url)
    (scrobble . supersonic-subsonic--scrobble)
    (cover-art . supersonic-subsonic--cover-art)
+   (cover-art-url . supersonic-subsonic--cover-art-url)
    (cache-namespace . supersonic-subsonic--cache-namespace)
    (config-hints . supersonic-subsonic--config-hints)))
 
