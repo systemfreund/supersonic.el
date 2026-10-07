@@ -4523,21 +4523,67 @@ fallback is used rather than a guess."
 
 (ert-deftest supersonic-tests-upnp-protocol-info-matches-the-content-type ()
   "`protocolInfo' names whatever `supersonic-upnp--content-type' resolves
-to, in the four-field http-get form DLNA clients expect."
+to, in the four-field http-get form DLNA clients expect, and says
+whether the stream can be seeked within by byte range."
   (should
    (equal (concat "http-get:*:audio/mpeg:" supersonic-tests--unseekable)
           (supersonic-upnp--protocol-info '(:content-type "audio/flac") '(:format "mp3"))))
   (should (equal (concat "http-get:*:audio/flac:" supersonic-tests--seekable)
-                 (supersonic-upnp--protocol-info '(:content-type "audio/flac")))))
+                 (supersonic-upnp--protocol-info '(:content-type "audio/flac") nil t))))
 
-(ert-deftest supersonic-tests-upnp-protocol-info-says-whether-ranges-are-served ()
-  "Only a stream of the stored file -- no format asked for, or \"raw\"
-without a bit rate -- is described as seekable by byte range; a
-transcoded one is described as not seekable at all."
-  (dolist (format '(nil (:format "raw")))
-    (should (string-suffix-p supersonic-tests--seekable (supersonic-upnp--protocol-info nil format))))
-  (dolist (format '((:format "mp3") (:max-bit-rate 320) (:format "raw" :max-bit-rate 320)))
-    (should (string-suffix-p supersonic-tests--unseekable (supersonic-upnp--protocol-info nil format)))))
+(ert-deftest supersonic-tests-upnp-ranges-served-p-reads-the-probe-answer ()
+  "A served range, or `Accept-Ranges: bytes', means ranges are served;
+any other success means they are not; a failure says nothing."
+  (should (eq t (supersonic-upnp--ranges-served-p 206 "HTTP/1.1 206 Partial Content\nContent-Range: bytes 0-1/99\n")))
+  (should (eq t (supersonic-upnp--ranges-served-p 200 "HTTP/1.1 200 OK\nAccept-Ranges: bytes\n")))
+  (should (eq nil (supersonic-upnp--ranges-served-p 200 "HTTP/1.1 200 OK\nAccept-Ranges: none\n")))
+  (should (eq nil (supersonic-upnp--ranges-served-p 200 "HTTP/1.1 200 OK\nTransfer-Encoding: chunked\n")))
+  (should (eq 'unknown (supersonic-upnp--ranges-served-p 405 "HTTP/1.1 405 Method Not Allowed\n")))
+  (should (eq 'unknown (supersonic-upnp--ranges-served-p nil ""))))
+
+(defun supersonic-tests--probe-answer (code headers)
+  "Return a fake `supersonic-upnp--send-probe' answering with CODE and HEADERS."
+  (lambda (_url)
+    (let ((buffer (generate-new-buffer " *probe*")))
+      (with-current-buffer buffer
+        (insert headers "\n")
+        (setq-local url-http-response-status code)
+        (setq-local url-http-end-of-headers (1- (point))))
+      (funcall (supersonic-tests--resolved
+                (cons (and (>= code 400) `(:error (error http ,code))) buffer))))))
+
+(ert-deftest supersonic-tests-upnp-probe-ranges-asks-the-server ()
+  "The probe resolves to what the server's answer says, `unknown' when
+the server refuses the request or never answers, and leaves no buffer
+behind."
+  (let ((buffers (length (buffer-list))))
+    (cl-letf (((symbol-function 'supersonic-upnp--send-probe)
+               (supersonic-tests--probe-answer 206 "HTTP/1.1 206 Partial Content\nAccept-Ranges: bytes")))
+      (should (eq t (supersonic-tests--resolve (supersonic-upnp--probe-ranges "http://music/a")))))
+    (cl-letf (((symbol-function 'supersonic-upnp--send-probe)
+               (supersonic-tests--probe-answer 200 "HTTP/1.1 200 OK\nAccept-Ranges: none")))
+      (should (eq nil (supersonic-tests--resolve (supersonic-upnp--probe-ranges "http://music/a")))))
+    (cl-letf (((symbol-function 'supersonic-upnp--send-probe)
+               (supersonic-tests--probe-answer 405 "HTTP/1.1 405 Method Not Allowed")))
+      (should (eq 'unknown (supersonic-tests--resolve (supersonic-upnp--probe-ranges "http://music/a")))))
+    (cl-letf (((symbol-function 'supersonic-upnp--send-probe)
+               (lambda (_url) (supersonic-tests--rejected "No answer from http://music/a within 10 seconds"))))
+      (should (eq 'unknown (supersonic-tests--resolve (supersonic-upnp--probe-ranges "http://music/a")))))
+    (should (= buffers (length (buffer-list))))))
+
+(ert-deftest supersonic-tests-upnp-seekable-p-guesses-only-without-an-answer ()
+  "What the probe finds out decides; only where it cannot tell is a
+stream of the stored file -- no format asked for, or \"raw\" without
+a bit rate -- guessed to be seekable and a transcoded one not."
+  (cl-letf (((symbol-function 'supersonic-upnp--probe-ranges) (supersonic-tests--resolved nil)))
+    (should-not (supersonic-tests--resolve (supersonic-upnp--seekable-p "http://music/a" nil))))
+  (cl-letf (((symbol-function 'supersonic-upnp--probe-ranges) (supersonic-tests--resolved t)))
+    (should (supersonic-tests--resolve (supersonic-upnp--seekable-p "http://music/a" '(:format "mp3")))))
+  (cl-letf (((symbol-function 'supersonic-upnp--probe-ranges) (supersonic-tests--resolved 'unknown)))
+    (dolist (format '(nil (:format "raw")))
+      (should (supersonic-tests--resolve (supersonic-upnp--seekable-p "http://music/a" format))))
+    (dolist (format '((:format "mp3") (:max-bit-rate 320) (:format "raw" :max-bit-rate 320)))
+      (should-not (supersonic-tests--resolve (supersonic-upnp--seekable-p "http://music/a" format))))))
 
 (ert-deftest supersonic-tests-upnp-didl-lite-is-well-formed-and-escapes-values ()
   "The DIDL-Lite document parses as XML, and a title/artist/album
@@ -4558,7 +4604,7 @@ breaking out of its element or unbalancing the document."
       (should (equal "X <Y>" (caddr (assq 'artist fields))))
       (should (equal "Z\"s" (caddr (assq 'album fields))))
       (should (equal "http://host/stream?id=1&x=2" (caddr (assq 'res fields))))
-      (should (equal (concat "http-get:*:audio/flac:" supersonic-tests--seekable)
+      (should (equal (concat "http-get:*:audio/flac:" supersonic-tests--unseekable)
                      (alist-get 'protocolInfo (cadr (assq 'res fields))))))))
 
 (ert-deftest supersonic-tests-upnp-didl-lite-omits-missing-optional-fields ()
@@ -4625,6 +4671,20 @@ OVERRIDES is an alist whose entries replace the defaults."
 (defvar supersonic-tests--upnp-seen nil
   "Calls the fake provider of `supersonic-tests--upnp-provider' saw.")
 
+(defvar supersonic-tests--ranges-served 'unknown
+  "What the faked `supersonic-upnp--probe-ranges' finds out about a stream.")
+
+(defmacro supersonic-tests--with-upnp-provider (operations &rest body)
+  "Run BODY as `supersonic-tests--with-provider' does with OPERATIONS.
+Streams are not probed for byte ranges over the network: the probe
+answers `supersonic-tests--ranges-served', `unknown' unless BODY's
+caller binds it otherwise."
+  (declare (indent 1))
+  `(cl-letf (((symbol-function 'supersonic-upnp--probe-ranges)
+              (lambda (_url) (funcall (supersonic-tests--resolved supersonic-tests--ranges-served)))))
+     (supersonic-tests--with-provider ,operations
+       ,@body)))
+
 (ert-deftest supersonic-tests-upnp-item-streams-in-the-configured-format-with-art ()
   "`supersonic-upnp--item' asks for the stream in
 `supersonic-upnp-stream-format', describes it with a matching
@@ -4632,7 +4692,7 @@ OVERRIDES is an alist whose entries replace the defaults."
   (let ((supersonic-tests--upnp-seen nil)
         (supersonic-upnp-stream-format '(:format "mp3" :max-bit-rate 320))
         (supersonic-upnp-art-size 500))
-    (supersonic-tests--with-provider (supersonic-tests--upnp-provider 'supersonic-tests--upnp-seen)
+    (supersonic-tests--with-upnp-provider (supersonic-tests--upnp-provider 'supersonic-tests--upnp-seen)
       (let* ((item (supersonic-tests--resolve (supersonic-upnp--item "t/1")))
              (fields (supersonic-tests--didl-fields (plist-get item :metadata))))
         (should (equal "http://host/stream/t/1" (plist-get item :url)))
@@ -4643,13 +4703,29 @@ OVERRIDES is an alist whose entries replace the defaults."
     (should (member '(stream-url "t/1" (:format "mp3" :max-bit-rate 320)) supersonic-tests--upnp-seen))
     (should (member '(cover-art-url "al/1" 500) supersonic-tests--upnp-seen))))
 
+(ert-deftest supersonic-tests-upnp-item-describes-the-stream-as-the-server-serves-it ()
+  "The item's `protocolInfo' says the stream is seekable when the
+server serves it with byte ranges, even for a format that would be
+guessed not to be, and not seekable when it does not."
+  (let ((supersonic-tests--upnp-seen nil)
+        (supersonic-upnp-stream-format '(:format "mp3")))
+    (dolist (served '(t nil))
+      (let ((supersonic-tests--ranges-served served))
+        (supersonic-tests--with-upnp-provider (supersonic-tests--upnp-provider 'supersonic-tests--upnp-seen)
+          (should (equal (concat "http-get:*:audio/mpeg:"
+                                 (if served supersonic-tests--seekable supersonic-tests--unseekable))
+                         (alist-get 'protocolInfo
+                                    (cadr (assq 'res (supersonic-tests--didl-fields
+                                                      (plist-get (supersonic-tests--resolve (supersonic-upnp--item "t/1"))
+                                                                 :metadata))))))))))))
+
 (ert-deftest supersonic-tests-upnp-item-without-a-stream-format ()
   "With `supersonic-upnp-stream-format' nil, the stream is asked for
 without a FORMAT hint and `protocolInfo' follows the track's own
 content type."
   (let ((supersonic-tests--upnp-seen nil)
         (supersonic-upnp-stream-format nil))
-    (supersonic-tests--with-provider (supersonic-tests--upnp-provider 'supersonic-tests--upnp-seen)
+    (supersonic-tests--with-upnp-provider (supersonic-tests--upnp-provider 'supersonic-tests--upnp-seen)
       (let ((fields (supersonic-tests--didl-fields
                      (plist-get (supersonic-tests--resolve (supersonic-upnp--item "t/1")) :metadata))))
         (should (equal (concat "http-get:*:audio/flac:" supersonic-tests--seekable)
@@ -4660,14 +4736,14 @@ content type."
   "A track without `:art', or a provider without `cover-art-url', gives
 a document without `albumArtURI' rather than an error."
   (let ((supersonic-tests--upnp-seen nil))
-    (supersonic-tests--with-provider
+    (supersonic-tests--with-upnp-provider
         (supersonic-tests--upnp-provider
          'supersonic-tests--upnp-seen `(track . ,(supersonic-tests--resolved '(:id "t/1" :title "T"))))
       (should-not
        (assq 'albumArtURI (supersonic-tests--didl-fields
                            (plist-get (supersonic-tests--resolve (supersonic-upnp--item "t/1")) :metadata)))))
     (should-not (assq 'cover-art-url supersonic-tests--upnp-seen))
-    (supersonic-tests--with-provider
+    (supersonic-tests--with-upnp-provider
         (assq-delete-all 'cover-art-url (supersonic-tests--upnp-provider 'supersonic-tests--upnp-seen))
       (should-not
        (assq 'albumArtURI (supersonic-tests--didl-fields
@@ -4689,7 +4765,7 @@ host gets none."
         (supersonic-upnp--warned-loopback-hosts nil)
         (warnings nil))
     (cl-letf (((symbol-function 'display-warning) (lambda (_type message &rest _) (push message warnings))))
-      (supersonic-tests--with-provider
+      (supersonic-tests--with-upnp-provider
           (supersonic-tests--upnp-provider
            'supersonic-tests--upnp-seen
            `(stream-url . ,(supersonic-tests--resolved "http://localhost:4533/rest/stream.view?id=1")))
@@ -4697,7 +4773,7 @@ host gets none."
         (supersonic-tests--resolve (supersonic-upnp--item "t/2")))
       (should (= 1 (length warnings)))
       (should (string-match-p "localhost" (car warnings)))
-      (supersonic-tests--with-provider
+      (supersonic-tests--with-upnp-provider
           (supersonic-tests--upnp-provider
            'supersonic-tests--upnp-seen
            `(stream-url . ,(supersonic-tests--resolved "http://10.20.30.1:4533/rest/stream.view?id=1")))

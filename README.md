@@ -228,9 +228,12 @@ transcode with `supersonic-upnp-stream-format`:
 (setq supersonic-upnp-stream-format '(:format "mp3" :max-bit-rate 320))
 ```
 
-A transcoded stream cannot be seeked within, though: its length is
-not known in advance, so the server cannot serve the part of it a
-renderer would jump to.
+Before a renderer is given a track, supersonic.el asks the server
+whether it can serve parts of the stream, which is what a renderer
+needs to seek within it. A transcoded stream usually cannot be
+seeked: its length is not known until it has been transcoded.
+Navidrome, for one, serves it with seeking once it has been
+transcoded before and kept in its transcoding cache.
 
 ## Authentication
 

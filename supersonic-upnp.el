@@ -135,38 +135,97 @@ stall allowed, in DLNA 1.5 terms: an ordinary HTTP stream, nothing a
 renderer needs to treat specially.")
 
 (defun supersonic-upnp--range-seekable-p (format)
-  "Return non-nil if a stream requested with FORMAT serves HTTP ranges.
-A renderer seeks within a stream by requesting the byte range from
-there on.  The file as it is stored does serve ranges; a transcoded
-stream does not, since its length is not known before it has been
-transcoded -- Navidrome answers it with `Accept-Ranges: none'.  So
-only a stream requested without a FORMAT hint, or with Subsonic's
-\"raw\" format and no bit rate to keep under, counts as seekable."
+  "Return non-nil if a stream requested with FORMAT likely serves HTTP ranges.
+Only a guess, for when `supersonic-upnp--probe-ranges' cannot find
+out: a server usually serves the file as it is stored with byte
+ranges, and a transcoded stream without, since its length is not known
+before it has been transcoded.  So only a stream requested without a
+FORMAT hint, or with Subsonic's \"raw\" format and no bit rate to keep
+under, is guessed to be seekable."
   (or (null format)
       (and (equal (plist-get format :format) "raw")
            (not (plist-get format :max-bit-rate)))))
 
-(defun supersonic-upnp--protocol-info (track &optional format)
+(defun supersonic-upnp--protocol-info (track &optional format seekable)
   "Return the DIDL `res' element's `protocolInfo' for TRACK and FORMAT.
 See `supersonic-upnp--content-type' for how the content type itself is
 worked out.  Of the four colon-separated fields UPnP defines
 \(protocol, network, content type, additional info\), the last says
 whether the stream can be seeked within, as DLNA's `DLNA.ORG_OP':
-`01' for byte ranges, see `supersonic-upnp--range-seekable-p', and
-`00' for not at all.  It matters: LG and Samsung TVs answer `Seek' on
-a stream that does not say `01' with success, and then ignore it."
+`01' for byte ranges if SEEKABLE is non-nil, and `00' for not at all.
+It matters: LG and Samsung TVs answer `Seek' on a stream that does not
+say `01' with success, and then ignore it."
   (format "http-get:*:%s:DLNA.ORG_OP=%s;DLNA.ORG_FLAGS=%s"
           (supersonic-upnp--content-type track format)
-          (if (supersonic-upnp--range-seekable-p format) "01" "00")
+          (if seekable "01" "00")
           supersonic-upnp--dlna-flags))
 
-(defun supersonic-upnp--didl-lite (url track &optional format art-url)
+(defun supersonic-upnp--ranges-served-p (code headers)
+  "Return what a probe answered with CODE and HEADERS says of byte ranges.
+CODE is the HTTP status code of a `HEAD' request asking for a byte
+range, HEADERS the response's header block.  t if the server served
+the range -- 206 -- or says it serves ranges with `Accept-Ranges:
+bytes'; nil for any other success, since then it does not; and
+`unknown' for a failure, which says nothing either way."
+  (cond
+   ((eql code 206) t)
+   ((and (integerp code) (<= 200 code 299))
+    (let ((case-fold-search t))
+      (and (string-match-p "^accept-ranges:[ \t]*bytes" headers) t)))
+   (t 'unknown)))
+
+;; fix byte-compiler complaints
+(defvar url-http-response-status)
+(defvar url-http-end-of-headers)
+
+(defun supersonic-upnp--send-probe (url)
+  "Send URL a `HEAD' request for its first two bytes.
+Return the promise `supersonic-url-retrieve' does.  `HEAD', because
+the answer to a range request that is not served is the whole stream
+-- a transcoded track, all of it."
+  (let ((url-request-method "HEAD")
+        (url-request-extra-headers '(("Range" . "bytes=0-1"))))
+    (supersonic-url-retrieve url)))
+
+(aio-defun
+ supersonic-upnp--probe-ranges (url)
+ "Return a promise of whether the stream at URL serves byte ranges.
+Resolves to t, nil or `unknown', as `supersonic-upnp--ranges-served-p'
+decides from the answer; to `unknown', too, if there is no answer.
+Whether a server serves ranges depends on the server, and on whether
+it transcodes -- Navidrome serves the stored file with ranges and a
+transcoded stream with `Accept-Ranges: none' -- so it is asked rather
+than assumed."
+ (condition-case nil
+     (pcase-let ((`(,status . ,buffer) (aio-await (supersonic-upnp--send-probe url))))
+       (unwind-protect
+           (if (plist-get status :error)
+               'unknown
+             (with-current-buffer buffer
+               (supersonic-upnp--ranges-served-p
+                url-http-response-status
+                (buffer-substring (point-min) (or url-http-end-of-headers (point-max))))))
+         (when (buffer-live-p buffer)
+           (kill-buffer buffer))))
+   (error 'unknown)))
+
+(aio-defun
+ supersonic-upnp--seekable-p (url format)
+ "Return a promise of whether the stream at URL, asked for in FORMAT, is seekable.
+Probed with `supersonic-upnp--probe-ranges'; where the probe cannot
+tell, guessed from FORMAT with `supersonic-upnp--range-seekable-p'."
+ (let ((served (aio-await (supersonic-upnp--probe-ranges url))))
+   (if (eq served 'unknown)
+       (supersonic-upnp--range-seekable-p format)
+     served)))
+
+(defun supersonic-upnp--didl-lite (url track &optional format art-url seekable)
   "Return a DIDL-Lite XML document describing URL, a stream of TRACK.
 ART-URL, if given, becomes the item's `albumArtURI'.
 FORMAT is as `supersonic-provider-stream-url' takes it, and decides
-`protocolInfo' via `supersonic-upnp--protocol-info' -- see there for
-why it must reflect what was actually requested rather than TRACK's
-own encoding.
+`protocolInfo' via `supersonic-upnp--protocol-info', together with
+SEEKABLE -- see there for why it must reflect what was actually
+requested rather than TRACK's own encoding.
 
 This is what `SetAVTransportURI' and `SetNextAVTransportURI' pass as
 `CurrentURIMetaData'/`NextURIMetaData' (#65), so a renderer with a
@@ -180,7 +239,7 @@ hand it back verbatim in whatever it reports playing."
   (let ((title (or (plist-get track :title) (plist-get track :id) ""))
         (artist (plist-get track :artist))
         (album (plist-get track :album))
-        (protocol-info (supersonic-upnp--protocol-info track format)))
+        (protocol-info (supersonic-upnp--protocol-info track format seekable)))
     (concat
      "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\""
      " xmlns:dc=\"http://purl.org/dc/elements/1.1/\""
@@ -236,6 +295,10 @@ The track's cover art goes along as `albumArtURI' whenever the track
 has any and the provider can name a URL for it; otherwise the
 document simply has none, since a renderer plays fine without.
 
+The server is asked whether the stream can be seeked within, see
+`supersonic-upnp--seekable-p', so that `protocolInfo' tells the
+renderer.
+
 A stream URL on a loopback address is warned about, see
 `supersonic-upnp--warn-if-loopback', but still returned: the
 renderer may run on this machine itself."
@@ -247,8 +310,9 @@ renderer may run on this machine itself."
         (art-url
          (and art
               (supersonic-provider-supports-p 'cover-art-url)
-              (aio-await (supersonic-provider-cover-art-url art supersonic-upnp-art-size)))))
-   (list :url url :metadata (supersonic-upnp--didl-lite url track format art-url))))
+              (aio-await (supersonic-provider-cover-art-url art supersonic-upnp-art-size))))
+        (seekable (aio-await (supersonic-upnp--seekable-p url format))))
+   (list :url url :metadata (supersonic-upnp--didl-lite url track format art-url seekable))))
 
 ;;;
 ;;; Renderer discovery and selection
@@ -532,9 +596,6 @@ and binding those across an `aio-await' is not something an
          `(("Content-Type" . "text/xml; charset=\"utf-8\"")
            ("SOAPACTION" . ,(format "\"%s1#%s\"" supersonic-upnp--av-transport-service-type action)))))
     (supersonic-url-retrieve url)))
-
-;; fix byte-compiler complaints
-(defvar url-http-end-of-headers)
 
 (aio-defun
  supersonic-upnp--post (url action envelope)
