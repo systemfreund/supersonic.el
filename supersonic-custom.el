@@ -598,7 +598,7 @@ promised one format while receiving another."
                  (plist :options ((:format string) (:max-bit-rate integer))))
   :group 'supersonic)
 
-(defcustom supersonic-upnp-art-size 600
+(defcustom supersonic-upnp-art-size 1200
   "Size in pixels of the cover art a UPnP renderer is pointed at.
 A hint the provider may scale to; a renderer shows it on its own
 display, if it has one."

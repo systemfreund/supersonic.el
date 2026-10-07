@@ -47,12 +47,18 @@
 ;; non-expiring token-auth triple -- and are handed to the renderer
 ;; as they are.  That is deliberate; the README says what this exposes.
 ;;
+;; What a renderer cannot do is reach a server only this machine can:
+;; a URL on `localhost' sends it looking for the server on itself, and
+;; it answers `SetAVTransportURI' with a bare "Resource not found".
+;; `supersonic-upnp--item' warns about that case instead.
+;;
 ;; This file has no `supersonic-playback-register-backend' call yet
 ;; and nothing in the package requires it: it is only ever pulled in
 ;; by `supersonic-tests.el' until #65 gives it a caller.
 
 ;;; Code:
 (require 'aio)
+(require 'url-parse)
 (require 'xml)
 (require 'supersonic-custom)
 (require 'supersonic-provider)
@@ -138,6 +144,33 @@ hand it back verbatim in whatever it reports playing."
      "</item>"
      "</DIDL-Lite>")))
 
+(defvar supersonic-upnp--warned-loopback-hosts nil
+  "Loopback hosts `supersonic-upnp--warn-if-loopback' has warned about.
+Kept so that the warning comes once per host, not with every track.")
+
+(defun supersonic-upnp--loopback-host-p (host)
+  "Return non-nil if HOST names this machine itself.
+That is `localhost' or a name under it, any 127.0.0.0/8 address, or
+the IPv6 loopback address, bracketed as `url-host' returns it or not."
+  (or (member host '("localhost" "::1" "[::1]"))
+      (string-suffix-p ".localhost" host)
+      (string-match-p "\\`127\\.[0-9]+\\.[0-9]+\\.[0-9]+\\'" host)))
+
+(defun supersonic-upnp--warn-if-loopback (url)
+  "Warn, once per host, if URL points at this machine's loopback address.
+A renderer resolves such a URL to itself, never reaching the server."
+  (let ((host (url-host (url-generic-parse-url url))))
+    (when (and host
+               (supersonic-upnp--loopback-host-p host)
+               (not (member host supersonic-upnp--warned-loopback-hosts)))
+      (push host supersonic-upnp--warned-loopback-hosts)
+      (display-warning
+       'supersonic
+       (format-message
+        "Stream URL points at `%s', which a UPnP renderer resolves to itself; \
+set the server address (`supersonic-host' for Subsonic) to one the renderer can reach"
+        host)))))
+
 (aio-defun
  supersonic-upnp--item (track-id)
  "Return a promise resolving to what a renderer is told to play TRACK-ID.
@@ -148,10 +181,15 @@ DIDL-Lite document describing it, for `SetAVTransportURI' and
 
 The track's cover art goes along as `albumArtURI' whenever the track
 has any and the provider can name a URL for it; otherwise the
-document simply has none, since a renderer plays fine without."
+document simply has none, since a renderer plays fine without.
+
+A stream URL on a loopback address is warned about, see
+`supersonic-upnp--warn-if-loopback', but still returned: the
+renderer may run on this machine itself."
  (let* ((format supersonic-upnp-stream-format)
         (track (aio-await (supersonic-provider-track track-id)))
         (url (aio-await (supersonic-provider-stream-url track-id format)))
+        (_ (supersonic-upnp--warn-if-loopback url))
         (art (plist-get track :art))
         (art-url
          (and art

@@ -192,7 +192,8 @@ upload rights).
 
 The renderer also has to reach `supersonic-host` on its own: a
 `localhost` address, a VPN-only address or a reverse proxy with its
-own login will not work from the renderer.
+own login will not work from the renderer. supersonic.el warns when the
+stream URL points at `localhost`.
 
 By default a renderer gets the same stream mpv would. Many cheap
 renderers cannot decode FLAC or Opus; for those, have the server

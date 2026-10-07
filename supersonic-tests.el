@@ -4653,6 +4653,37 @@ a document without `albumArtURI' rather than an error."
        (assq 'albumArtURI (supersonic-tests--didl-fields
                            (plist-get (supersonic-tests--resolve (supersonic-upnp--item "t/1")) :metadata)))))))
 
+(ert-deftest supersonic-tests-upnp-loopback-host-p ()
+  "Loopback names and addresses are recognized; LAN addresses and
+names that merely contain \"localhost\" are not."
+  (dolist (host '("localhost" "foo.localhost" "127.0.0.1" "127.1.2.3" "::1" "[::1]"))
+    (should (supersonic-upnp--loopback-host-p host)))
+  (dolist (host '("10.20.30.1" "192.168.1.2" "localhost.example.com" "music.local" "1127.0.0.1"))
+    (should-not (supersonic-upnp--loopback-host-p host))))
+
+(ert-deftest supersonic-tests-upnp-item-warns-once-about-a-loopback-stream-url ()
+  "A stream URL on localhost gets one warning per host, however many
+tracks are resolved, and the item is still returned; a reachable
+host gets none."
+  (let ((supersonic-tests--upnp-seen nil)
+        (supersonic-upnp--warned-loopback-hosts nil)
+        (warnings nil))
+    (cl-letf (((symbol-function 'display-warning) (lambda (_type message &rest _) (push message warnings))))
+      (supersonic-tests--with-provider
+          (supersonic-tests--upnp-provider
+           'supersonic-tests--upnp-seen
+           `(stream-url . ,(supersonic-tests--resolved "http://localhost:4533/rest/stream.view?id=1")))
+        (should (plist-get (supersonic-tests--resolve (supersonic-upnp--item "t/1")) :url))
+        (supersonic-tests--resolve (supersonic-upnp--item "t/2")))
+      (should (= 1 (length warnings)))
+      (should (string-match-p "localhost" (car warnings)))
+      (supersonic-tests--with-provider
+          (supersonic-tests--upnp-provider
+           'supersonic-tests--upnp-seen
+           `(stream-url . ,(supersonic-tests--resolved "http://10.20.30.1:4533/rest/stream.view?id=1")))
+        (supersonic-tests--resolve (supersonic-upnp--item "t/1")))
+      (should (= 1 (length warnings))))))
+
 (ert-deftest supersonic-tests-subsonic-cover-art-url-is-get-cover-art ()
   "The Subsonic provider's `cover-art-url' is the same getCoverArt URL
 its `cover-art' fetches, built without asking the server."
