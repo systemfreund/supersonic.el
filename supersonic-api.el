@@ -113,28 +113,36 @@ closed connection as well, the same as `url-queue-kill-job'."
                      (error "No answer from %s within %s seconds" endpoint timeout))))))
 
 (aio-defun
- supersonic-get-json (url) "Return a promise resolving to the parsed json response from URL."
+ supersonic-get-text (url)
+ "Return a promise resolving to the body of the response from URL, as text.
+The body is decoded as UTF-8, which every caller expects: the Subsonic
+API always returns UTF-8 JSON (per RFC 8259), and a UPnP device
+description is UTF-8 by its specification.  `url-retrieve' doesn't
+reliably decode the body for us across Emacs versions, so it is
+decoded explicitly -- safe even if it already is, since
+`decode-coding-string' is a no-op on text that isn't raw undecoded
+bytes.  The promise rejects if the request failed."
  (pcase-let ((`(,status . ,buffer) (aio-await (supersonic-url-retrieve url))))
    (unwind-protect
        (progn
          (when (plist-get status :error)
            (error "Failed to fetch %s: %S" url (plist-get status :error)))
          (with-current-buffer buffer
-           (let*
-               ((json-array-type 'list)
-                (json-key-type 'string)
-                (data
-                 (condition-case nil
-                     (json-read-from-string
-                      ;; The Subsonic API always returns UTF-8 JSON (per RFC 8259); `url-retrieve' doesn't reliably
-                      ;; decode the body for us across Emacs versions, so decode explicitly.  Safe even if it's already
-                      ;; decoded: `decode-coding-string' is a no-op on text that isn't raw undecoded bytes.
-                      (decode-coding-string (buffer-substring (1+ url-http-end-of-headers) (point-max)) 'utf-8))
-                   (json-readtable-error
-                    (error "Failed to read json")))))
-             (supersonic--signal-if-failed data)
-             data)))
+           (decode-coding-string (buffer-substring (1+ url-http-end-of-headers) (point-max)) 'utf-8)))
      (kill-buffer buffer))))
+
+(aio-defun
+ supersonic-get-json (url) "Return a promise resolving to the parsed json response from URL."
+ (let* ((body (aio-await (supersonic-get-text url)))
+        (json-array-type 'list)
+        (json-key-type 'string)
+        (data
+         (condition-case nil
+             (json-read-from-string body)
+           (json-readtable-error
+            (error "Failed to read json")))))
+   (supersonic--signal-if-failed data)
+   data))
 
 (defun supersonic--signal-if-failed (data)
   "Signal an `error' if the parsed Subsonic response DATA reports failure.

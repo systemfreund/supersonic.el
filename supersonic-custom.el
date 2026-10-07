@@ -598,6 +598,31 @@ promised one format while receiving another."
                  (plist :options ((:format string) (:max-bit-rate integer))))
   :group 'supersonic)
 
+(defcustom supersonic-upnp-renderer nil
+  "The UPnP renderer the `upnp' backend plays to.
+A plist `(:location URL :udn UDN :name NAME)': LOCATION is the URL of
+the renderer's device description, which is enough to reach it again
+without running discovery; UDN is its unique device name, so that a
+renderer turning up under a different address can still be recognized;
+NAME is its friendly name, only ever shown to the user.
+
+`supersonic-upnp-select-renderer' sets this, by discovery or from a
+description URL entered by hand, and saves it if asked to; nil means
+none is selected."
+  :type '(choice (const :tag "None selected" nil)
+                 (plist :options ((:location string) (:udn string) (:name string))))
+  :group 'supersonic)
+
+(defcustom supersonic-upnp-discovery-timeout 3
+  "Seconds to wait for UPnP renderers to answer a discovery search.
+Renderers are told to answer within one second less than this, so
+that a slow one still makes it in time.  The same limit applies to
+fetching each renderer's device description afterwards, so that one
+device that answered but then never serves its description does not
+hold up the rest."
+  :type 'number
+  :group 'supersonic)
+
 (defcustom supersonic-upnp-art-size 1200
   "Size in pixels of the cover art a UPnP renderer is pointed at.
 A hint the provider may scale to; a renderer shows it on its own

@@ -175,6 +175,15 @@ A `upnp` backend that plays to UPnP/DLNA renderers (AV receivers,
 network speakers, smart TVs) is in progress, see
 [#63](https://github.com/systemfreund/supersonic.el/issues/63).
 
+To pick the renderer to play to, run
+`M-x supersonic-upnp-select-renderer`. It searches your LAN for
+renderers for a few seconds (`supersonic-upnp-discovery-timeout`) and
+offers them by name. If a renderer does not show up, for example
+because multicast does not reach it, enter the URL of its device
+description instead; with a prefix argument (`C-u`), no search is
+made at all. The choice is set as `supersonic-upnp-renderer`, and
+saved to your `custom-file` only if you confirm.
+
 A renderer fetches the audio itself, so it is handed the same stream
 URL mpv would play, plus a cover art URL for its display. With the
 `subsonic` provider, both URLs carry your Subsonic username and the
