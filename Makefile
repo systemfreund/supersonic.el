@@ -18,9 +18,10 @@ compile: cask
 # `checkdoc-message-text-next-string').  `supersonic--report-async-error'
 # takes a sentence fragment it interpolates into "Failed to %s: %s", so
 # capitalizing it would print "Failed to Poll the jukebox".  checkdoc has no
-# per-line suppression, hence this one grep -- keep the pattern narrow, so a
-# second instance of the same message elsewhere still fails the build.
-CHECKDOC_FALSE_POSITIVE := supersonic-jukebox\.el:[0-9]*: Messages should start with a capital letter
+# per-line suppression, hence this one grep -- keep the pattern narrow, to
+# the two polling backends that report a failed poll this way, so the same
+# message anywhere else still fails the build.
+CHECKDOC_FALSE_POSITIVE := supersonic-(jukebox|upnp)\.el:[0-9]*: Messages should start with a capital letter
 
 .PHONY: lint
 lint: cask

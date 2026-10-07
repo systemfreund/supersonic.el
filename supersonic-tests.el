@@ -204,12 +204,12 @@ them."
 (ert-deftest supersonic-tests-playback-backend-names-lists-registrations ()
   "`supersonic-playback-backend-names' answers every name registered so
 far -- what the switch command's completion table draws from -- which
-at minimum is `mpv' and `jukebox', both loaded by this test suite."
+at minimum is `mpv', `jukebox' and `upnp', all loaded by this test suite."
   (let ((supersonic-playback--backends (copy-hash-table supersonic-playback--backends)))
     (supersonic-playback-register-backend 'test-a '((stop . ignore)))
     (should
      (equal
-      '("jukebox" "mpv" "test-a")
+      '("jukebox" "mpv" "test-a" "upnp")
       (sort (mapcar #'symbol-name (supersonic-playback-backend-names)) #'string<)))))
 
 (ert-deftest supersonic-tests-switch-backend-stops-the-outgoing-backend ()
@@ -4979,6 +4979,449 @@ input that is neither a renderer nor a URL is reported, not selected."
     (should-not selected)
     (should (string-match-p "is neither a renderer found nor a description URL" (car messages)))))
 
+;;;
+;;; UPnP backend
+;;;
+
+(defvar supersonic-tests--renderer nil
+  "State of the fake renderer behind `supersonic-tests--with-upnp'.
+A plist: `:state', its transport state; `:position' and `:duration',
+the RelTime and TrackDuration it reports; `:uri', the CurrentURI it
+was last given; `:faults', an alist of action names to the (CODE
+. DESCRIPTION) of the SOAP fault to answer them with.")
+
+(defvar supersonic-tests--renderer-requests nil
+  "(ACTION . ENVELOPE) of every request the fake renderer got, most recent first.")
+
+(defvar supersonic-tests--upnp-scrobbles nil
+  "(TRACK-ID NOW-PLAYING) of every scrobble, most recent first.")
+
+(defun supersonic-tests--soap-response (action arguments)
+  "Return a SOAP response to ACTION with output ARGUMENTS, as the LG TV sends it."
+  (concat
+   "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+   "<s:Envelope s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\""
+   " xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body>"
+   (format "<u:%sResponse xmlns:u=\"urn:schemas-upnp-org:service:AVTransport:1\">" action)
+   (mapconcat (lambda (argument) (format "<%s>%s</%s>" (car argument) (cdr argument) (car argument))) arguments "")
+   (format "</u:%sResponse>" action)
+   "</s:Body></s:Envelope>"))
+
+(defun supersonic-tests--soap-fault (code description)
+  "Return a SOAP fault with UPnP error CODE and DESCRIPTION, as the LG TV sends it."
+  (concat
+   "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+   "<s:Envelope s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\""
+   " xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body><s:Fault>"
+   "<faultcode>s:Client</faultcode><faultstring>UPnPError</faultstring>"
+   "<detail><UPnPError xmlns=\"urn:schemas-upnp-org:control-1-0\">"
+   (format "<errorCode>%s</errorCode><errorDescription>%s</errorDescription>" code description)
+   "</UPnPError></detail></s:Fault></s:Body></s:Envelope>"))
+
+(defun supersonic-tests--envelope-argument (envelope name)
+  "Return the value of argument NAME in SOAP request ENVELOPE."
+  (supersonic-upnp--text
+   (car (dom-by-tag (with-temp-buffer
+                      (insert envelope)
+                      (libxml-parse-xml-region (point-min) (point-max)))
+                    name))))
+
+(defun supersonic-tests--fake-renderer-post (_url action envelope)
+  "Answer ACTION's request ENVELOPE the way `supersonic-tests--renderer' would."
+  (push (cons action envelope) supersonic-tests--renderer-requests)
+  (let ((fault (alist-get action (plist-get supersonic-tests--renderer :faults) nil nil #'equal))
+        (renderer supersonic-tests--renderer))
+    (funcall
+     (supersonic-tests--resolved
+      (if fault
+          (cons '(:error (error http 500)) (supersonic-tests--soap-fault (car fault) (cdr fault)))
+        (pcase action
+          ("SetAVTransportURI"
+           (setq renderer (plist-put renderer :uri (supersonic-tests--envelope-argument envelope 'CurrentURI)))
+           (setq renderer (plist-put renderer :state "STOPPED"))
+           (setq renderer (plist-put renderer :position "0:00:00")))
+          ("Play" (setq renderer (plist-put renderer :state "PLAYING")))
+          ("Pause" (setq renderer (plist-put renderer :state "PAUSED_PLAYBACK")))
+          ("Stop" (setq renderer (plist-put renderer :state "STOPPED")))
+          ("Seek" (setq renderer (plist-put renderer :position (supersonic-tests--envelope-argument envelope 'Target)))))
+        (setq supersonic-tests--renderer renderer)
+        (cons nil
+              (supersonic-tests--soap-response
+               action
+               (pcase action
+                 ("GetTransportInfo"
+                  `(("CurrentTransportState" . ,(plist-get renderer :state))
+                    ("CurrentTransportStatus" . "OK")
+                    ("CurrentSpeed" . "1")))
+                 ("GetPositionInfo"
+                  `(("Track" . "1")
+                    ("TrackDuration" . ,(plist-get renderer :duration))
+                    ("TrackURI" . ,(xml-escape-string (or (plist-get renderer :uri) "")))
+                    ("RelTime" . ,(plist-get renderer :position))
+                    ("AbsTime" . "NOT_IMPLEMENTED")))))))))))
+
+(defmacro supersonic-tests--with-upnp (&rest body)
+  "Run BODY with the `upnp' backend playing to a fake renderer.
+The renderer is `supersonic-tests--renderer', starting out stopped
+with a three-minute track; its requests are recorded in
+`supersonic-tests--renderer-requests'.  A track's stream URL is
+\"http://music/\" followed by its id.  `float-time' reads
+`supersonic-tests--jukebox-clock', advanced by hand, and scrobbles
+are recorded in `supersonic-tests--upnp-scrobbles'.  The renderer's
+description, if looked up again, names \"http://tv/control\" as its
+control URL.  The facade's hooks start out empty."
+  `(let ((supersonic-upnp-renderer '(:location "http://tv/desc.xml" :udn "uuid:tv" :name "TV"))
+         (supersonic-upnp--control '("http://tv/desc.xml" . "http://tv/control"))
+         (supersonic-upnp--queue nil)
+         (supersonic-upnp--index nil)
+         (supersonic-upnp--stopped nil)
+         (supersonic-upnp--snapshot nil)
+         (supersonic-upnp--announced nil)
+         (supersonic-upnp--live nil)
+         (supersonic-upnp--poll-failing nil)
+         (supersonic-upnp--poll-in-flight nil)
+         (supersonic-upnp--timer nil)
+         (supersonic-playback-track-change-hook nil)
+         (supersonic-playback-state-change-hook nil)
+         (supersonic-playback-queue-change-hook nil)
+         (supersonic-playback-position-change-hook nil)
+         (supersonic-tests--renderer (list :state "STOPPED" :position "0:00:00" :duration "0:03:00"))
+         (supersonic-tests--renderer-requests nil)
+         (supersonic-tests--upnp-scrobbles nil)
+         (supersonic-tests--jukebox-clock 1000000.0))
+     (cl-letf (((symbol-function 'supersonic-upnp--post) #'supersonic-tests--fake-renderer-post)
+               ((symbol-function 'supersonic-upnp--describe)
+                (supersonic-tests--resolved
+                 '(:name "TV" :udn "uuid:tv" :location "http://tv/desc.xml" :control-url "http://tv/control")))
+               ((symbol-function 'supersonic-upnp--item)
+                (lambda (id)
+                  (funcall (supersonic-tests--resolved
+                            (list :url (concat "http://music/" id) :metadata (format "<DIDL-Lite>%s</DIDL-Lite>" id))))))
+               ((symbol-function 'float-time) (lambda (&rest _) supersonic-tests--jukebox-clock))
+               ((symbol-function 'supersonic-provider-scrobble)
+                (lambda (id &optional now-playing) (push (list id now-playing) supersonic-tests--upnp-scrobbles))))
+       ,@body)))
+
+(defun supersonic-tests--renderer-actions ()
+  "Return the actions the fake renderer was sent, in order."
+  (mapcar #'car (reverse supersonic-tests--renderer-requests)))
+
+(defun supersonic-tests--upnp-reset-requests ()
+  "Forget the requests the fake renderer got so far."
+  (setq supersonic-tests--renderer-requests nil))
+
+(ert-deftest supersonic-tests-upnp-is-registered-as-a-backend ()
+  "Loading `supersonic-upnp' registers `upnp', implementing every
+operation, for providers with `stream-url'."
+  (let ((operations (gethash 'upnp supersonic-playback--backends)))
+    (dolist (operation supersonic-playback-operations)
+      (should (functionp (alist-get operation operations)))))
+  (should (equal '(stream-url) (plist-get (gethash 'upnp supersonic-playback--compatibility) :requires))))
+
+(ert-deftest supersonic-tests-upnp-soap-envelope-escapes-arguments ()
+  "The envelope invokes the action on AVTransport:1 with InstanceID 0
+first, and arguments -- DIDL-Lite metadata included -- round-trip
+through it escaped."
+  (let* ((envelope (supersonic-upnp--soap-envelope
+                    "SetAVTransportURI" '(("CurrentURI" . "http://h/s?a=1&b=2") ("CurrentURIMetaData" . "<DIDL-Lite/>"))))
+         (root (with-temp-buffer
+                 (insert envelope)
+                 (libxml-parse-xml-region (point-min) (point-max))))
+         (action (car (dom-by-tag root 'SetAVTransportURI))))
+    (should action)
+    (should (equal '(InstanceID CurrentURI CurrentURIMetaData) (mapcar #'dom-tag (dom-non-text-children action))))
+    (should (equal "0" (supersonic-upnp--child-text action 'InstanceID)))
+    (should (equal "http://h/s?a=1&b=2" (supersonic-upnp--child-text action 'CurrentURI)))
+    (should (equal "<DIDL-Lite/>" (supersonic-upnp--child-text action 'CurrentURIMetaData)))))
+
+(ert-deftest supersonic-tests-upnp-soap-result-reads-answers-and-faults ()
+  "A response yields its element; a fault, even one with HTTP status
+500, becomes an error with the renderer's description and code; no
+answer at all becomes an error naming the action."
+  (should (equal "PLAYING"
+                 (supersonic-upnp--child-text
+                  (supersonic-upnp--soap-result
+                   "GetTransportInfo" nil
+                   (supersonic-tests--soap-response "GetTransportInfo" '(("CurrentTransportState" . "PLAYING"))))
+                  'CurrentTransportState)))
+  (should
+   (equal "The UPnP renderer refused Seek: Seek mode not supported (error 710)"
+          (cadr (should-error (supersonic-upnp--soap-result
+                               "Seek" '(:error (error http 500)) (supersonic-tests--soap-fault 710 "Seek mode not supported"))))))
+  (should (string-match-p "did not answer Play"
+                          (cadr (should-error (supersonic-upnp--soap-result
+                                               "Play" '(:error (error connection-failed "refused")) nil)))))
+  (should (string-match-p "no answer to Play" (cadr (should-error (supersonic-upnp--soap-result "Play" nil "<html/>"))))))
+
+(ert-deftest supersonic-tests-upnp-time-round-trips ()
+  "UPnP times parse to seconds, fractions included; what is no time
+parses to nil; seconds format back as H:MM:SS, never negative."
+  (should (= 3723 (supersonic-upnp--parse-time "1:02:03")))
+  (should (= 61.5 (supersonic-upnp--parse-time "00:01:01.500")))
+  (should-not (supersonic-upnp--parse-time "NOT_IMPLEMENTED"))
+  (should-not (supersonic-upnp--parse-time nil))
+  (should (equal "1:02:03" (supersonic-upnp--format-time 3723.4)))
+  (should (equal "0:00:00" (supersonic-upnp--format-time -5))))
+
+(ert-deftest supersonic-tests-upnp-start-loads-and-plays-the-first-track ()
+  "Starting gives the renderer the first track's URL and metadata and
+plays it; the status and queue then report it, and the track-change
+hook ran, with a now-playing scrobble."
+  (supersonic-tests--with-upnp
+   (let ((track-changes 0))
+     (add-hook 'supersonic-playback-track-change-hook (lambda () (cl-incf track-changes)))
+     (supersonic-tests--resolve (supersonic-upnp--start '("a" "b")))
+     (should (equal '("SetAVTransportURI" "Play" "GetTransportInfo" "GetPositionInfo")
+                    (supersonic-tests--renderer-actions)))
+     (let ((envelope (cdar (last supersonic-tests--renderer-requests))))
+       (should (equal "http://music/a" (supersonic-tests--envelope-argument envelope 'CurrentURI)))
+       (should (equal "<DIDL-Lite>a</DIDL-Lite>" (supersonic-tests--envelope-argument envelope 'CurrentURIMetaData))))
+     (should (supersonic-upnp-live-p))
+     (should (equal "a" (supersonic-tests--resolve (supersonic-upnp-status 'track-id))))
+     (should-not (supersonic-tests--resolve (supersonic-upnp-status 'paused)))
+     (should (equal '((:track-id "a" :current t) (:track-id "b" :current nil))
+                    (supersonic-tests--resolve (supersonic-upnp-queue))))
+     (should (<= 1 track-changes))
+     (should (equal '(("a" t)) supersonic-tests--upnp-scrobbles)))))
+
+(ert-deftest supersonic-tests-upnp-position-counts-on-between-polls ()
+  "While playing, the position counts on from the last poll by the
+time elapsed, up to the duration; while paused, it stands still."
+  (supersonic-tests--with-upnp
+   (supersonic-tests--resolve (supersonic-upnp--start '("a")))
+   (setq supersonic-tests--renderer (plist-put supersonic-tests--renderer :position "0:01:00"))
+   (supersonic-tests--resolve (supersonic-upnp--poll))
+   (supersonic-tests--jukebox-advance-clock 1.5)
+   (should (= 61.5 (supersonic-tests--resolve (supersonic-upnp-status 'position))))
+   (supersonic-tests--jukebox-advance-clock 500)
+   (should (= 180 (supersonic-tests--resolve (supersonic-upnp-status 'position))))
+   (supersonic-tests--resolve (supersonic-upnp--toggle-play))
+   (supersonic-tests--jukebox-advance-clock 10)
+   (should (= 60 (supersonic-tests--resolve (supersonic-upnp-status 'position))))
+   (should (supersonic-tests--resolve (supersonic-upnp-status 'paused)))))
+
+(defun supersonic-tests--upnp-play-to-the-end ()
+  "Have the fake renderer play its track to the end over two poll ticks."
+  (setq supersonic-tests--renderer (plist-put supersonic-tests--renderer :position "0:02:58"))
+  (supersonic-tests--resolve (supersonic-upnp--poll))
+  (supersonic-tests--jukebox-advance-clock 2)
+  (setq supersonic-tests--renderer (plist-put supersonic-tests--renderer :state "STOPPED"))
+  (setq supersonic-tests--renderer (plist-put supersonic-tests--renderer :position "0:00:00"))
+  (supersonic-tests--resolve (supersonic-upnp--poll)))
+
+(ert-deftest supersonic-tests-upnp-auto-advances-at-the-end-of-a-track ()
+  "A poll that finds the track stopped at its end loads and plays the
+next one, scrobbling the finished track; at the end of the queue,
+nothing is current any more and nothing more is loaded."
+  (supersonic-tests--with-upnp
+   (supersonic-tests--resolve (supersonic-upnp--start '("a" "b")))
+   (supersonic-tests--upnp-reset-requests)
+   (supersonic-tests--upnp-play-to-the-end)
+   (should (member "SetAVTransportURI" (supersonic-tests--renderer-actions)))
+   (should (equal "http://music/b" (plist-get supersonic-tests--renderer :uri)))
+   (should (equal "PLAYING" (plist-get supersonic-tests--renderer :state)))
+   (should (equal "b" (supersonic-tests--resolve (supersonic-upnp-status 'track-id))))
+   (should (equal '(("b" t) ("a" nil) ("a" t)) supersonic-tests--upnp-scrobbles))
+   (supersonic-tests--upnp-reset-requests)
+   (supersonic-tests--upnp-play-to-the-end)
+   (should-not (member "SetAVTransportURI" (supersonic-tests--renderer-actions)))
+   (should-not (supersonic-tests--resolve (supersonic-upnp-status 'track-id)))
+   (should (equal '("b" nil) (car supersonic-tests--upnp-scrobbles)))))
+
+(ert-deftest supersonic-tests-upnp-does-not-advance-when-stopped-early ()
+  "A track stopped well before its end -- by the user here, or on the
+renderer's own remote -- does not move on to the next."
+  (supersonic-tests--with-upnp
+   (supersonic-tests--resolve (supersonic-upnp--start '("a" "b")))
+   (supersonic-tests--resolve (supersonic-upnp--stop))
+   (supersonic-tests--upnp-play-to-the-end)
+   (should (equal "a" (supersonic-tests--resolve (supersonic-upnp-status 'track-id))))
+   (should (equal "http://music/a" (plist-get supersonic-tests--renderer :uri))))
+  (supersonic-tests--with-upnp
+   (supersonic-tests--resolve (supersonic-upnp--start '("a" "b")))
+   (setq supersonic-tests--renderer (plist-put supersonic-tests--renderer :position "0:01:00"))
+   (supersonic-tests--resolve (supersonic-upnp--poll))
+   (supersonic-tests--jukebox-advance-clock 2)
+   (setq supersonic-tests--renderer (plist-put supersonic-tests--renderer :state "STOPPED"))
+   (supersonic-tests--resolve (supersonic-upnp--poll))
+   (should (equal "a" (supersonic-tests--resolve (supersonic-upnp-status 'track-id))))
+   (should (equal "http://music/a" (plist-get supersonic-tests--renderer :uri)))))
+
+(ert-deftest supersonic-tests-upnp-a-new-track-is-not-taken-for-an-ended-one ()
+  "Right after a track is loaded, a renderer may still report the stop
+loading it caused; that is not the new track ending."
+  (supersonic-tests--with-upnp
+   (supersonic-tests--resolve (supersonic-upnp--start '("a" "b" "c")))
+   (setq supersonic-tests--renderer (plist-put supersonic-tests--renderer :position "0:02:59"))
+   (supersonic-tests--resolve (supersonic-upnp--poll))
+   (cl-letf (((symbol-function 'supersonic-tests--fake-renderer-post)
+              (let ((post (symbol-function 'supersonic-tests--fake-renderer-post)))
+                (lambda (url action envelope)
+                  (prog1 (funcall post url action envelope)
+                    ;; This renderer takes a moment before it plays.
+                    (when (equal action "Play")
+                      (setq supersonic-tests--renderer (plist-put supersonic-tests--renderer :state "STOPPED"))))))))
+     (supersonic-tests--jukebox-advance-clock 2)
+     (supersonic-tests--resolve (supersonic-upnp--next)))
+   (should (equal "b" (supersonic-tests--resolve (supersonic-upnp-status 'track-id))))
+   (supersonic-tests--resolve (supersonic-upnp--poll))
+   (should (equal "b" (supersonic-tests--resolve (supersonic-upnp-status 'track-id))))))
+
+(ert-deftest supersonic-tests-upnp-enqueue-starts-only-when-nothing-is-left ()
+  "Enqueueing with nothing queued plays the new tracks; with a track
+current, it only appends, running the queue-change hook."
+  (supersonic-tests--with-upnp
+   (supersonic-tests--resolve (supersonic-upnp--enqueue '("a")))
+   (should (equal "http://music/a" (plist-get supersonic-tests--renderer :uri)))
+   (let ((queue-changes 0))
+     (add-hook 'supersonic-playback-queue-change-hook (lambda () (cl-incf queue-changes)))
+     (supersonic-tests--upnp-reset-requests)
+     (supersonic-tests--resolve (supersonic-upnp--enqueue '("b")))
+     (should-not (supersonic-tests--renderer-actions))
+     (should (= 1 queue-changes))
+     (should (equal '("a" "b") supersonic-upnp--queue)))))
+
+(ert-deftest supersonic-tests-upnp-enqueue-after-the-queue-played-out ()
+  "Enqueueing once the queue has been played to its end plays the
+first of the new tracks."
+  (supersonic-tests--with-upnp
+   (supersonic-tests--resolve (supersonic-upnp--start '("a")))
+   (supersonic-tests--upnp-play-to-the-end)
+   (supersonic-tests--resolve (supersonic-upnp--enqueue '("b")))
+   (should (equal "b" (supersonic-tests--resolve (supersonic-upnp-status 'track-id))))
+   (should (equal "http://music/b" (plist-get supersonic-tests--renderer :uri)))))
+
+(ert-deftest supersonic-tests-upnp-toggle-play-pauses-and-resumes ()
+  "Toggling pauses a playing renderer and plays a paused one, running
+the state-change hook each time."
+  (supersonic-tests--with-upnp
+   (supersonic-tests--resolve (supersonic-upnp--start '("a")))
+   (let ((state-changes 0))
+     (add-hook 'supersonic-playback-state-change-hook (lambda () (cl-incf state-changes)))
+     (supersonic-tests--upnp-reset-requests)
+     (supersonic-tests--resolve (supersonic-upnp--toggle-play))
+     (should (equal "Pause" (car (supersonic-tests--renderer-actions))))
+     (should (supersonic-tests--resolve (supersonic-upnp-status 'paused)))
+     (supersonic-tests--upnp-reset-requests)
+     (supersonic-tests--resolve (supersonic-upnp--toggle-play))
+     (should (equal "Play" (car (supersonic-tests--renderer-actions))))
+     (should-not (supersonic-tests--resolve (supersonic-upnp-status 'paused)))
+     (should (= 2 state-changes)))))
+
+(ert-deftest supersonic-tests-upnp-toggle-play-reloads-a-renderer-without-media ()
+  "A renderer that lost the track -- to another application, say -- is
+given it again rather than told to play nothing."
+  (supersonic-tests--with-upnp
+   (supersonic-tests--resolve (supersonic-upnp--start '("a")))
+   (supersonic-tests--resolve (supersonic-upnp--toggle-play))
+   (setq supersonic-tests--renderer (plist-put supersonic-tests--renderer :state "NO_MEDIA_PRESENT"))
+   (supersonic-tests--resolve (supersonic-upnp--poll))
+   (supersonic-tests--upnp-reset-requests)
+   (supersonic-tests--resolve (supersonic-upnp--toggle-play))
+   (should (equal '("SetAVTransportURI" "Play") (seq-take (supersonic-tests--renderer-actions) 2)))))
+
+(ert-deftest supersonic-tests-upnp-next-and-prev-stay-within-the-queue ()
+  "Next and previous move through the queue, loading each track, and
+do nothing past either end."
+  (supersonic-tests--with-upnp
+   (supersonic-tests--resolve (supersonic-upnp--start '("a" "b")))
+   (supersonic-tests--resolve (supersonic-upnp--prev))
+   (should (equal "http://music/a" (plist-get supersonic-tests--renderer :uri)))
+   (supersonic-tests--resolve (supersonic-upnp--next))
+   (should (equal "http://music/b" (plist-get supersonic-tests--renderer :uri)))
+   (supersonic-tests--upnp-reset-requests)
+   (supersonic-tests--resolve (supersonic-upnp--next))
+   (should-not (supersonic-tests--renderer-actions))
+   (supersonic-tests--resolve (supersonic-upnp--prev))
+   (should (equal "http://music/a" (plist-get supersonic-tests--renderer :uri)))
+   (should (equal "a" (supersonic-tests--resolve (supersonic-upnp-status 'track-id))))))
+
+(ert-deftest supersonic-tests-upnp-seek-targets-an-absolute-position ()
+  "Seeking adds the offset to the position counted on since the last
+poll, and seeking to a fraction multiplies the reported duration;
+both run the position-change hook."
+  (supersonic-tests--with-upnp
+   (supersonic-tests--resolve (supersonic-upnp--start '("a")))
+   (setq supersonic-tests--renderer (plist-put supersonic-tests--renderer :position "0:01:00"))
+   (supersonic-tests--resolve (supersonic-upnp--poll))
+   (supersonic-tests--jukebox-advance-clock 5)
+   (let ((jumps 0))
+     (add-hook 'supersonic-playback-position-change-hook (lambda () (cl-incf jumps)))
+     (supersonic-tests--resolve (supersonic-upnp--seek 10))
+     (should (equal "0:01:15" (plist-get supersonic-tests--renderer :position)))
+     (supersonic-tests--resolve (supersonic-upnp--seek-fraction 0.5))
+     (should (equal "0:01:30" (plist-get supersonic-tests--renderer :position)))
+     (should (= 2 jumps)))))
+
+(ert-deftest supersonic-tests-upnp-reports-failures-without-a-backtrace ()
+  "A SOAP fault, a renderer reporting no duration to seek within, and
+no renderer selected at all each end in an echo-area message."
+  (supersonic-tests--with-upnp
+   (let (messages)
+     (cl-letf (((symbol-function 'message)
+                (lambda (format-string &rest args) (push (apply #'format format-string args) messages))))
+       (supersonic-tests--resolve (supersonic-upnp--start '("a")))
+       (setq supersonic-tests--renderer
+             (plist-put supersonic-tests--renderer :faults '(("Seek" 710 . "Seek mode not supported"))))
+       (supersonic-tests--resolve (supersonic-upnp--seek 10))
+       (should (equal "[Supersonic] Failed to seek on the UPnP renderer: \
+The UPnP renderer refused Seek: Seek mode not supported (error 710)"
+                      (car messages)))
+       (setq supersonic-tests--renderer (plist-put supersonic-tests--renderer :duration "NOT_IMPLEMENTED"))
+       (supersonic-tests--resolve (supersonic-upnp--poll))
+       (supersonic-tests--resolve (supersonic-upnp--seek-fraction 0.5))
+       (should (string-match-p "reports no duration" (car messages)))
+       (let ((supersonic-upnp-renderer nil)
+             (supersonic-upnp--control nil))
+         (supersonic-tests--resolve (supersonic-upnp--next))
+         (supersonic-tests--resolve (supersonic-upnp--start '("b")))
+         (should (string-match-p "No UPnP renderer selected" (car messages))))))))
+
+(ert-deftest supersonic-tests-upnp-poll-failure-is-reported-once ()
+  "A renderer that stops answering takes the backend not live, which
+is reported once for as long as it stays unreachable, and again after
+it came back and failed anew."
+  (supersonic-tests--with-upnp
+   (let (reports)
+     (cl-letf (((symbol-function 'supersonic--report-async-error)
+                (lambda (description _err) (push description reports))))
+       (supersonic-tests--resolve (supersonic-upnp--poll))
+       (should (supersonic-upnp-live-p))
+       (setq supersonic-tests--renderer
+             (plist-put supersonic-tests--renderer :faults '(("GetTransportInfo" 501 . "Action Failed"))))
+       (supersonic-tests--resolve (supersonic-upnp--poll))
+       (supersonic-tests--resolve (supersonic-upnp--poll))
+       (should-not (supersonic-upnp-live-p))
+       (should (equal '("poll the UPnP renderer") reports))
+       (should-not supersonic-upnp--control)
+       (setq supersonic-tests--renderer (plist-put supersonic-tests--renderer :faults nil))
+       (supersonic-tests--resolve (supersonic-upnp--poll))
+       (should (supersonic-upnp-live-p))))))
+
+(ert-deftest supersonic-tests-upnp-stop-leaves-a-renderer-it-never-used-alone ()
+  "Stopping before anything was played from here sends nothing, so
+that switching away from `upnp' cannot stop another application's
+playback; after a start, it stops the renderer."
+  (supersonic-tests--with-upnp
+   (supersonic-tests--resolve (supersonic-upnp--stop))
+   (should-not (supersonic-tests--renderer-actions))
+   (supersonic-tests--resolve (supersonic-upnp--start '("a")))
+   (supersonic-tests--resolve (supersonic-upnp--stop))
+   (should (equal "STOPPED" (plist-get supersonic-tests--renderer :state)))
+   (should (supersonic-tests--resolve (supersonic-upnp-status 'paused)))))
+
+(ert-deftest supersonic-tests-upnp-polls-only-while-active ()
+  "The poll timer runs exactly while `upnp' is the active backend."
+  (supersonic-tests--with-upnp
+   (unwind-protect
+       (progn
+         (let ((supersonic-playback-backend 'upnp))
+           (should (timerp supersonic-upnp--timer)))
+         (should-not supersonic-upnp--timer)
+         (should-not (supersonic-upnp-live-p)))
+     (when (timerp supersonic-upnp--timer)
+       (cancel-timer supersonic-upnp--timer)))))
+
 (ert-deftest supersonic-tests-subsonic-cover-art-url-is-get-cover-art ()
   "The Subsonic provider's `cover-art-url' is the same getCoverArt URL
 its `cover-art' fetches, built without asking the server."
@@ -5143,15 +5586,19 @@ than failing to generate."
         (should-not (supersonic-waveform-available-p))))))
 
 (ert-deftest supersonic-tests-backends-declare-provider-compatibility ()
-  "mpv plays for any provider with a `stream-url', the jukebox only for
-`subsonic', and a backend that declares nothing plays for everyone."
+  "mpv and the UPnP renderer play for any provider with a `stream-url',
+the jukebox only for `subsonic', and a backend that declares nothing
+plays for everyone."
   (should (supersonic-playback-compatible-p 'mpv 'subsonic))
   (should (supersonic-playback-compatible-p 'jukebox 'subsonic))
+  (should (supersonic-playback-compatible-p 'upnp 'subsonic))
   (supersonic-tests--with-provider `((stream-url . ,#'identity))
     (should (supersonic-playback-compatible-p 'mpv))
+    (should (supersonic-playback-compatible-p 'upnp))
     (should-not (supersonic-playback-compatible-p 'jukebox)))
   (supersonic-tests--with-provider '()
     (should-not (supersonic-playback-compatible-p 'mpv))
+    (should-not (supersonic-playback-compatible-p 'upnp))
     (should-not (supersonic-playback-compatible-p 'jukebox))
     (supersonic-tests--with-backend '((stop . ignore))
       (should (supersonic-playback-compatible-p 'test))))
@@ -5169,7 +5616,7 @@ provider, and refuses any other -- before stopping the active one."
     (supersonic-tests--with-provider `((stream-url . ,#'identity))
       (should
        (equal
-        '("mpv" "test-from")
+        '("mpv" "test-from" "upnp")
         (sort (mapcar #'symbol-name (supersonic-playback-compatible-backend-names)) #'string<)))
       (let ((err (should-error (supersonic-playback-switch-backend 'jukebox) :type 'user-error)))
         (should (string-match-p "jukebox" (cadr err)))

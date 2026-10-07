@@ -171,9 +171,25 @@ plays for any provider that can name a URL to stream from.
 
 ## UPnP/DLNA playback
 
-A `upnp` backend that plays to UPnP/DLNA renderers (AV receivers,
-network speakers, smart TVs) is in progress, see
-[#63](https://github.com/systemfreund/supersonic.el/issues/63).
+`supersonic-upnp.el` plays to UPnP/DLNA renderers: AV receivers,
+network speakers, smart TVs. Like the jukebox, it is opt-in:
+
+```
+(use-package supersonic
+  :custom
+  (supersonic-playback-backend 'upnp)
+  :config
+  (require 'supersonic-upnp))
+```
+
+or `M-x supersonic-playback-switch-backend` once it is loaded. It
+plays for any provider that can name a URL to stream from.
+
+Most renderers hold only one track at a time, so the play queue is
+kept in Emacs, which polls the renderer every
+`supersonic-upnp-poll-interval` seconds and gives it the next track
+once one has ended. The queue therefore only moves on while Emacs
+is running.
 
 To pick the renderer to play to, run
 `M-x supersonic-upnp-select-renderer`. It searches your LAN for

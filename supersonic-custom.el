@@ -613,6 +613,17 @@ none is selected."
                  (plist :options ((:location string) (:udn string) (:name string))))
   :group 'supersonic)
 
+(defcustom supersonic-upnp-poll-interval 2
+  "Seconds between polls of the renderer while `upnp' is the active backend.
+A UPnP renderer reports its state only when asked -- this package does
+not subscribe to its events -- so `supersonic-upnp.el' asks it for its
+transport state and position on this interval.  The now-playing
+buffer, the queue buffer and MPRIS follow the renderer within one
+interval; so does moving on to the next queued track once one ends.
+The position shown in between is counted on from the last poll."
+  :type 'number
+  :group 'supersonic)
+
 (defcustom supersonic-upnp-discovery-timeout 3
   "Seconds to wait for UPnP renderers to answer a discovery search.
 Renderers are told to answer within one second less than this, so
