@@ -30,6 +30,7 @@
 (require 'cl-lib)
 (require 'aio)
 (require 'svg)
+(require 'url-util)
 (require 'supersonic-custom)
 (require 'supersonic-provider)
 ;; Only for `supersonic-waveform-bars'/`supersonic-waveform-svg-bars': the
@@ -249,9 +250,23 @@ first in both `supersonic-art-overlay-layers' and `-scroll-layers' by
 default -- but a layer like any other, so a customization is free to
 list something ahead of it (a background color showing through where
 `supersonic-art-overlay-layer-scrim' isn't opaque, say) or drop it
-altogether."
-  (svg-embed (plist-get ctx :svg) (plist-get ctx :file) (plist-get ctx :mime) nil
-             :width (plist-get ctx :size) :height (plist-get ctx :size)))
+altogether.
+
+Referenced by file name rather than embedded with `svg-embed': the
+overlay is redrawn on every waveform bucket change, and an embedded
+cover was base64-encoded, printed into the SVG and decoded again by
+librsvg each time -- most of the redraw's cost, for an image that never
+changes.  The name resolves against the `:base-uri' both
+`supersonic-art-overlay-propertize' and `-scroll-propertize' set to
+the same file, which also keeps it within the directory librsvg allows
+an SVG to load files from."
+  (dom-append-child
+   (plist-get ctx :svg)
+   (dom-node
+    'image
+    `((xlink:href . ,(url-hexify-string (file-name-nondirectory (plist-get ctx :file))))
+      (width . ,(plist-get ctx :size))
+      (height . ,(plist-get ctx :size))))))
 
 (defun supersonic-art-overlay-layer-scrim (ctx)
   "Draw the semi-opaque scrim CTX's text and waveform lane sit on.
@@ -334,7 +349,7 @@ to fit it."
   (let ((ctx (supersonic-art-overlay--context id size text waveform supersonic-art-overlay-layers)))
     (dolist (layer supersonic-art-overlay-layers)
       (funcall layer ctx))
-    (propertize " " 'display (svg-image (plist-get ctx :svg)))))
+    (propertize " " 'display (svg-image (plist-get ctx :svg) :base-uri (plist-get ctx :file)))))
 
 (defun supersonic-art-overlay-scroll-propertize (id size text offset &optional waveform)
   "Generate a property showing TEXT over cover art ID at SIZE, OFFSET pixels in.
@@ -355,7 +370,7 @@ WAVEFORM is as in `supersonic-art-overlay-propertize'."
               id size text waveform supersonic-art-overlay-scroll-layers offset)))
     (dolist (layer supersonic-art-overlay-scroll-layers)
       (funcall layer ctx))
-    (propertize " " 'display (svg-image (plist-get ctx :svg)))))
+    (propertize " " 'display (svg-image (plist-get ctx :svg) :base-uri (plist-get ctx :file)))))
 
 (aio-defun
  supersonic--fetch-art (id size)

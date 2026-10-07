@@ -663,8 +663,8 @@ a track's own id often doubles as its cover art id, and
   "Run BODY with cover art ID cached at SIZE under a temporary cache path.
 The bytes written are the smallest possible valid PNG (a single
 transparent pixel) -- real bytes are needed, not a placeholder string,
-since `image-type-from-file-header' has to recognize them to pick the
-right MIME type to embed the file as."
+since `image-type-from-file-header' has to recognize them for
+`supersonic-art-overlay--context''s `:mime', and librsvg to load them."
   (declare (indent 2))
   `(let ((supersonic-cache-path (expand-file-name (make-temp-name "supersonic-tests-cache-") temporary-file-directory)))
      (unwind-protect
@@ -703,6 +703,26 @@ not in what kind of display spec comes back."
            0 'display (supersonic-art-overlay-scroll-propertize "art-1" 100 "Some Track — Some Artist" 0))))
      (should (eq (car spec) 'image))
      (should (eq (plist-get (cdr spec) :type) 'svg)))))
+
+(ert-deftest supersonic-tests-art-overlay-references-the-cached-art-file ()
+  "Both overlay variants point the SVG at the cached art file, resolved
+against a `:base-uri' of that same file, rather than embedding its
+bytes.  The overlay is redrawn on every waveform bucket change; an
+embedded cover was base64-encoded, printed, and decoded again by
+librsvg each time, for an image that never changes."
+  (skip-unless (image-type-available-p 'svg))
+  (supersonic-tests--with-cached-art
+   "art-1" 100
+   (let ((file (supersonic-art-cache-file "art-1" 100)))
+     (dolist (spec
+              (list
+               (get-text-property 0 'display (supersonic-art-overlay-propertize "art-1" 100 "Some Track"))
+               (get-text-property 0 'display (supersonic-art-overlay-scroll-propertize "art-1" 100 "Some Track" 0))))
+       (let ((data (plist-get (cdr spec) :data)))
+         (should (equal file (plist-get (cdr spec) :base-uri)))
+         (should (= 1 (supersonic-tests--count-substring "<image" data)))
+         (should (string-match-p (regexp-quote (file-name-nondirectory file)) data))
+         (should-not (string-match-p "base64" data)))))))
 
 (ert-deftest supersonic-tests-art-overlay-propertize-draws-a-waveform-lane-when-given-one ()
   "`supersonic-art-overlay-propertize' draws extra rectangles for a
