@@ -2766,6 +2766,10 @@ crosses into another bucket -- once every twelve seconds for a
   (skip-unless (image-type-available-p 'pbm))
   (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
     (let ((supersonic-enable-waveform t)
+          ;; Only a standalone row is redrawn at all -- see
+          ;; `supersonic-tests-now-playing-waveform-builds-no-image-without-a-row'.
+          (supersonic-now-playing-layout-functions
+           (append supersonic-now-playing-layout-functions (list #'supersonic-now-playing-layout-waveform)))
           (supersonic-waveform-buckets 4)
           (redraws 0)
           (buff (get-buffer-create "*supersonic-tests-now-playing*")))
@@ -2790,6 +2794,70 @@ crosses into another bucket -- once every twelve seconds for a
               (should (= 1 redraws))
               (supersonic-now-playing-recolor-waveform buff 30)
               (should (= 1 redraws))))
+        (kill-buffer buff)))))
+
+;; `supersonic-now-playing--update-field' finding no `waveform' field to
+;; patch used to be the only thing standing between a hidden seekbar and
+;; its render -- by which point the full-size image had already been
+;; built as that call's argument, only to be thrown away.  At 400x120
+;; that was tens of milliseconds of blocked input every bucket change.
+(ert-deftest supersonic-tests-now-playing-waveform-builds-no-image-without-a-row ()
+  "Neither a freshly delivered envelope nor a bucket change renders the
+standalone seekbar image when the layout has no `waveform' row to put
+it in -- the default layout, which leaves
+`supersonic-now-playing-layout-waveform' out."
+  (skip-unless (image-type-available-p 'pbm))
+  (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
+    (let ((supersonic-enable-waveform t)
+          (supersonic-waveform-buckets 4)
+          (renders 0)
+          (buff (get-buffer-create "*supersonic-tests-now-playing*")))
+      (unwind-protect
+          (with-current-buffer buff
+            (supersonic-now-playing-mode)
+            (supersonic-now-playing--render buff '(:id "t" :duration 100) nil 0 "t")
+            (should-not (supersonic-tests--waveform-field-present-p buff))
+            (cl-letf* ((original (symbol-function 'supersonic-waveform-image))
+                       ((symbol-function 'supersonic-waveform-image)
+                        (lambda (&rest args)
+                          (cl-incf renders)
+                          (apply original args))))
+              (supersonic-now-playing--show-waveform
+               buff "t"
+               (cons (supersonic-tests--bytes '(10 20 30 40)) (supersonic-tests--bytes '(5 10 15 20))))
+              ;; Still cached for the art overlay, which may draw it.
+              (should supersonic-now-playing--waveform)
+              (supersonic-now-playing-recolor-waveform buff 25)
+              (supersonic-now-playing-recolor-waveform buff 50)
+              (should (= 0 renders))))
+        (kill-buffer buff)))))
+
+(ert-deftest supersonic-tests-now-playing-waveform-not-fetched-when-nothing-shows-it ()
+  "`supersonic-now-playing-maybe-fetch-waveform' leaves a track's
+waveform alone while neither a standalone `waveform' row nor cover art
+\(whose overlay draws the waveform lane) is there to show it, and
+leaves `supersonic-now-playing--waveform-requested' unset so a later
+tick still fetches once something does -- here, art being enabled."
+  (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t))
+            ((symbol-function 'image-type-available-p) (lambda (&optional _type) t)))
+    (let ((supersonic-enable-waveform t)
+          (supersonic-enable-art nil)
+          (ensured nil)
+          (buff (get-buffer-create "*supersonic-tests-now-playing*")))
+      (unwind-protect
+          (cl-letf (((symbol-function 'supersonic-waveform-ensure)
+                     (lambda (track-id &rest _) (push track-id ensured)))
+                    ((symbol-function 'get-buffer-window) (lambda (&rest _) (selected-window))))
+            (with-current-buffer buff
+              (supersonic-now-playing-mode)
+              (supersonic-now-playing--render buff '(:id "t" :duration 100) nil 0 "t"))
+            (supersonic-now-playing-maybe-fetch-waveform buff 0)
+            (should-not ensured)
+            (should-not (buffer-local-value 'supersonic-now-playing--waveform-requested buff))
+            (cl-letf (((symbol-function 'supersonic-art-available-p) (lambda () t)))
+              (supersonic-now-playing-maybe-fetch-waveform buff 1))
+            (should (equal '("t") ensured))
+            (should (buffer-local-value 'supersonic-now-playing--waveform-requested buff)))
         (kill-buffer buff)))))
 
 (ert-deftest supersonic-tests-now-playing-layout-functions-default-omits-the-standalone-waveform-row ()
