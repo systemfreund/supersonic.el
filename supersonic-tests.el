@@ -568,7 +568,7 @@ open connection per row."
         (sem (aio-sem 2)))
     (unwind-protect
         (cl-letf (((symbol-function 'supersonic-build-url) (lambda (_endpoint _extra-query) "dummy://url"))
-                  ((symbol-function 'supersonic-url-retrieve)
+                  ((symbol-function 'aio-url-retrieve)
                    (aio-lambda
                     (_url) (cl-incf in-flight) (setq peak (max peak in-flight))
                     ;; Stay "on the wire" long enough for the other fetches
@@ -2436,12 +2436,12 @@ an ordinary, empty result."
   (supersonic--signal-if-failed '(("subsonic-response" ("status" . "ok") ("song" ("id" . "1"))))))
 
 (defmacro supersonic-tests--with-stubbed-response (body-json &rest body)
-  "Run BODY with `supersonic-url-retrieve' stubbed to a 200 OK reply of BODY-JSON.
+  "Run BODY with `aio-url-retrieve' stubbed to a 200 OK reply of BODY-JSON.
 Mimics the buffer shape (headers, then `url-http-end-of-headers', then
 the body) that `supersonic-get-json' expects to parse, so BODY can
 exercise it end to end without a real supersonic server."
   (declare (indent 1))
-  `(cl-letf (((symbol-function 'supersonic-url-retrieve)
+  `(cl-letf (((symbol-function 'aio-url-retrieve)
               (aio-lambda
                (_url)
                (let ((buff (generate-new-buffer " *supersonic-tests-response*")))
@@ -2463,11 +2463,11 @@ ordinary, empty-looking result."
 
 (ert-deftest supersonic-tests-get-json-kills-the-url-retrieve-buffer ()
   "`supersonic-get-json' kills the very buffer `url-retrieve' handed its
-callback, not a copy of it -- `aio-url-retrieve' resolves to a
-`clone-buffer' of that buffer (skeeto/emacs-aio#33), so killing what
-it returns left the original ` *http host:port*' buffer behind on
-every request, and the jukebox poll alone piled up thousands of them
-overnight (#42)."
+callback, not a copy of it -- `aio-url-retrieve' before aio 1.2
+resolved to a `clone-buffer' of that buffer (skeeto/emacs-aio#33), so
+killing what it returns left the original ` *http host:port*' buffer
+behind on every request, and the jukebox poll alone piled up thousands
+of them overnight (#42)."
   (let ((response (generate-new-buffer " *supersonic-tests-response*")))
     (unwind-protect
         (cl-letf (((symbol-function 'url-retrieve)
@@ -4507,7 +4507,7 @@ request rejects."
       (supersonic-tests--with-stubbed-response "PNG-BYTES"
         (should (equal "PNG-BYTES" (supersonic-tests--resolve (supersonic-provider-cover-art "al-1" 300)))))
       (should (equal '(("/getCoverArt.view" ("id" . "al-1") ("size" . "300"))) requests))
-      (cl-letf (((symbol-function 'supersonic-url-retrieve)
+      (cl-letf (((symbol-function 'aio-url-retrieve)
                  (aio-lambda (_url) (cons '(:error (error "404")) (generate-new-buffer " *supersonic-tests*")))))
         (should-error (supersonic-tests--resolve (supersonic-provider-cover-art "al-1" 300)))))))
 

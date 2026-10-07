@@ -271,7 +271,7 @@ facade's warning to keep it off command lines."
 Asks getCoverArt, which scales the image to SIZE on the server."
  (pcase-let ((`(,status . ,buffer)
               (aio-await
-               (supersonic-url-retrieve
+               (aio-url-retrieve
                 (supersonic-build-url "/getCoverArt.view" `(("id" . ,art) ("size" . ,(int-to-string size))))))))
    (unwind-protect
        (let ((err (plist-get status :error)))
