@@ -1319,7 +1319,11 @@ PROGRESS-CALLBACK."
  supersonic-now-playing-mode
  special-mode
  "Supersonic Now Playing"
- "Major mode for the buffer opened by `supersonic-show-now-playing'.")
+ "Major mode for the buffer opened by `supersonic-show-now-playing'."
+ ;; Every field update replaces text whose display property is a whole
+ ;; image spec; undo would keep each superseded cover art overlay and
+ ;; seekbar alive, in a buffer nobody edits.
+ (buffer-disable-undo))
 
 ;;;###autoload
 (defun supersonic-show-now-playing ()
