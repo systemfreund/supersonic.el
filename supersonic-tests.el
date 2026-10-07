@@ -4686,6 +4686,7 @@ host gets none."
 
 ;;;
 ;;; UPnP renderer discovery and selection
+;;;
 
 (defconst supersonic-tests--ssdp-renderer-reply
   (concat "HTTP/1.1 200 OK\r\n"
@@ -4756,6 +4757,7 @@ the one to five seconds the specification allows."
     (should (string-prefix-p "M-SEARCH * HTTP/1.1\r\n" request))
     (should (string-match-p "^ST: urn:schemas-upnp-org:device:MediaRenderer:1\r$" request))
     (should (string-match-p "^MAN: \"ssdp:discover\"\r$" request))
+    (should (string-match-p "^HOST: 239\\.255\\.255\\.250:1900\r$" request))
     (should (string-match-p "^MX: 2\r$" request))
     (should (string-suffix-p "\r\n\r\n" request)))
   (should (string-match-p "^MX: 1\r$" (supersonic-upnp--m-search 0.5)))
@@ -4876,6 +4878,17 @@ description cannot be fetched -- without failing the rest."
                    ("http://gone/" (supersonic-tests--rejected "Connection refused"))))))
       (should (equal (list renderer) (supersonic-tests--resolve (supersonic-upnp--discover)))))))
 
+(ert-deftest supersonic-tests-upnp-discover-keeps-renderers-without-a-udn ()
+  "Renderers whose descriptions name no UDN cannot be told apart as
+the same device, so each is kept rather than merged into the first."
+  (cl-letf (((symbol-function 'supersonic-upnp--ssdp-search)
+             (supersonic-tests--resolved '("http://a/" "http://b/")))
+            ((symbol-function 'supersonic-upnp--describe)
+             (lambda (location) (funcall (supersonic-tests--resolved (list :name location :location location))))))
+    (should (equal '("http://a/" "http://b/")
+                   (mapcar (lambda (renderer) (plist-get renderer :location))
+                           (supersonic-tests--resolve (supersonic-upnp--discover)))))))
+
 (defmacro supersonic-tests--with-renderer-selection (renderers describe input &rest body)
   "Run BODY with discovery finding RENDERERS and the user typing INPUT.
 DESCRIBE stands in for `supersonic-upnp--describe'.  Within BODY,
@@ -4954,7 +4967,7 @@ reported, not selected."
       nil (supersonic-tests--resolved nil) "http://10.20.30.46:80/description.xml"
     (supersonic-tests--resolve (supersonic-upnp-select-renderer t))
     (should-not selected)
-    (should (string-match-p "No UPnP renderer with AVTransport" (car messages)))))
+    (should (string-match-p "describes no renderer with AVTransport" (car messages)))))
 
 (ert-deftest supersonic-tests-upnp-select-renderer-when-nothing-answers ()
   "With no renderer found, the prompt says so and asks for a URL;
@@ -4964,7 +4977,7 @@ input that is neither a renderer nor a URL is reported, not selected."
     (supersonic-tests--resolve (supersonic-upnp-select-renderer))
     (should (equal '("No UPnP renderer found; description URL: ") prompts))
     (should-not selected)
-    (should (string-match-p "Neither a UPnP renderer found nor a description URL" (car messages)))))
+    (should (string-match-p "is neither a renderer found nor a description URL" (car messages)))))
 
 (ert-deftest supersonic-tests-subsonic-cover-art-url-is-get-cover-art ()
   "The Subsonic provider's `cover-art-url' is the same getCoverArt URL

@@ -175,7 +175,7 @@ A `upnp` backend that plays to UPnP/DLNA renderers (AV receivers,
 network speakers, smart TVs) is in progress, see
 [#63](https://github.com/systemfreund/supersonic.el/issues/63).
 
-To pick the renderer to play to, load `supersonic-upnp` and run
+To pick the renderer to play to, run
 `M-x supersonic-upnp-select-renderer`. It searches your LAN for
 renderers for a few seconds (`supersonic-upnp-discovery-timeout`) and
 offers them by name. If a renderer does not show up, for example

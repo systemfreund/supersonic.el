@@ -64,8 +64,8 @@
 ;; entered by hand instead.
 ;;
 ;; This file has no `supersonic-playback-register-backend' call yet
-;; and nothing in the package requires it: until #65 turns it into a
-;; backend, it has to be loaded explicitly to select a renderer.
+;; and nothing in the package requires it until #65 turns it into a
+;; backend; `supersonic-upnp-select-renderer' is autoloaded, though.
 
 ;;; Code:
 (require 'aio)
@@ -214,12 +214,18 @@ renderer may run on this machine itself."
 
 ;;;
 ;;; Renderer discovery and selection
+;;;
 
 (defconst supersonic-upnp--ssdp-address [239 255 255 250 1900]
   "The SSDP multicast group and port, as `set-process-datagram-address' takes it.")
 
-(defconst supersonic-upnp--renderer-device-type "urn:schemas-upnp-org:device:MediaRenderer:1"
-  "The device type an SSDP search asks for.")
+(defconst supersonic-upnp--renderer-device-type "urn:schemas-upnp-org:device:MediaRenderer:"
+  "The device type of a MediaRenderer, without its version.
+An SSDP search asks for version 1, which every later version also
+answers to; a device description may name any version.")
+
+(defconst supersonic-upnp--av-transport-service-type "urn:schemas-upnp-org:service:AVTransport:"
+  "The service type of `AVTransport', without its version.")
 
 (defun supersonic-upnp--m-search (timeout)
   "Return an SSDP `M-SEARCH' request for MediaRenderers, for a TIMEOUT search.
@@ -229,10 +235,10 @@ than TIMEOUT leaves the slowest a second to arrive; the specification
 allows one to five."
   (concat
    "M-SEARCH * HTTP/1.1\r\n"
-   "HOST: 239.255.255.250:1900\r\n"
+   (format "HOST: %s\r\n" (format-network-address supersonic-upnp--ssdp-address))
    "MAN: \"ssdp:discover\"\r\n"
    (format "MX: %d\r\n" (max 1 (min 5 (1- (ceiling timeout)))))
-   "ST: " supersonic-upnp--renderer-device-type "\r\n"
+   "ST: " supersonic-upnp--renderer-device-type "1\r\n"
    "\r\n"))
 
 (defun supersonic-upnp--ssdp-location (response)
@@ -289,14 +295,18 @@ Collected by hand: `dom-text' and `dom-texts' are obsolete as of Emacs
   (let ((child (dom-child-by-tag node tag)))
     (and child (string-trim (apply #'concat (seq-filter #'stringp (dom-children child)))))))
 
+(defun supersonic-upnp--type-p (node tag type)
+  "Return non-nil if NODE's child element TAG names TYPE, of any version.
+TYPE is a device or service type up to and including its last colon."
+  (string-prefix-p type (or (supersonic-upnp--child-text node tag) "")))
+
 (defun supersonic-upnp--av-transport-control-url (device)
   "Return the relative or absolute control URL of DEVICE's `AVTransport'.
 DEVICE is a `device' element of a device description; nil if it has
 no such service."
   (seq-some
    (lambda (service)
-     (and (string-prefix-p "urn:schemas-upnp-org:service:AVTransport:"
-                           (or (supersonic-upnp--child-text service 'serviceType) ""))
+     (and (supersonic-upnp--type-p service 'serviceType supersonic-upnp--av-transport-service-type)
           (supersonic-upnp--child-text service 'controlURL)))
    (dom-by-tag (dom-child-by-tag device 'serviceList) 'service)))
 
@@ -320,16 +330,12 @@ that does not parse, the value is nil."
           (lambda (device)
             (let ((control-url (supersonic-upnp--av-transport-control-url device)))
               (and control-url
-                   (string-prefix-p "urn:schemas-upnp-org:device:MediaRenderer:"
-                                    (or (supersonic-upnp--child-text device 'deviceType) ""))
+                   (supersonic-upnp--type-p device 'deviceType supersonic-upnp--renderer-device-type)
                    (list :name (or (supersonic-upnp--child-text device 'friendlyName) location)
                          :udn (supersonic-upnp--child-text device 'UDN)
                          :location location
                          :control-url (url-expand-file-name control-url base)))))
           (dom-by-tag root 'device)))))
-
-;; fix byte-compiler complaints
-(defvar url-http-end-of-headers)
 
 (aio-defun
  supersonic-upnp--describe (location)
@@ -337,17 +343,7 @@ that does not parse, the value is nil."
 See `supersonic-upnp--parse-description' for what it resolves to,
 including nil for a device that is not a renderer.  The promise
 rejects if the description cannot be fetched."
- (pcase-let ((`(,status . ,buffer) (aio-await (supersonic-url-retrieve location))))
-   (unwind-protect
-       (progn
-         (when (plist-get status :error)
-           (error "Failed to fetch %s: %S" location (plist-get status :error)))
-         (with-current-buffer buffer
-           ;; Device descriptions are UTF-8 by the UPnP specification.
-           (supersonic-upnp--parse-description
-            (decode-coding-string (buffer-substring (1+ url-http-end-of-headers) (point-max)) 'utf-8)
-            location)))
-     (kill-buffer buffer))))
+ (supersonic-upnp--parse-description (aio-await (supersonic-get-text location)) location))
 
 (defun supersonic-upnp--describe-all (locations)
   "Start fetching the device descriptions at LOCATIONS, all at once.
@@ -375,8 +371,9 @@ judge."
      (let* ((outcome (aio-await promise))
             (renderer (and (eq (car outcome) :success) (cdr outcome))))
        (when (and renderer
-                  (not (seq-find (lambda (known) (equal (plist-get known :udn) (plist-get renderer :udn)))
-                                 renderers)))
+                  (not (and (plist-get renderer :udn)
+                            (seq-find (lambda (known) (equal (plist-get known :udn) (plist-get renderer :udn)))
+                                      renderers))))
          (push renderer renderers))))
    (nreverse renderers)))
 
@@ -424,8 +421,8 @@ wants touched -- their configuration may set the renderer itself."
           (or (cdr (assoc input choices))
               (if (string-match-p "\\`https?://" input)
                   (or (aio-await (supersonic-upnp--describe input))
-                      (user-error "No UPnP renderer with AVTransport is described at %s" input))
-                (user-error "Neither a UPnP renderer found nor a description URL: %s" input)))))
+                      (user-error "%s describes no renderer with AVTransport" input))
+                (user-error "\"%s\" is neither a renderer found nor a description URL" input)))))
     (let ((name (plist-get renderer :name)))
       (customize-set-variable
        'supersonic-upnp-renderer (list :location (plist-get renderer :location) :udn (plist-get renderer :udn) :name name))
