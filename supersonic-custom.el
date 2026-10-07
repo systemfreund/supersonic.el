@@ -564,6 +564,14 @@ name a stream URL, the jukebox only for `subsonic'.  Switching with
   :type 'number
   :group 'supersonic)
 
+(defcustom supersonic-request-timeout 10
+  "Seconds to wait for the server to answer a request before giving up.
+Asynchronous `url-retrieve' has no timeout of its own, so without one
+a request the server never answers holds its connection, and with it
+a file descriptor, open for the rest of the session."
+  :type 'number
+  :group 'supersonic)
+
 (defcustom supersonic-jukebox-poll-interval 3
   "Seconds between jukeboxControl polls while `jukebox' is the active backend.
 The Subsonic API has no push mechanism for jukebox state, so
