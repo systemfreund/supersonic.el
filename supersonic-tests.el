@@ -3704,6 +3704,37 @@ a `get' of its own."
       (supersonic-tests--resolve explicit)
       (should (supersonic-jukebox-live-p)))))
 
+(ert-deftest supersonic-tests-jukebox-poll-answered-after-stopping-is-dropped ()
+  "A poll whose answer arrives after polling stopped -- the backend was
+switched away while it waited -- changes nothing: the backend stays
+not live, keeps no snapshot, and runs no hook."
+  (supersonic-tests--with-held-jukebox-polls
+    (let ((supersonic-playback-track-change-hook nil)
+          (hooks 0))
+      (add-hook 'supersonic-playback-track-change-hook (lambda () (cl-incf hooks)))
+      (supersonic-poller--tick supersonic-jukebox--poller)
+      (supersonic-poller--stop supersonic-jukebox--poller)
+      (supersonic-tests--release-jukebox-poll)
+      (supersonic-tests--settle)
+      (should-not (supersonic-jukebox-live-p))
+      (should-not (supersonic-jukebox--snapshot))
+      (should (= 0 hooks)))))
+
+(ert-deftest supersonic-tests-jukebox-hook-error-is-not-a-failed-poll ()
+  "A facade hook that signals an error is reported as such, not as the
+jukebox failing to answer: the backend stays live."
+  (supersonic-tests--with-jukebox
+   (let ((supersonic-playback-track-change-hook nil)
+         (reports nil))
+     (add-hook 'supersonic-playback-track-change-hook (lambda () (error "Hook broke")))
+     (cl-letf (((symbol-function 'supersonic--report-async-error)
+                (lambda (description _err) (push description reports))))
+       (setq supersonic-tests--jukebox-playlist
+             `(("currentIndex" . 0) ("playing" . t) ("position" . 0) ("entry" . ((("id" . "a"))))))
+       (supersonic-tests--resolve (supersonic-jukebox--poll))
+       (should (supersonic-jukebox-live-p))
+       (should (equal '("run the playback hooks") reports))))))
+
 (ert-deftest supersonic-tests-jukebox-start-replaces-playlist-and-starts ()
   "`supersonic-jukebox-start' sends `set' with every id, then `start',
 then refreshes the cached snapshot so a caller relying on it right

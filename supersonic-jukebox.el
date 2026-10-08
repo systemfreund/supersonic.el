@@ -180,6 +180,11 @@ See `supersonic-jukebox--parse-snapshot'."
    :summarize #'supersonic-jukebox--summarize
    :description "poll the jukebox"))
 
+;; `defvar', so that re-evaluating this file keeps the poller and with
+;; it what polling found.  After changing the slots of `supersonic-poller',
+;; set this to (supersonic-jukebox--make-poller) by hand before re-evaluating
+;; this file: the old poller no longer fits the new accessors, and
+;; `supersonic-poller-register' below would trip over it.
 (defvar supersonic-jukebox--poller (supersonic-jukebox--make-poller)
   "Polls the jukebox, and holds what the latest poll found.
 Its snapshot is a plist: `:entries', the supersonic track ids in the

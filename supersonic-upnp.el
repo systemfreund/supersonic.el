@@ -816,6 +816,11 @@ now names another control URL; see `supersonic-upnp--control'."
    :on-failure #'supersonic-upnp--forget-control
    :on-landed #'supersonic-upnp--landed))
 
+;; `defvar', so that re-evaluating this file keeps the poller and with
+;; it what polling found.  After changing the slots of `supersonic-poller',
+;; set this to (supersonic-upnp--make-poller) by hand before re-evaluating
+;; this file: the old poller no longer fits the new accessors, and
+;; `supersonic-poller-register' below would trip over it.
 (defvar supersonic-upnp--poller (supersonic-upnp--make-poller)
   "Polls the renderer, and holds what the latest poll found.
 Its snapshot is a plist: `:state', the renderer's transport state,

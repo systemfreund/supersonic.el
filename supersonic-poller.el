@@ -72,18 +72,22 @@ reported as having failed to do, such as \"poll the jukebox\";
 `on-landed', nil or a function of the previous and the new snapshot,
 run whenever a poll gets an answer, before the facade's hooks.  It may
 return a function of no arguments, which is called once the poll is no
-longer in flight, and whatever promise that returns is awaited.
+longer in flight, and whatever promise that returns is awaited.  That
+function has to report its own errors: on a timer's poll, nobody
+awaits the poll's promise.
 
 Kept by this file:
 
 `snapshot', the latest poll's, or nil before any landed; `live',
 non-nil if the last poll got an answer; `failing', non-nil once a poll
 failed without a later one succeeding since; `in-flight', a promise
-resolved once the poll in flight is done, or nil; `timer', the poll
-timer while the backend is active; and `announced', what
-`supersonic-poller-announce' last ran the hooks for."
+resolved once the poll in flight is done, or nil; `generation',
+counting how often polling stopped, so that a poll can tell it outlived
+the polling it was sent for; `timer', the poll timer while the backend
+is active; and `announced', what `supersonic-poller-announce' last ran
+the hooks for."
   backend interval fetch summarize description on-failure on-landed
-  snapshot live failing in-flight timer announced)
+  snapshot live failing in-flight (generation 0) timer announced)
 
 ;;;
 ;;; Polling
@@ -148,31 +152,45 @@ skips rather than waits.  A poll stays in flight until its request
 settles, which `supersonic-request-timeout' bounds.
 
 A poll that gets an answer runs POLLER's `on-landed' before the hooks,
-and whatever function that returns once it is no longer in flight."
+and whatever function that returns once it is no longer in flight.
+
+Only the player failing to answer counts as a failed poll.  An error
+from a facade hook, `on-failure' or `on-landed' is reported as failing
+to run the playback hooks, and leaves the backend live.  A poll still
+waiting for its answer when polling stops changes nothing once the
+answer arrives, see `supersonic-poller--stop'."
  (while (supersonic-poller-in-flight poller)
    (aio-await (supersonic-poller-in-flight poller)))
  (let ((done (aio-promise))
+       (generation (supersonic-poller-generation poller))
        (previous (supersonic-poller-snapshot poller))
+       (was-live (supersonic-poller-live poller))
+       (snapshot nil)
+       (failure nil)
        (then nil))
    (setf (supersonic-poller-in-flight poller) done)
    (unwind-protect
-       (let ((was-live (supersonic-poller-live poller)))
+       (progn
          (condition-case err
-             (progn
-               (setf (supersonic-poller-snapshot poller) (aio-await (funcall (supersonic-poller-fetch poller))))
+             (setq snapshot (aio-await (funcall (supersonic-poller-fetch poller))))
+           (error (setq failure err)))
+         (when (eql generation (supersonic-poller-generation poller))
+           (supersonic--with-async-error-handling nil "run the playback hooks"
+             (if failure
+                 (progn
+                   (setf (supersonic-poller-live poller) nil)
+                   (when (supersonic-poller-on-failure poller)
+                     (funcall (supersonic-poller-on-failure poller)))
+                   (unless (supersonic-poller-failing poller)
+                     (setf (supersonic-poller-failing poller) t)
+                     (supersonic--report-async-error (supersonic-poller-description poller) failure)
+                     (run-hooks 'supersonic-playback-track-change-hook)))
+               (setf (supersonic-poller-snapshot poller) snapshot)
                (setf (supersonic-poller-live poller) t)
                (setf (supersonic-poller-failing poller) nil)
                (when (supersonic-poller-on-landed poller)
-                 (setq then (funcall (supersonic-poller-on-landed poller) previous (supersonic-poller-snapshot poller))))
-               (supersonic-poller-announce poller (not was-live)))
-           (error
-            (setf (supersonic-poller-live poller) nil)
-            (when (supersonic-poller-on-failure poller)
-              (funcall (supersonic-poller-on-failure poller)))
-            (unless (supersonic-poller-failing poller)
-              (setf (supersonic-poller-failing poller) t)
-              (supersonic--report-async-error (supersonic-poller-description poller) err)
-              (run-hooks 'supersonic-playback-track-change-hook)))))
+                 (setq then (funcall (supersonic-poller-on-landed poller) previous snapshot)))
+               (supersonic-poller-announce poller (not was-live))))))
      (setf (supersonic-poller-in-flight poller) nil)
      (aio-resolve done #'ignore))
    (when then
@@ -237,7 +255,11 @@ shows real state as soon as it becomes the active one."
 (defun supersonic-poller--stop (poller)
   "Stop POLLER's timer and forget what polling found.
 So that neither a stale snapshot nor a timer spending requests on a
-player nobody asks about outlives the backend being the active one."
+player nobody asks about outlives the backend being the active one.
+A poll still in flight is not cancelled, but its answer is dropped:
+otherwise it would mark the backend live again, run the hooks, and
+for UPnP even load the next track, after the user switched away."
+  (cl-incf (supersonic-poller-generation poller))
   (when (supersonic-poller-timer poller)
     (cancel-timer (supersonic-poller-timer poller))
     (setf (supersonic-poller-timer poller) nil))
