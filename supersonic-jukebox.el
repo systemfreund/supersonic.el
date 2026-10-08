@@ -323,8 +323,9 @@ it for an out-of-range index there just replays the last entry instead
 of stopping (#50)."
  (supersonic--with-async-error-handling
   nil "skip to the next jukebox track"
-  (let ((index (1+ (or (plist-get (supersonic-jukebox--snapshot) :current-index) -1)))
-        (length (length (plist-get (supersonic-jukebox--snapshot) :entries))))
+  (let* ((snapshot (supersonic-jukebox--snapshot))
+         (index (1+ (or (plist-get snapshot :current-index) -1)))
+         (length (length (plist-get snapshot :entries))))
     (when (< index length)
       (aio-await (supersonic-jukebox--request "skip" `(("index" . ,(number-to-string index)))))))
   (aio-await (supersonic-jukebox--poll))))
@@ -392,8 +393,9 @@ Subsonic API marks a song's \"duration\" optional, see
 package -- rather than erroring on the arithmetic."
  (supersonic--with-async-error-handling
   nil "seek the jukebox"
-  (let* ((index (or (plist-get (supersonic-jukebox--snapshot) :current-index) -1))
-         (duration (or (plist-get (supersonic-jukebox--snapshot) :duration) 0))
+  (let* ((snapshot (supersonic-jukebox--snapshot))
+         (index (or (plist-get snapshot :current-index) -1))
+         (duration (or (plist-get snapshot :duration) 0))
          (target (round (* fraction duration))))
     (aio-await
      (supersonic-jukebox--request

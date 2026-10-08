@@ -64,12 +64,15 @@ active; `interval', the variable holding the seconds between polls;
 snapshot, a plist the backend makes up but for `:position' and
 `:polled-at', which `supersonic-poller-position' reads; `summarize', a
 function of a snapshot returning a plist (:track-id ID :paused PAUSED
-:entries IDS) of what the facade's hooks announce; `description', what
-a failed poll is reported as having failed to do, such as \"poll the
-jukebox\"; `on-failure', nil or a function run whenever a poll fails;
-and `settled', nil or a function of the previous and the new snapshot,
-run once a successful poll is no longer in flight, that may return a
-promise for the poll to wait for.
+:entries IDS) of what the facade's hooks announce -- read off the
+snapshot, or off state the backend keeps itself, such as the UPnP
+backend's client-side queue; `description', what a failed poll is
+reported as having failed to do, such as \"poll the jukebox\";
+`on-failure', nil or a function run whenever a poll fails; and
+`on-landed', nil or a function of the previous and the new snapshot,
+run whenever a poll gets an answer, before the facade's hooks.  It may
+return a function of no arguments, which is called once the poll is no
+longer in flight, and whatever promise that returns is awaited.
 
 Kept by this file:
 
@@ -79,7 +82,7 @@ failed without a later one succeeding since; `in-flight', a promise
 resolved once the poll in flight is done, or nil; `timer', the poll
 timer while the backend is active; and `announced', what
 `supersonic-poller-announce' last ran the hooks for."
-  backend interval fetch summarize description on-failure settled
+  backend interval fetch summarize description on-failure on-landed
   snapshot live failing in-flight timer announced)
 
 ;;;
@@ -140,17 +143,17 @@ Never runs alongside another poll: with one in flight, this waits for
 it and then polls itself.  An action polling for its own effect cannot
 make do with the answer to a poll sent before it, and two polls in
 flight could land out of order, an older snapshot overwriting a newer
-one.  The timer polls through `supersonic-poller-tick' instead, which
+one.  The timer polls through `supersonic-poller--tick' instead, which
 skips rather than waits.  A poll stays in flight until its request
 settles, which `supersonic-request-timeout' bounds.
 
-Once a successful poll is no longer in flight, POLLER's `settled' is
-run, and whatever it returns awaited."
+A poll that gets an answer runs POLLER's `on-landed' before the hooks,
+and whatever function that returns once it is no longer in flight."
  (while (supersonic-poller-in-flight poller)
    (aio-await (supersonic-poller-in-flight poller)))
  (let ((done (aio-promise))
        (previous (supersonic-poller-snapshot poller))
-       (answered nil))
+       (then nil))
    (setf (supersonic-poller-in-flight poller) done)
    (unwind-protect
        (let ((was-live (supersonic-poller-live poller)))
@@ -159,7 +162,8 @@ run, and whatever it returns awaited."
                (setf (supersonic-poller-snapshot poller) (aio-await (funcall (supersonic-poller-fetch poller))))
                (setf (supersonic-poller-live poller) t)
                (setf (supersonic-poller-failing poller) nil)
-               (setq answered t)
+               (when (supersonic-poller-on-landed poller)
+                 (setq then (funcall (supersonic-poller-on-landed poller) previous (supersonic-poller-snapshot poller))))
                (supersonic-poller-announce poller (not was-live)))
            (error
             (setf (supersonic-poller-live poller) nil)
@@ -171,12 +175,10 @@ run, and whatever it returns awaited."
               (run-hooks 'supersonic-playback-track-change-hook)))))
      (setf (supersonic-poller-in-flight poller) nil)
      (aio-resolve done #'ignore))
-   (when (and answered (supersonic-poller-settled poller))
-     (let ((settling (funcall (supersonic-poller-settled poller) previous (supersonic-poller-snapshot poller))))
-       (when settling
-         (aio-await settling))))))
+   (when then
+     (aio-await (funcall then)))))
 
-(defun supersonic-poller-tick (poller)
+(defun supersonic-poller--tick (poller)
   "Poll POLLER's player, unless a poll is still waiting for its answer.
 What POLLER's timer runs.  A tick used to poll regardless, so a player
 that stopped answering piled up one more open connection per tick
@@ -184,6 +186,15 @@ until Emacs ran out of file descriptors (#70).  Skipping loses
 nothing: the poll in flight is about to report the same state."
   (unless (supersonic-poller-in-flight poller)
     (ignore (supersonic-poller-poll poller))))
+
+(defun supersonic-poller-replace-snapshot (poller snapshot)
+  "Make SNAPSHOT POLLER's latest, as if a poll had found it, and announce it.
+For a backend that knows what its player is about to report before a
+poll can find it -- the UPnP backend, having just loaded a track --
+and wants the facade's hooks to show it now.  See
+`supersonic-poller-announce'."
+  (setf (supersonic-poller-snapshot poller) snapshot)
+  (supersonic-poller-announce poller))
 
 (aio-defun
  supersonic-poller-finish-seek (poller)
@@ -220,8 +231,8 @@ Right away rather than after the first interval, so that the backend
 shows real state as soon as it becomes the active one."
   (unless (supersonic-poller-timer poller)
     (let ((interval (symbol-value (supersonic-poller-interval poller))))
-      (setf (supersonic-poller-timer poller) (run-at-time interval interval #'supersonic-poller-tick poller)))
-    (supersonic-poller-tick poller)))
+      (setf (supersonic-poller-timer poller) (run-at-time interval interval #'supersonic-poller--tick poller)))
+    (supersonic-poller--tick poller)))
 
 (defun supersonic-poller--stop (poller)
   "Stop POLLER's timer and forget what polling found.

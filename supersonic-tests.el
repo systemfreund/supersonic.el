@@ -3587,6 +3587,59 @@ forever after the first one."
          (supersonic-tests--resolve (supersonic-jukebox--poll))
          (should (= 2 reports)))))))
 
+(ert-deftest supersonic-tests-jukebox-first-poll-of-an-idle-jukebox-runs-track-change ()
+  "The first poll to get an answer runs the track-change hook even when
+it finds nothing playing, so whatever showed the jukebox as not live
+shows it live -- and only that hook, scrobbling nothing."
+  (supersonic-tests--with-jukebox
+   (let ((supersonic-playback-track-change-hook nil)
+         (supersonic-playback-queue-change-hook nil)
+         (supersonic-playback-state-change-hook nil)
+         (hooks nil)
+         (scrobbles nil))
+     (add-hook 'supersonic-playback-track-change-hook (lambda () (push 'track hooks)))
+     (add-hook 'supersonic-playback-queue-change-hook (lambda () (push 'queue hooks)))
+     (add-hook 'supersonic-playback-state-change-hook (lambda () (push 'state hooks)))
+     (cl-letf (((symbol-function 'supersonic-provider-scrobble) (lambda (&rest args) (push args scrobbles))))
+       (setq supersonic-tests--jukebox-playlist
+             `(("currentIndex" . -1) ("playing" . :json-false) ("position" . 0) ("entry" . nil)))
+       (supersonic-tests--resolve (supersonic-jukebox--poll))
+       (should (equal '(track) hooks))
+       (should-not scrobbles)))))
+
+(ert-deftest supersonic-tests-jukebox-recovery-runs-track-change-instead-of-the-others ()
+  "A poll that gets an answer again after an outage runs the
+track-change hook even though the track is the same, since the outage
+already ran it to show the jukebox gone.  It stands in for the
+queue-change and state-change hooks, which would otherwise have run
+for what changed meanwhile: every consumer re-reads everything on a
+track change anyway.  Nothing is scrobbled for the same track."
+  (supersonic-tests--with-jukebox
+   (let ((supersonic-playback-track-change-hook nil)
+         (supersonic-playback-queue-change-hook nil)
+         (supersonic-playback-state-change-hook nil)
+         (hooks nil)
+         (scrobbles nil))
+     (add-hook 'supersonic-playback-track-change-hook (lambda () (push 'track hooks)))
+     (add-hook 'supersonic-playback-queue-change-hook (lambda () (push 'queue hooks)))
+     (add-hook 'supersonic-playback-state-change-hook (lambda () (push 'state hooks)))
+     (cl-letf (((symbol-function 'supersonic-provider-scrobble) (lambda (&rest args) (push args scrobbles)))
+               ((symbol-function 'supersonic--report-async-error) #'ignore))
+       (setq supersonic-tests--jukebox-playlist
+             `(("currentIndex" . 0) ("playing" . t) ("position" . 0) ("entry" . ((("id" . "a"))))))
+       (supersonic-tests--resolve (supersonic-jukebox--poll))
+       (cl-letf (((symbol-function 'supersonic-get-json) (aio-lambda (_url) (error "boom"))))
+         (supersonic-tests--resolve (supersonic-jukebox--poll)))
+       (setq hooks nil scrobbles nil)
+       ;; Back, same track, now paused and with one more entry.
+       (setq supersonic-tests--jukebox-playlist
+             `(("currentIndex" . 0) ("playing" . :json-false) ("position" . 0)
+               ("entry" . ((("id" . "a")) (("id" . "b"))))))
+       (supersonic-tests--resolve (supersonic-jukebox--poll))
+       (should (supersonic-jukebox-live-p))
+       (should (equal '(track) hooks))
+       (should-not scrobbles)))))
+
 (defmacro supersonic-tests--with-held-jukebox-polls (&rest body)
   "Run BODY inside `supersonic-tests--with-jukebox' with every `get' held.
 Each `get' records itself in `supersonic-tests--jukebox-requests' as
@@ -3622,12 +3675,12 @@ server that stopped answering piled up a connection every
 `supersonic-jukebox-poll-interval' until Emacs ran out of file
 descriptors (#70)."
   (supersonic-tests--with-held-jukebox-polls
-    (supersonic-poller-tick supersonic-jukebox--poller)
-    (supersonic-poller-tick supersonic-jukebox--poller)
+    (supersonic-poller--tick supersonic-jukebox--poller)
+    (supersonic-poller--tick supersonic-jukebox--poller)
     (should (equal '("get") (supersonic-tests--jukebox-request-actions)))
     (supersonic-tests--release-jukebox-poll)
     (supersonic-tests--settle)
-    (supersonic-poller-tick supersonic-jukebox--poller)
+    (supersonic-poller--tick supersonic-jukebox--poller)
     (should (equal '("get" "get") (supersonic-tests--jukebox-request-actions)))
     (supersonic-tests--release-jukebox-poll)
     (supersonic-tests--settle)))
@@ -3639,7 +3692,7 @@ one's answer may predate the action; nor does it run alongside it,
 since the two answers could land out of order.  It waits, then sends
 a `get' of its own."
   (supersonic-tests--with-held-jukebox-polls
-    (supersonic-poller-tick supersonic-jukebox--poller)
+    (supersonic-poller--tick supersonic-jukebox--poller)
     (let ((explicit (supersonic-jukebox--poll)))
       (supersonic-tests--settle)
       (should (equal '("get") (supersonic-tests--jukebox-request-actions)))

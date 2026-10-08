@@ -768,9 +768,9 @@ whenever it stops."
   "Return what the facade's hooks announce, with the renderer as SNAPSHOT found it.
 The plist `supersonic-poller-announce' compares: the track the
 renderer was given, whether it is paused, and the queue's entries.
-All but the pause state are kept here rather than on the renderer, so
-the hooks are announced from here, too, whenever they change -- not
-only after a poll."
+Only the pause state comes from SNAPSHOT.  The rest is kept here
+rather than on the renderer, so the hooks are announced from here,
+too, whenever it changes -- not only after a poll."
   (list :track-id (supersonic-upnp--current-track)
         :paused (supersonic-upnp--paused-p snapshot)
         :entries (copy-sequence supersonic-upnp--queue)))
@@ -789,13 +789,15 @@ See `supersonic-upnp--poller' for what it holds."
          :index index
          :polled-at (float-time))))
 
-(defun supersonic-upnp--settle (previous current)
-  "Load the next track if snapshot CURRENT finds the one in PREVIOUS ended.
-See `supersonic-upnp--track-ended-p'.  Return the promise of loading
-it, or nil.  Run once the poll that took CURRENT is no longer in
-flight, since loading the next track polls in turn."
+(defun supersonic-upnp--landed (previous current)
+  "Return how to move on if snapshot CURRENT finds the track in PREVIOUS ended.
+See `supersonic-upnp--track-ended-p'.  That is a function loading the
+next track, or nil.  Decided as the poll that took CURRENT lands,
+before the facade's hooks run, but only called once that poll is no
+longer in flight, since loading the next track polls in turn."
   (when (supersonic-upnp--track-ended-p previous current)
-    (supersonic-upnp--advance (plist-get current :index))))
+    (let ((index (plist-get current :index)))
+      (lambda () (supersonic-upnp--advance index)))))
 
 (defun supersonic-upnp--forget-control ()
   "Look the control URL up afresh, after a poll failed.
@@ -812,7 +814,7 @@ now names another control URL; see `supersonic-upnp--control'."
    :summarize #'supersonic-upnp--summarize
    :description "poll the UPnP renderer"
    :on-failure #'supersonic-upnp--forget-control
-   :settled #'supersonic-upnp--settle))
+   :on-landed #'supersonic-upnp--landed))
 
 (defvar supersonic-upnp--poller (supersonic-upnp--make-poller)
   "Polls the renderer, and holds what the latest poll found.
@@ -836,7 +838,7 @@ See `supersonic-upnp--poller'."
 (defun supersonic-upnp--poll ()
   "Return a promise of polling the renderer; see `supersonic-poller-poll'.
 When a poll shows that the current track played to its end, the next
-queued track is loaded; see `supersonic-upnp--settle'."
+queued track is loaded; see `supersonic-upnp--landed'."
   (supersonic-poller-poll supersonic-upnp--poller))
 
 (defun supersonic-upnp-live-p ()
@@ -873,9 +875,9 @@ that follows, so what shows the track does not lag behind it."
    (setq supersonic-upnp--index index)
    (setq supersonic-upnp--track-duration (plist-get item :duration))
    (setq supersonic-upnp--user-stopped nil)
-   (setf (supersonic-poller-snapshot supersonic-upnp--poller)
-         (list :state "TRANSITIONING" :position 0 :duration nil :index index :polled-at (float-time))))
- (supersonic-poller-announce supersonic-upnp--poller)
+   (supersonic-poller-replace-snapshot
+    supersonic-upnp--poller
+    (list :state "TRANSITIONING" :position 0 :duration nil :index index :polled-at (float-time))))
  (aio-await (supersonic-upnp--poll)))
 
 (aio-defun
