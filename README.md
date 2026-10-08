@@ -191,6 +191,13 @@ kept in Emacs, which polls the renderer every
 once one has ended. The queue therefore only moves on while Emacs
 is running.
 
+Renderers that can hold a next track (`SetNextAVTransportURI`) are
+given it as soon as the current one plays, and move on to it
+themselves, without waiting for a poll. Whether that is gapless is up
+to the renderer: some, such as LG webOS TVs, still pause briefly
+between tracks. Renderers without it are detected automatically and
+keep the poll-driven advance.
+
 To pick the renderer to play to, run
 `M-x supersonic-upnp-select-renderer`. It searches your LAN for
 renderers for a few seconds (`supersonic-upnp-discovery-timeout`) and
