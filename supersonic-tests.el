@@ -5413,6 +5413,49 @@ renderer's own remote -- does not move on to the next."
    (should (equal "a" (supersonic-tests--resolve (supersonic-upnp-status 'track-id))))
    (should (equal "http://music/a" (plist-get supersonic-tests--renderer :uri)))))
 
+(ert-deftest supersonic-tests-upnp-does-not-advance-across-an-outage ()
+  "A renderer that stopped answering mid-track and comes back stopped,
+long after the track would have ended, did not play it to the end:
+it stays on the track, and is not told to play the next (#81)."
+  (supersonic-tests--with-upnp
+   (cl-letf (((symbol-function 'supersonic--report-async-error) #'ignore))
+     (supersonic-tests--resolve (supersonic-upnp--start '("a" "b")))
+     (setq supersonic-tests--renderer (plist-put supersonic-tests--renderer :position "0:01:00"))
+     (supersonic-tests--resolve (supersonic-upnp--poll))
+     (setq supersonic-tests--renderer
+           (plist-put supersonic-tests--renderer :faults '(("GetTransportInfo" 501 . "Action Failed"))))
+     (supersonic-tests--resolve (supersonic-upnp--poll))
+     (supersonic-tests--jukebox-advance-clock 600)
+     (setq supersonic-tests--renderer (plist-put supersonic-tests--renderer :faults nil))
+     (setq supersonic-tests--renderer (plist-put supersonic-tests--renderer :state "STOPPED"))
+     (setq supersonic-tests--renderer (plist-put supersonic-tests--renderer :position "0:00:00"))
+     (supersonic-tests--upnp-reset-requests)
+     (supersonic-tests--resolve (supersonic-upnp--poll))
+     (should (supersonic-upnp-live-p))
+     (should-not (member "SetAVTransportURI" (supersonic-tests--renderer-actions)))
+     (should (equal "a" (supersonic-tests--resolve (supersonic-upnp-status 'track-id))))
+     (should (equal "STOPPED" (plist-get supersonic-tests--renderer :state))))))
+
+(ert-deftest supersonic-tests-upnp-advances-across-one-failed-poll ()
+  "A poll that fails as the track ends -- timing out on a flaky network,
+say -- does not keep the next poll from moving on to the next track."
+  (supersonic-tests--with-upnp
+   (cl-letf (((symbol-function 'supersonic--report-async-error) #'ignore))
+     (supersonic-tests--resolve (supersonic-upnp--start '("a" "b")))
+     (setq supersonic-tests--renderer (plist-put supersonic-tests--renderer :position "0:02:56"))
+     (supersonic-tests--resolve (supersonic-upnp--poll))
+     (setq supersonic-tests--renderer
+           (plist-put supersonic-tests--renderer :faults '(("GetTransportInfo" 501 . "Action Failed"))))
+     (supersonic-tests--jukebox-advance-clock (+ supersonic-upnp-poll-interval supersonic-request-timeout))
+     (supersonic-tests--resolve (supersonic-upnp--poll))
+     (supersonic-tests--jukebox-advance-clock supersonic-upnp-poll-interval)
+     (setq supersonic-tests--renderer (plist-put supersonic-tests--renderer :faults nil))
+     (setq supersonic-tests--renderer (plist-put supersonic-tests--renderer :state "STOPPED"))
+     (setq supersonic-tests--renderer (plist-put supersonic-tests--renderer :position "0:00:00"))
+     (supersonic-tests--resolve (supersonic-upnp--poll))
+     (should (equal "http://music/b" (plist-get supersonic-tests--renderer :uri)))
+     (should (equal "b" (supersonic-tests--resolve (supersonic-upnp-status 'track-id)))))))
+
 (ert-deftest supersonic-tests-upnp-a-new-track-is-not-taken-for-an-ended-one ()
   "Right after a track is loaded, a renderer may still report the stop
 loading it caused; that is not the new track ending."
