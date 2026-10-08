@@ -70,9 +70,7 @@ backend's client-side queue; `description', what a failed poll is
 reported as having failed to do, such as \"poll the jukebox\";
 `on-failure', nil or a function run whenever a poll fails; and
 `on-landed', nil or a function of the previous and the new snapshot,
-run whenever a poll gets an answer, before the facade's hooks; the
-previous snapshot is nil before any poll landed, and after a failed
-one, since what the player did in between is unknown (#81).  It may
+run whenever a poll gets an answer, before the facade's hooks.  It may
 return a function of no arguments, which is called once the poll is no
 longer in flight, and whatever promise that returns is awaited.  That
 function has to report its own errors: on a timer's poll, nobody
@@ -155,9 +153,6 @@ settles, which `supersonic-request-timeout' bounds.
 
 A poll that gets an answer runs POLLER's `on-landed' before the hooks,
 and whatever function that returns once it is no longer in flight.
-The first answer after a failed poll is not compared with the snapshot
-from before the outage: a renderer switched off mid-track and back on
-did not play the track to its end in between (#81).
 
 Only the player failing to answer counts as a failed poll.  An error
 from a facade hook, `on-failure' or `on-landed' is reported as failing
@@ -168,7 +163,7 @@ answer arrives, see `supersonic-poller--stop'."
    (aio-await (supersonic-poller-in-flight poller)))
  (let ((done (aio-promise))
        (generation (supersonic-poller-generation poller))
-       (previous (and (not (supersonic-poller-failing poller)) (supersonic-poller-snapshot poller)))
+       (previous (supersonic-poller-snapshot poller))
        (was-live (supersonic-poller-live poller))
        (snapshot nil)
        (failure nil)

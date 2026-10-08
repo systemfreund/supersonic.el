@@ -742,22 +742,36 @@ See `supersonic-poller-position'; never past the track's duration."
   (let ((snapshot (supersonic-upnp--snapshot)))
     (supersonic-poller-position snapshot (supersonic-upnp--playing-p snapshot) (supersonic-upnp--duration))))
 
+(defun supersonic-upnp--max-poll-gap ()
+  "Return the most seconds two polls may lie apart for a track end to count.
+Enough for one poll in between to have failed, after waiting out
+`supersonic-request-timeout', with `supersonic-upnp--end-tolerance'
+to spare; see `supersonic-upnp--track-ended-p'."
+  (+ (* 2 supersonic-upnp-poll-interval) supersonic-request-timeout supersonic-upnp--end-tolerance))
+
 (defun supersonic-upnp--track-ended-p (previous current)
   "Return non-nil if the track playing in snapshot PREVIOUS ended by CURRENT.
 That is: both are of the same track; PREVIOUS found it playing;
 CURRENT finds it in one of `supersonic-upnp--ended-states', and not
 because the user stopped it; and by CURRENT the track would have
 played to within `supersonic-upnp--end-tolerance' of its duration.
-Without that last condition, a track stopped on the renderer's own
-remote would be taken for one played to the end.  Only a track whose
+Without that condition, a track stopped on the renderer's own remote
+would be taken for one played to the end.  Only a track whose
 duration neither the renderer nor the provider knows counts as ended
-whenever it stops."
+whenever it stops.
+
+CURRENT must also come within `supersonic-upnp--max-poll-gap' of
+PREVIOUS.  A renderer that went unreachable mid-track and is back,
+stopped, minutes later was switched off, not played to the end, and
+must not start the next track on its own (#81); one poll lost to a
+network hiccup as the track ends still moves on."
   (and previous current
        (not supersonic-upnp--user-stopped)
        (plist-get current :index)
        (eql (plist-get previous :index) (plist-get current :index))
        (supersonic-upnp--playing-p previous)
        (member (supersonic-upnp--state current) supersonic-upnp--ended-states)
+       (<= (- (plist-get current :polled-at) (plist-get previous :polled-at)) (supersonic-upnp--max-poll-gap))
        (let ((duration (supersonic-upnp--duration previous)))
          (or (null duration)
              (>= (+ (or (plist-get previous :position) 0)
