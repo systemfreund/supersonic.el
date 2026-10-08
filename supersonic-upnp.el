@@ -645,6 +645,25 @@ request that got no SOAP answer at all."
      (t
       (error "The UPnP renderer gave no answer to %s" action)))))
 
+(defun supersonic-upnp--fault-code (body)
+  "Return the UPnP error code of the SOAP fault in response BODY, or nil.
+nil, too, for a BODY that is no fault, or no XML at all."
+  (let* ((root (and body
+                    (with-temp-buffer
+                      (insert body)
+                      (libxml-parse-xml-region (point-min) (point-max)))))
+         (code (and root (supersonic-upnp--node-text (car (dom-by-tag root 'errorCode))))))
+    (and code (string-match-p "\\`[0-9]+\\'" code) (string-to-number code))))
+
+(aio-defun
+ supersonic-upnp--invoke (action &optional arguments)
+ "Invoke `AVTransport' ACTION with ARGUMENTS on the selected renderer.
+Return a promise of its raw answer, (STATUS . BODY) as
+`supersonic-upnp--post' resolves to, for a caller that tells one SOAP
+fault from another; see `supersonic-upnp--soap' for one that does not."
+ (let ((url (aio-await (supersonic-upnp--control-url))))
+   (aio-await (supersonic-upnp--post url action (supersonic-upnp--soap-envelope action arguments)))))
+
 (aio-defun
  supersonic-upnp--soap (action &optional arguments)
  "Invoke `AVTransport' ACTION with ARGUMENTS on the selected renderer.
@@ -652,10 +671,8 @@ Return a promise of the action's response element, from which its
 output arguments are read with `supersonic-upnp--child-text'.  See
 `supersonic-upnp--soap-envelope' for ARGUMENTS, and
 `supersonic-upnp--soap-result' for how failures are signalled."
- (let ((url (aio-await (supersonic-upnp--control-url))))
-   (pcase-let ((`(,status . ,body)
-                (aio-await (supersonic-upnp--post url action (supersonic-upnp--soap-envelope action arguments)))))
-     (supersonic-upnp--soap-result action status body))))
+ (pcase-let ((`(,status . ,body) (aio-await (supersonic-upnp--invoke action arguments))))
+   (supersonic-upnp--soap-result action status body)))
 
 (defun supersonic-upnp--parse-time (string)
   "Return the seconds UPnP time STRING stands for.
@@ -878,6 +895,23 @@ landed for the current track."
  "Tell the renderer to play what it was given, at normal speed."
  (aio-await (supersonic-upnp--soap "Play" '(("Speed" . "1")))))
 
+(defconst supersonic-upnp--transition-not-available 701
+  "The UPnP error code of an action the transport's state does not allow.
+The LG TV answers `SetAVTransportURI' with it while paused (#84).")
+
+(aio-defun
+ supersonic-upnp--load (item)
+ "Give the renderer ITEM, as `supersonic-upnp--item' resolves to, to play.
+A renderer that will not load anything in the state it is in -- the
+LG TV, while paused -- is stopped and asked once more.  Asking first
+rather than always stopping costs other renderers no extra request."
+ (let ((arguments `(("CurrentURI" . ,(plist-get item :url)) ("CurrentURIMetaData" . ,(plist-get item :metadata)))))
+   (pcase-let ((`(,status . ,body) (aio-await (supersonic-upnp--invoke "SetAVTransportURI" arguments))))
+     (when (eql (supersonic-upnp--fault-code body) supersonic-upnp--transition-not-available)
+       (aio-await (supersonic-upnp--soap "Stop"))
+       (pcase-setq `(,status . ,body) (aio-await (supersonic-upnp--invoke "SetAVTransportURI" arguments))))
+     (supersonic-upnp--soap-result "SetAVTransportURI" status body))))
+
 (aio-defun
  supersonic-upnp--play-index (index)
  "Load the queue's entry at INDEX on the renderer and play it.
@@ -887,9 +921,7 @@ cannot be reached, or refuses the track, leaves everything as it was;
 the error is the caller's to report.  The hooks run before the poll
 that follows, so what shows the track does not lag behind it."
  (let ((item (aio-await (supersonic-upnp--item (nth index supersonic-upnp--queue)))))
-   (aio-await
-    (supersonic-upnp--soap
-     "SetAVTransportURI" `(("CurrentURI" . ,(plist-get item :url)) ("CurrentURIMetaData" . ,(plist-get item :metadata)))))
+   (aio-await (supersonic-upnp--load item))
    (aio-await (supersonic-upnp--play))
    (setq supersonic-upnp--index index)
    (setq supersonic-upnp--track-duration (plist-get item :duration))

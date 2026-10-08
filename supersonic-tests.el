@@ -5158,7 +5158,9 @@ input that is neither a renderer nor a URL is reported, not selected."
 A plist: `:state', its transport state; `:position' and `:duration',
 the RelTime and TrackDuration it reports; `:uri', the CurrentURI it
 was last given; `:faults', an alist of action names to the (CODE
-. DESCRIPTION) of the SOAP fault to answer them with.")
+. DESCRIPTION) of the SOAP fault to answer them with; and
+`:no-load-when-paused', non-nil to refuse `SetAVTransportURI' while
+paused, with error 701, as the LG TV does.")
 
 (defvar supersonic-tests--renderer-requests nil
   "(ACTION . ENVELOPE) of every request the fake renderer got, most recent first.")
@@ -5201,6 +5203,10 @@ was last given; `:faults', an alist of action names to the (CODE
   (push (cons action envelope) supersonic-tests--renderer-requests)
   (let ((fault (alist-get action (plist-get supersonic-tests--renderer :faults) nil nil #'equal))
         (renderer supersonic-tests--renderer))
+    (when (and (equal action "SetAVTransportURI")
+               (plist-get renderer :no-load-when-paused)
+               (equal (plist-get renderer :state) "PAUSED_PLAYBACK"))
+      (setq fault '(701 . "Transition not available")))
     (funcall
      (supersonic-tests--resolved
       (if fault
@@ -5318,6 +5324,13 @@ answer at all becomes an error naming the action."
                           (cadr (should-error (supersonic-upnp--soap-result
                                                "Play" '(:error (error connection-failed "refused")) nil)))))
   (should (string-match-p "no answer to Play" (cadr (should-error (supersonic-upnp--soap-result "Play" nil "<html/>"))))))
+
+(ert-deftest supersonic-tests-upnp-fault-code-reads-the-upnp-error ()
+  "The UPnP error code of a SOAP fault is read as a number; a response
+that is no fault, or no XML, has none."
+  (should (= 701 (supersonic-upnp--fault-code (supersonic-tests--soap-fault 701 "Transition not available"))))
+  (should-not (supersonic-upnp--fault-code (supersonic-tests--soap-response "Play" nil)))
+  (should-not (supersonic-upnp--fault-code nil)))
 
 (ert-deftest supersonic-tests-upnp-time-round-trips ()
   "UPnP times parse to seconds, fractions included; what is no time
@@ -5474,6 +5487,27 @@ loading it caused; that is not the new track ending."
      (supersonic-tests--resolve (supersonic-upnp--next)))
    (should (equal "b" (supersonic-tests--resolve (supersonic-upnp-status 'track-id))))
    (supersonic-tests--resolve (supersonic-upnp--poll))
+   (should (equal "b" (supersonic-tests--resolve (supersonic-upnp-status 'track-id))))))
+
+(ert-deftest supersonic-tests-upnp-loads-a-track-on-a-paused-renderer ()
+  "A renderer that refuses to load a track while paused, with error 701,
+is stopped and asked again, so skipping from a paused track plays the
+next one (#84)."
+  (supersonic-tests--with-upnp
+   (setq supersonic-tests--renderer (plist-put supersonic-tests--renderer :no-load-when-paused t))
+   (supersonic-tests--resolve (supersonic-upnp--start '("a" "b")))
+   (supersonic-tests--resolve (supersonic-upnp--toggle-play))
+   (should (equal "PAUSED_PLAYBACK" (plist-get supersonic-tests--renderer :state)))
+   (supersonic-tests--upnp-reset-requests)
+   (let (reports)
+     (cl-letf (((symbol-function 'supersonic--report-async-error)
+                (lambda (description _err) (push description reports))))
+       (supersonic-tests--resolve (supersonic-upnp--next)))
+     (should-not reports))
+   (should (equal '("SetAVTransportURI" "Stop" "SetAVTransportURI" "Play")
+                  (seq-take (supersonic-tests--renderer-actions) 4)))
+   (should (equal "http://music/b" (plist-get supersonic-tests--renderer :uri)))
+   (should (equal "PLAYING" (plist-get supersonic-tests--renderer :state)))
    (should (equal "b" (supersonic-tests--resolve (supersonic-upnp-status 'track-id))))))
 
 (ert-deftest supersonic-tests-upnp-enqueue-starts-only-when-nothing-is-left ()
