@@ -3283,7 +3283,7 @@ server-side.")
 (defvar supersonic-tests--jukebox-clock 1000000.0
   "Fake wall-clock seconds `float-time' returns during a jukebox test.
 A test advances this by hand, via `supersonic-tests--jukebox-advance-clock',
-to exercise `supersonic-jukebox--interpolated-position' deterministically
+to exercise `supersonic-poller-position' deterministically
 instead of depending on however long the test itself actually takes to run.")
 
 (defun supersonic-tests--jukebox-advance-clock (seconds)
@@ -3307,11 +3307,7 @@ read `supersonic-tests--jukebox-clock', which stands still unless a
 test advances it, so a poll's `:polled-at' -- and anything interpolated
 from it -- is exact and reproducible rather than however many
 microseconds the test happened to take."
-  `(let ((supersonic-jukebox--snapshot nil)
-         (supersonic-jukebox--live nil)
-         (supersonic-jukebox--poll-failing nil)
-         (supersonic-jukebox--poll-in-flight nil)
-         (supersonic-jukebox--timer nil)
+  `(let ((supersonic-jukebox--poller (supersonic-jukebox--make-poller))
          (supersonic-tests--jukebox-requests nil)
          (supersonic-tests--jukebox-playlist nil)
          (supersonic-tests--jukebox-clock 1000000.0))
@@ -3476,7 +3472,7 @@ now-playing's \"Queue: N/M\" row -- refresh on
   "A poll that finds the current track id changed scrobbles the previous
 track as a submission and the new one as now-playing, the same as
 mpv's end-file/start-file pair does -- see
-`supersonic-jukebox--scrobble-track-change'.  The very first poll ever
+`supersonic-poller-announce'.  The very first poll ever
 has no previous track to submit, and a poll that finds nothing new
 scrobbles nothing at all."
   (supersonic-tests--with-jukebox
@@ -3549,10 +3545,7 @@ being shown as current -- only on the transition into failing; a
 server that stays unreachable does not narrate itself once per poll
 interval. This includes the very first poll ever failing, which has
 no earlier success to transition from."
-  (let ((supersonic-jukebox--snapshot nil)
-        (supersonic-jukebox--live nil)
-        (supersonic-jukebox--poll-failing nil)
-        (supersonic-jukebox--poll-in-flight nil)
+  (let ((supersonic-jukebox--poller (supersonic-jukebox--make-poller))
         (supersonic-playback-track-change-hook nil)
         (track-changes 0)
         (reports 0))
@@ -3571,7 +3564,7 @@ no earlier success to transition from."
       (should (= 1 track-changes)))))
 
 (ert-deftest supersonic-tests-jukebox-poll-reports-a-later-outage-again ()
-  "Recovering from one outage resets `supersonic-jukebox--poll-failing',
+  "Recovering from one outage resets the poller's `failing' flag,
 so a later, separate outage is reported too instead of staying quiet
 forever after the first one."
   (supersonic-tests--with-jukebox
@@ -3593,6 +3586,59 @@ forever after the first one."
        (cl-letf (((symbol-function 'supersonic-get-json) (aio-lambda (_url) (error "boom"))))
          (supersonic-tests--resolve (supersonic-jukebox--poll))
          (should (= 2 reports)))))))
+
+(ert-deftest supersonic-tests-jukebox-first-poll-of-an-idle-jukebox-runs-track-change ()
+  "The first poll to get an answer runs the track-change hook even when
+it finds nothing playing, so whatever showed the jukebox as not live
+shows it live -- and only that hook, scrobbling nothing."
+  (supersonic-tests--with-jukebox
+   (let ((supersonic-playback-track-change-hook nil)
+         (supersonic-playback-queue-change-hook nil)
+         (supersonic-playback-state-change-hook nil)
+         (hooks nil)
+         (scrobbles nil))
+     (add-hook 'supersonic-playback-track-change-hook (lambda () (push 'track hooks)))
+     (add-hook 'supersonic-playback-queue-change-hook (lambda () (push 'queue hooks)))
+     (add-hook 'supersonic-playback-state-change-hook (lambda () (push 'state hooks)))
+     (cl-letf (((symbol-function 'supersonic-provider-scrobble) (lambda (&rest args) (push args scrobbles))))
+       (setq supersonic-tests--jukebox-playlist
+             `(("currentIndex" . -1) ("playing" . :json-false) ("position" . 0) ("entry" . nil)))
+       (supersonic-tests--resolve (supersonic-jukebox--poll))
+       (should (equal '(track) hooks))
+       (should-not scrobbles)))))
+
+(ert-deftest supersonic-tests-jukebox-recovery-runs-track-change-instead-of-the-others ()
+  "A poll that gets an answer again after an outage runs the
+track-change hook even though the track is the same, since the outage
+already ran it to show the jukebox gone.  It stands in for the
+queue-change and state-change hooks, which would otherwise have run
+for what changed meanwhile: every consumer re-reads everything on a
+track change anyway.  Nothing is scrobbled for the same track."
+  (supersonic-tests--with-jukebox
+   (let ((supersonic-playback-track-change-hook nil)
+         (supersonic-playback-queue-change-hook nil)
+         (supersonic-playback-state-change-hook nil)
+         (hooks nil)
+         (scrobbles nil))
+     (add-hook 'supersonic-playback-track-change-hook (lambda () (push 'track hooks)))
+     (add-hook 'supersonic-playback-queue-change-hook (lambda () (push 'queue hooks)))
+     (add-hook 'supersonic-playback-state-change-hook (lambda () (push 'state hooks)))
+     (cl-letf (((symbol-function 'supersonic-provider-scrobble) (lambda (&rest args) (push args scrobbles)))
+               ((symbol-function 'supersonic--report-async-error) #'ignore))
+       (setq supersonic-tests--jukebox-playlist
+             `(("currentIndex" . 0) ("playing" . t) ("position" . 0) ("entry" . ((("id" . "a"))))))
+       (supersonic-tests--resolve (supersonic-jukebox--poll))
+       (cl-letf (((symbol-function 'supersonic-get-json) (aio-lambda (_url) (error "boom"))))
+         (supersonic-tests--resolve (supersonic-jukebox--poll)))
+       (setq hooks nil scrobbles nil)
+       ;; Back, same track, now paused and with one more entry.
+       (setq supersonic-tests--jukebox-playlist
+             `(("currentIndex" . 0) ("playing" . :json-false) ("position" . 0)
+               ("entry" . ((("id" . "a")) (("id" . "b"))))))
+       (supersonic-tests--resolve (supersonic-jukebox--poll))
+       (should (supersonic-jukebox-live-p))
+       (should (equal '(track) hooks))
+       (should-not scrobbles)))))
 
 (defmacro supersonic-tests--with-held-jukebox-polls (&rest body)
   "Run BODY inside `supersonic-tests--with-jukebox' with every `get' held.
@@ -3629,12 +3675,12 @@ server that stopped answering piled up a connection every
 `supersonic-jukebox-poll-interval' until Emacs ran out of file
 descriptors (#70)."
   (supersonic-tests--with-held-jukebox-polls
-    (supersonic-jukebox--poll-tick)
-    (supersonic-jukebox--poll-tick)
+    (supersonic-poller--tick supersonic-jukebox--poller)
+    (supersonic-poller--tick supersonic-jukebox--poller)
     (should (equal '("get") (supersonic-tests--jukebox-request-actions)))
     (supersonic-tests--release-jukebox-poll)
     (supersonic-tests--settle)
-    (supersonic-jukebox--poll-tick)
+    (supersonic-poller--tick supersonic-jukebox--poller)
     (should (equal '("get" "get") (supersonic-tests--jukebox-request-actions)))
     (supersonic-tests--release-jukebox-poll)
     (supersonic-tests--settle)))
@@ -3646,7 +3692,7 @@ one's answer may predate the action; nor does it run alongside it,
 since the two answers could land out of order.  It waits, then sends
 a `get' of its own."
   (supersonic-tests--with-held-jukebox-polls
-    (supersonic-jukebox--poll-tick)
+    (supersonic-poller--tick supersonic-jukebox--poller)
     (let ((explicit (supersonic-jukebox--poll)))
       (supersonic-tests--settle)
       (should (equal '("get") (supersonic-tests--jukebox-request-actions)))
@@ -3657,6 +3703,37 @@ a `get' of its own."
       (supersonic-tests--release-jukebox-poll)
       (supersonic-tests--resolve explicit)
       (should (supersonic-jukebox-live-p)))))
+
+(ert-deftest supersonic-tests-jukebox-poll-answered-after-stopping-is-dropped ()
+  "A poll whose answer arrives after polling stopped -- the backend was
+switched away while it waited -- changes nothing: the backend stays
+not live, keeps no snapshot, and runs no hook."
+  (supersonic-tests--with-held-jukebox-polls
+    (let ((supersonic-playback-track-change-hook nil)
+          (hooks 0))
+      (add-hook 'supersonic-playback-track-change-hook (lambda () (cl-incf hooks)))
+      (supersonic-poller--tick supersonic-jukebox--poller)
+      (supersonic-poller--stop supersonic-jukebox--poller)
+      (supersonic-tests--release-jukebox-poll)
+      (supersonic-tests--settle)
+      (should-not (supersonic-jukebox-live-p))
+      (should-not (supersonic-jukebox--snapshot))
+      (should (= 0 hooks)))))
+
+(ert-deftest supersonic-tests-jukebox-hook-error-is-not-a-failed-poll ()
+  "A facade hook that signals an error is reported as such, not as the
+jukebox failing to answer: the backend stays live."
+  (supersonic-tests--with-jukebox
+   (let ((supersonic-playback-track-change-hook nil)
+         (reports nil))
+     (add-hook 'supersonic-playback-track-change-hook (lambda () (error "Hook broke")))
+     (cl-letf (((symbol-function 'supersonic--report-async-error)
+                (lambda (description _err) (push description reports))))
+       (setq supersonic-tests--jukebox-playlist
+             `(("currentIndex" . 0) ("playing" . t) ("position" . 0) ("entry" . ((("id" . "a"))))))
+       (supersonic-tests--resolve (supersonic-jukebox--poll))
+       (should (supersonic-jukebox-live-p))
+       (should (equal '("run the playback hooks") reports))))))
 
 (ert-deftest supersonic-tests-jukebox-start-replaces-playlist-and-starts ()
   "`supersonic-jukebox-start' sends `set' with every id, then `start',
@@ -3915,20 +3992,17 @@ jukebox action's."
 `jukebox' and stops -- discarding the cached snapshot -- as it stops
 being `jukebox' again, driven purely by the ordinary customization
 variable, with no separate mode to turn on."
-  (let ((supersonic-jukebox--timer nil)
-        (supersonic-jukebox--snapshot nil)
-        (supersonic-jukebox--live nil)
-        (supersonic-jukebox--poll-in-flight nil))
+  (let ((supersonic-jukebox--poller (supersonic-jukebox--make-poller)))
     (unwind-protect
         (cl-letf (((symbol-function 'supersonic-build-url) (lambda (&rest _) "dummy://url"))
                   ((symbol-function 'supersonic-get-json)
                    (aio-lambda (_url) '(("subsonic-response" ("jukeboxPlaylist" ("currentIndex" . -1)))))))
           (let ((supersonic-playback-backend 'jukebox))
-            (should (timerp supersonic-jukebox--timer)))
-          (should-not supersonic-jukebox--timer)
-          (should-not supersonic-jukebox--live))
-      (when (timerp supersonic-jukebox--timer)
-        (cancel-timer supersonic-jukebox--timer)))))
+            (should (timerp (supersonic-poller-timer supersonic-jukebox--poller))))
+          (should-not (supersonic-poller-timer supersonic-jukebox--poller))
+          (should-not (supersonic-jukebox-live-p)))
+      (when (timerp (supersonic-poller-timer supersonic-jukebox--poller))
+        (cancel-timer (supersonic-poller-timer supersonic-jukebox--poller))))))
 
 ;;;
 ;;; Library provider facade
@@ -5172,12 +5246,7 @@ control URL.  The facade's hooks start out empty."
          (supersonic-upnp--index nil)
          (supersonic-upnp--user-stopped nil)
          (supersonic-upnp--track-duration nil)
-         (supersonic-upnp--snapshot nil)
-         (supersonic-upnp--announced nil)
-         (supersonic-upnp--live nil)
-         (supersonic-upnp--poll-failing nil)
-         (supersonic-upnp--poll-in-flight nil)
-         (supersonic-upnp--timer nil)
+         (supersonic-upnp--poller (supersonic-upnp--make-poller))
          (supersonic-playback-track-change-hook nil)
          (supersonic-playback-state-change-hook nil)
          (supersonic-playback-queue-change-hook nil)
@@ -5521,12 +5590,12 @@ polls first, rather than deciding from nothing."
   (supersonic-tests--with-upnp
    (supersonic-tests--resolve (supersonic-upnp--start '("a")))
    (setq supersonic-tests--renderer (plist-put supersonic-tests--renderer :position "0:01:00"))
-   (setq supersonic-upnp--snapshot nil)
+   (setf (supersonic-poller-snapshot supersonic-upnp--poller) nil)
    (supersonic-tests--upnp-reset-requests)
    (supersonic-tests--resolve (supersonic-upnp--seek 10))
    (should (equal '("GetTransportInfo" "GetPositionInfo" "Seek") (seq-take (supersonic-tests--renderer-actions) 3)))
    (should (equal "0:01:10" (plist-get supersonic-tests--renderer :position)))
-   (setq supersonic-upnp--snapshot nil)
+   (setf (supersonic-poller-snapshot supersonic-upnp--poller) nil)
    (supersonic-tests--upnp-reset-requests)
    (supersonic-tests--resolve (supersonic-upnp--toggle-play))
    (should (equal '("GetTransportInfo" "GetPositionInfo" "Pause") (seq-take (supersonic-tests--renderer-actions) 3)))))
@@ -5623,11 +5692,11 @@ playback; after a start, it stops the renderer."
    (unwind-protect
        (progn
          (let ((supersonic-playback-backend 'upnp))
-           (should (timerp supersonic-upnp--timer)))
-         (should-not supersonic-upnp--timer)
+           (should (timerp (supersonic-poller-timer supersonic-upnp--poller))))
+         (should-not (supersonic-poller-timer supersonic-upnp--poller))
          (should-not (supersonic-upnp-live-p)))
-     (when (timerp supersonic-upnp--timer)
-       (cancel-timer supersonic-upnp--timer)))))
+     (when (timerp (supersonic-poller-timer supersonic-upnp--poller))
+       (cancel-timer (supersonic-poller-timer supersonic-upnp--poller))))))
 
 (ert-deftest supersonic-tests-subsonic-cover-art-url-is-get-cover-art ()
   "The Subsonic provider's `cover-art-url' is the same getCoverArt URL

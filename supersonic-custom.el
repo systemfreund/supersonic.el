@@ -122,7 +122,7 @@ effect, since only that runs the mode function again."
   :type 'boolean
   :group 'supersonic)
 
-(defcustom supersonic-now-playing-art-size 600
+(defcustom supersonic-now-playing-art-size 500
   "Height in pixels of the cover art in the now-playing buffer.
 The art is also downloaded at this size, so raising it costs a
 re-download of anything already cached at the old size."
@@ -179,7 +179,7 @@ timer (`supersonic-jukebox-poll-interval') only refreshes its cached
 position every few seconds: the two intervals are independent, and
 that backend interpolates the position it answers with forward from
 the wall clock time elapsed since its last poll (see
-`supersonic-jukebox--interpolated-position'), so it still has
+`supersonic-poller-position'), so it still has
 something new to show this often even between polls."
   :type 'number
   :group 'supersonic)
@@ -624,7 +624,7 @@ The position shown in between is counted on from the last poll."
   :type 'number
   :group 'supersonic)
 
-(defcustom supersonic-upnp-discovery-timeout 3
+(defcustom supersonic-upnp-discovery-timeout 5
   "Seconds to wait for UPnP renderers to answer a discovery search.
 Renderers are told to answer within one second less than this, so
 that a slow one still makes it in time.  The same limit applies to
@@ -634,7 +634,7 @@ hold up the rest."
   :type 'number
   :group 'supersonic)
 
-(defcustom supersonic-upnp-art-size 1200
+(defcustom supersonic-upnp-art-size 600
   "Size in pixels of the cover art a UPnP renderer is pointed at.
 A hint the provider may scale to; a renderer shows it on its own
 display, if it has one."
