@@ -5157,10 +5157,11 @@ input that is neither a renderer nor a URL is reported, not selected."
   "State of the fake renderer behind `supersonic-tests--with-upnp'.
 A plist: `:state', its transport state; `:position' and `:duration',
 the RelTime and TrackDuration it reports; `:uri', the CurrentURI it
-was last given; `:faults', an alist of action names to the (CODE
-. DESCRIPTION) of the SOAP fault to answer them with; and
-`:no-load-when-paused', non-nil to refuse `SetAVTransportURI' while
-paused, with error 701, as the LG TV does.")
+was last given; `:next-uri', the NextURI it was last given, which
+`supersonic-tests--upnp-move-on' moves on to; `:faults', an alist of
+action names to the (CODE . DESCRIPTION) of the SOAP fault to answer
+them with; and `:no-load-when-paused', non-nil to refuse
+`SetAVTransportURI' while paused, with error 701, as the LG TV does.")
 
 (defvar supersonic-tests--renderer-requests nil
   "(ACTION . ENVELOPE) of every request the fake renderer got, most recent first.")
@@ -5216,6 +5217,8 @@ paused, with error 701, as the LG TV does.")
            (setq renderer (plist-put renderer :uri (supersonic-tests--envelope-argument envelope 'CurrentURI)))
            (setq renderer (plist-put renderer :state "STOPPED"))
            (setq renderer (plist-put renderer :position "0:00:00")))
+          ("SetNextAVTransportURI"
+           (setq renderer (plist-put renderer :next-uri (supersonic-tests--envelope-argument envelope 'NextURI))))
           ("Play" (setq renderer (plist-put renderer :state "PLAYING")))
           ("Pause" (setq renderer (plist-put renderer :state "PAUSED_PLAYBACK")))
           ("Stop" (setq renderer (plist-put renderer :state "STOPPED")))
@@ -5252,6 +5255,8 @@ control URL.  The facade's hooks start out empty."
          (supersonic-upnp--index nil)
          (supersonic-upnp--user-stopped nil)
          (supersonic-upnp--track-duration nil)
+         (supersonic-upnp--next nil)
+         (supersonic-upnp--gapless nil)
          (supersonic-upnp--poller (supersonic-upnp--make-poller))
          (supersonic-playback-track-change-hook nil)
          (supersonic-playback-state-change-hook nil)
@@ -5346,13 +5351,13 @@ parses to nil; seconds format back as H:MM:SS, never negative."
 
 (ert-deftest supersonic-tests-upnp-start-loads-and-plays-the-first-track ()
   "Starting gives the renderer the first track's URL and metadata and
-plays it; the status and queue then report it, and the track-change
-hook ran, with a now-playing scrobble."
+plays it, then preloads the second; the status and queue then report
+the first, and the track-change hook ran, with a now-playing scrobble."
   (supersonic-tests--with-upnp
    (let ((track-changes 0))
      (add-hook 'supersonic-playback-track-change-hook (lambda () (cl-incf track-changes)))
      (supersonic-tests--resolve (supersonic-upnp--start '("a" "b")))
-     (should (equal '("SetAVTransportURI" "Play" "GetTransportInfo" "GetPositionInfo")
+     (should (equal '("SetAVTransportURI" "Play" "GetTransportInfo" "GetPositionInfo" "SetNextAVTransportURI")
                     (supersonic-tests--renderer-actions)))
      (let ((envelope (cdar (last supersonic-tests--renderer-requests))))
        (should (equal "http://music/a" (supersonic-tests--envelope-argument envelope 'CurrentURI)))
@@ -5471,6 +5476,89 @@ say -- does not keep the next poll from moving on to the next track."
      (should (equal "http://music/b" (plist-get supersonic-tests--renderer :uri)))
      (should (equal "b" (supersonic-tests--resolve (supersonic-upnp-status 'track-id)))))))
 
+(defun supersonic-tests--upnp-move-on ()
+  "Have the fake renderer move on to its next URI by itself, as gapless playback does."
+  (setq supersonic-tests--renderer (plist-put supersonic-tests--renderer :uri (plist-get supersonic-tests--renderer :next-uri)))
+  (setq supersonic-tests--renderer (plist-put supersonic-tests--renderer :next-uri nil))
+  (setq supersonic-tests--renderer (plist-put supersonic-tests--renderer :position "0:00:01")))
+
+(ert-deftest supersonic-tests-upnp-gapless-follows-the-renderer-to-the-next-track ()
+  "A renderer that takes `SetNextAVTransportURI' is given the next track
+as soon as the current one plays.  Once it moved on to it by itself,
+the next poll makes that track current -- scrobbling the finished one,
+and running the track-change hook -- without loading anything, and
+preloads the track after it."
+  (supersonic-tests--with-upnp
+   (supersonic-tests--resolve (supersonic-upnp--start '("a" "b" "c")))
+   (should (equal "http://music/b" (plist-get supersonic-tests--renderer :next-uri)))
+   (let ((track-changes 0))
+     (add-hook 'supersonic-playback-track-change-hook (lambda () (cl-incf track-changes)))
+     (supersonic-tests--upnp-reset-requests)
+     (supersonic-tests--upnp-move-on)
+     (supersonic-tests--resolve (supersonic-upnp--poll))
+     (should (equal "b" (supersonic-tests--resolve (supersonic-upnp-status 'track-id))))
+     (should (equal '((:track-id "a" :current nil) (:track-id "b" :current t) (:track-id "c" :current nil))
+                    (supersonic-tests--resolve (supersonic-upnp-queue))))
+     (should (= 1 track-changes))
+     (should (equal '(("b" t) ("a" nil) ("a" t)) supersonic-tests--upnp-scrobbles))
+     (should (equal '("GetTransportInfo" "GetPositionInfo" "SetNextAVTransportURI") (supersonic-tests--renderer-actions)))
+     (should (equal "http://music/c" (plist-get supersonic-tests--renderer :next-uri)))
+     ;; Past the last track, the renderer stops; nothing is loaded.
+     (supersonic-tests--upnp-move-on)
+     (supersonic-tests--resolve (supersonic-upnp--poll))
+     (should (equal "c" (supersonic-tests--resolve (supersonic-upnp-status 'track-id))))
+     (supersonic-tests--upnp-reset-requests)
+     (supersonic-tests--upnp-play-to-the-end)
+     (should-not (member "SetAVTransportURI" (supersonic-tests--renderer-actions)))
+     (should-not (supersonic-tests--resolve (supersonic-upnp-status 'track-id))))))
+
+(ert-deftest supersonic-tests-upnp-gapless-next-follows-queue-changes ()
+  "The track preloaded next follows the queue: skipping ahead preloads
+the one after the new current track, and moving to the last track
+clears what was preloaded, so the renderer does not play it again."
+  (supersonic-tests--with-upnp
+   (supersonic-tests--resolve (supersonic-upnp--start '("a" "b" "c")))
+   (supersonic-tests--resolve (supersonic-upnp--next))
+   (should (equal "http://music/b" (plist-get supersonic-tests--renderer :uri)))
+   (should (equal "http://music/c" (plist-get supersonic-tests--renderer :next-uri)))
+   (supersonic-tests--resolve (supersonic-upnp--prev))
+   (should (equal "http://music/b" (plist-get supersonic-tests--renderer :next-uri)))
+   (supersonic-tests--resolve (supersonic-upnp--next))
+   (supersonic-tests--resolve (supersonic-upnp--next))
+   (should (equal "http://music/c" (plist-get supersonic-tests--renderer :uri)))
+   (should (equal "" (plist-get supersonic-tests--renderer :next-uri)))
+   (should-not supersonic-upnp--next)))
+
+(ert-deftest supersonic-tests-upnp-gapless-falls-back-without-the-action ()
+  "A renderer refusing `SetNextAVTransportURI' as an invalid action is
+not asked again, and its queue still moves on, by polling."
+  (supersonic-tests--with-upnp
+   (setq supersonic-tests--renderer
+         (plist-put supersonic-tests--renderer :faults '(("SetNextAVTransportURI" 401 . "Invalid Action"))))
+   (supersonic-tests--resolve (supersonic-upnp--start '("a" "b" "c")))
+   (should (equal '("http://tv/desc.xml") supersonic-upnp--gapless))
+   (should-not supersonic-upnp--next)
+   (supersonic-tests--upnp-reset-requests)
+   (supersonic-tests--upnp-play-to-the-end)
+   (should (equal "http://music/b" (plist-get supersonic-tests--renderer :uri)))
+   (should (equal "b" (supersonic-tests--resolve (supersonic-upnp-status 'track-id))))
+   (should-not (member "SetNextAVTransportURI" (supersonic-tests--renderer-actions)))))
+
+(ert-deftest supersonic-tests-upnp-gapless-survives-a-failing-preload ()
+  "A preload failing for another reason is not taken for a renderer
+without the action: playback goes on, polling moves on, and the next
+track is offered again."
+  (supersonic-tests--with-upnp
+   (setq supersonic-tests--renderer
+         (plist-put supersonic-tests--renderer :faults '(("SetNextAVTransportURI" 501 . "Action Failed"))))
+   (supersonic-tests--resolve (supersonic-upnp--start '("a" "b" "c")))
+   (should (equal "a" (supersonic-tests--resolve (supersonic-upnp-status 'track-id))))
+   (should-not supersonic-upnp--gapless)
+   (setq supersonic-tests--renderer (plist-put supersonic-tests--renderer :faults nil))
+   (supersonic-tests--upnp-play-to-the-end)
+   (should (equal "b" (supersonic-tests--resolve (supersonic-upnp-status 'track-id))))
+   (should (equal "http://music/c" (plist-get supersonic-tests--renderer :next-uri)))))
+
 (ert-deftest supersonic-tests-upnp-a-new-track-is-not-taken-for-an-ended-one ()
   "Right after a track is loaded, a renderer may still report the stop
 loading it caused; that is not the new track ending."
@@ -5545,7 +5633,8 @@ skipping near the end of a track skips once."
 
 (ert-deftest supersonic-tests-upnp-enqueue-starts-only-when-nothing-is-left ()
   "Enqueueing with nothing queued plays the new tracks; with a track
-current, it only appends, running the queue-change hook."
+current, it only appends, running the queue-change hook, and gives the
+renderer the first new track to play next."
   (supersonic-tests--with-upnp
    (supersonic-tests--resolve (supersonic-upnp--enqueue '("a")))
    (should (equal "http://music/a" (plist-get supersonic-tests--renderer :uri)))
@@ -5553,7 +5642,8 @@ current, it only appends, running the queue-change hook."
      (add-hook 'supersonic-playback-queue-change-hook (lambda () (cl-incf queue-changes)))
      (supersonic-tests--upnp-reset-requests)
      (supersonic-tests--resolve (supersonic-upnp--enqueue '("b")))
-     (should-not (supersonic-tests--renderer-actions))
+     (should (equal '("SetNextAVTransportURI") (supersonic-tests--renderer-actions)))
+     (should (equal "http://music/b" (plist-get supersonic-tests--renderer :next-uri)))
      (should (= 1 queue-changes))
      (should (equal '("a" "b") supersonic-upnp--queue)))))
 

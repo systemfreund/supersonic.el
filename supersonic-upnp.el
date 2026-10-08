@@ -716,6 +716,23 @@ For a renderer that reports no duration of its own; see
 A renderer reports a track that played to its end and one that was
 stopped alike, as `STOPPED'; only the first may move on to the next.")
 
+(defvar supersonic-upnp--next nil
+  "What the renderer was told to play after the current track, or nil.
+A plist (:index INDEX :url URL :duration DURATION): the queue's entry
+it was given with `SetNextAVTransportURI', the exact URL it was given,
+which is how a poll tells the renderer moved on to it, and the
+duration the provider gave.  See `supersonic-upnp--preload-next'.")
+
+(defvar supersonic-upnp--gapless nil
+  "Whether the selected renderer takes `SetNextAVTransportURI', if known.
+That is (LOCATION . SUPPORTED), LOCATION being the `:location' of
+`supersonic-upnp-renderer' it was found out for, so that selecting
+another renderer finds out afresh; nil until it was tried.")
+
+(defconst supersonic-upnp--unsupported-fault-codes '(401 602)
+  "UPnP error codes a renderer refuses an action it does not have with.
+401 is `Invalid Action', 602 `Optional Action Not Implemented'.")
+
 (defconst supersonic-upnp--end-tolerance 3
   "Seconds before its duration a track may stop and still count as ended.
 Positions a renderer reports, and the times polls arrive at, are only
@@ -819,18 +836,52 @@ See `supersonic-upnp--poller' for what it holds."
    (list :state (supersonic-upnp--child-text transport 'CurrentTransportState)
          :position (supersonic-upnp--parse-time (supersonic-upnp--child-text position 'RelTime))
          :duration (and duration (> duration 0) duration)
+         :uri (supersonic-upnp--child-text position 'TrackURI)
          :index index
          :polled-at (float-time))))
 
+(defun supersonic-upnp--moved-on-p (snapshot)
+  "Return non-nil if SNAPSHOT finds the renderer on the track preloaded next.
+That is, on the URL it was given with `SetNextAVTransportURI' after
+the current track, which it moved on to by itself; see
+`supersonic-upnp--preload-next'.  A poll overtaken by a track change
+does not count."
+  (let ((next supersonic-upnp--next))
+    (and next
+         supersonic-upnp--index
+         (eql (plist-get snapshot :index) supersonic-upnp--index)
+         (eql (plist-get next :index) (1+ supersonic-upnp--index))
+         (equal (plist-get snapshot :uri) (plist-get next :url)))))
+
+(defun supersonic-upnp--adopt-next (snapshot)
+  "Make the track the renderer moved on to by itself current, as SNAPSHOT found it.
+See `supersonic-upnp--moved-on-p'.  SNAPSHOT, the poller's latest, is
+made the new track's, so that the facade's hooks the poll runs next
+announce it -- and scrobble it -- as any other track change."
+  (let ((next supersonic-upnp--next))
+    (setq supersonic-upnp--index (plist-get next :index))
+    (setq supersonic-upnp--track-duration (plist-get next :duration))
+    (setq supersonic-upnp--user-stopped nil)
+    (setq supersonic-upnp--next nil)
+    (plist-put snapshot :index supersonic-upnp--index)))
+
 (defun supersonic-upnp--landed (previous current)
-  "Return how to move on if snapshot CURRENT finds the track in PREVIOUS ended.
-See `supersonic-upnp--track-ended-p'.  That is a function loading the
-next track, or nil.  Decided as the poll that took CURRENT lands,
-before the facade's hooks run, but only called once that poll is no
-longer in flight, since loading the next track polls in turn."
-  (when (supersonic-upnp--track-ended-p previous current)
+  "Return how to move on, now that snapshot CURRENT followed PREVIOUS.
+A renderer that moved on to the track preloaded next has that track
+made current right away, before the facade's hooks run, see
+`supersonic-upnp--adopt-next'; then the one after it is preloaded.
+A track in PREVIOUS that CURRENT finds ended has the next track loaded,
+see `supersonic-upnp--track-ended-p'.  That is the value: a function
+doing either, or nil.  Decided as the poll that took CURRENT lands,
+but only called once that poll is no longer in flight, since loading
+the next track polls in turn."
+  (cond
+   ((supersonic-upnp--moved-on-p current)
+    (supersonic-upnp--adopt-next current)
+    #'supersonic-upnp--preload-next)
+   ((supersonic-upnp--track-ended-p previous current)
     (let ((index (plist-get current :index)))
-      (lambda () (supersonic-upnp--advance index)))))
+      (lambda () (supersonic-upnp--advance index))))))
 
 (defun supersonic-upnp--forget-control ()
   "Look the control URL up afresh, after a poll failed.
@@ -921,6 +972,58 @@ starts over when played again rather than resuming where it paused."
        (pcase-setq `(,status . ,body) (aio-await (supersonic-upnp--invoke "SetAVTransportURI" arguments))))
      (supersonic-upnp--soap-result "SetAVTransportURI" status body))))
 
+(defun supersonic-upnp--gapless-p ()
+  "Return non-nil unless the renderer is known not to take a next track.
+See `supersonic-upnp--gapless'; a renderer not tried yet is worth a try."
+  (let ((location (plist-get supersonic-upnp-renderer :location)))
+    (or (not (equal location (car supersonic-upnp--gapless)))
+        (cdr supersonic-upnp--gapless))))
+
+(aio-defun
+ supersonic-upnp--set-next (url metadata)
+ "Tell the renderer to play URL, described by METADATA, after the current track.
+Resolves to non-nil if it took it, and to nil if it refused because it
+has no `SetNextAVTransportURI' -- which is remembered, see
+`supersonic-upnp--gapless'.  Any other failure is signalled."
+ (let ((location (plist-get supersonic-upnp-renderer :location)))
+   (pcase-let ((`(,status . ,body)
+                (aio-await
+                 (supersonic-upnp--invoke
+                  "SetNextAVTransportURI" `(("NextURI" . ,url) ("NextURIMetaData" . ,metadata))))))
+     (if (memql (supersonic-upnp--fault-code body) supersonic-upnp--unsupported-fault-codes)
+         (progn (setq supersonic-upnp--gapless (cons location nil)) nil)
+       (supersonic-upnp--soap-result "SetNextAVTransportURI" status body)
+       (setq supersonic-upnp--gapless (cons location t))))))
+
+(aio-defun
+ supersonic-upnp--preload-next ()
+ "Give the renderer the queue's entry after the current one, for gapless playback.
+A renderer that takes `SetNextAVTransportURI' then moves on to it by
+itself when the current track ends, with no gap and no poll to wait
+for; a poll later finds it there, see `supersonic-upnp--moved-on-p'.
+With no entry after the current one, a next track the renderer may
+still hold from before is cleared instead, so that it does not play
+that one again.
+
+Never fails: a renderer that does not take a next track, or that
+cannot be reached just now, is left to `supersonic-upnp--advance' to
+move on from the current track, once a poll finds it ended.  Nor does
+it record a next track for an entry that is no longer the current
+one's successor because the user moved on in the meantime."
+ (let ((index supersonic-upnp--index))
+   (condition-case nil
+       (when (and index (supersonic-upnp--gapless-p))
+         (if (< (1+ index) (length supersonic-upnp--queue))
+             (let ((item (aio-await (supersonic-upnp--item (nth (1+ index) supersonic-upnp--queue)))))
+               (when (and (eql index supersonic-upnp--index)
+                          (aio-await (supersonic-upnp--set-next (plist-get item :url) (plist-get item :metadata)))
+                          (eql index supersonic-upnp--index))
+                 (setq supersonic-upnp--next
+                       (list :index (1+ index) :url (plist-get item :url) :duration (plist-get item :duration)))))
+           (when (equal supersonic-upnp--gapless (cons (plist-get supersonic-upnp-renderer :location) t))
+             (aio-await (supersonic-upnp--set-next "" "")))))
+     (error nil))))
+
 (aio-defun
  supersonic-upnp--play-index (index)
  "Load the queue's entry at INDEX on the renderer and play it.
@@ -929,9 +1032,11 @@ facade's hooks run -- scrobbling the track, too -- so a renderer that
 cannot be reached, or refuses the track, leaves everything as it was,
 but for a renderer stopped to load it, see `supersonic-upnp--load';
 the error is the caller's to report.  The hooks run before the poll
-that follows, so what shows the track does not lag behind it."
+that follows, so what shows the track does not lag behind it.  Then
+the entry after it is preloaded, see `supersonic-upnp--preload-next'."
  (let ((item (aio-await (supersonic-upnp--item (nth index supersonic-upnp--queue)))))
    (aio-await (supersonic-upnp--load item))
+   (setq supersonic-upnp--next nil)
    (aio-await (supersonic-upnp--play))
    (setq supersonic-upnp--index index)
    (setq supersonic-upnp--track-duration (plist-get item :duration))
@@ -939,7 +1044,8 @@ that follows, so what shows the track does not lag behind it."
    (supersonic-poller-replace-snapshot
     supersonic-upnp--poller
     (list :state "TRANSITIONING" :position 0 :duration nil :index index :polled-at (float-time))))
- (aio-await (supersonic-upnp--poll)))
+ (aio-await (supersonic-upnp--poll))
+ (aio-await (supersonic-upnp--preload-next)))
 
 (aio-defun
  supersonic-upnp--advance (index)
@@ -1006,14 +1112,21 @@ If the renderer does not take the first, the queue stays as it was."
 Nothing is left to play before anything was started and once the
 queue has been played to its end.  A queue merely stopped or paused
 partway through is left that way, the same as the jukebox does.  IDS
-stay queued even if the renderer does not take the first of them."
+stay queued even if the renderer does not take the first of them.
+
+IDS appended after the current track, the last until now, give it a
+next one to preload, see `supersonic-upnp--preload-next'."
  (supersonic--with-async-error-handling
   nil "enqueue on the UPnP renderer"
   (let ((length (length supersonic-upnp--queue)))
     (setq supersonic-upnp--queue (append supersonic-upnp--queue ids))
     (supersonic-poller-announce supersonic-upnp--poller)
-    (when (and ids (null supersonic-upnp--index))
-      (aio-await (supersonic-upnp--play-index length))))))
+    (when ids
+      (cond
+       ((null supersonic-upnp--index)
+        (aio-await (supersonic-upnp--play-index length)))
+       ((eql (1+ supersonic-upnp--index) length)
+        (aio-await (supersonic-upnp--preload-next))))))))
 
 (defun supersonic-upnp-enqueue (ids)
   "Append IDS to the queue, playing them if nothing is left to play."
