@@ -5257,6 +5257,10 @@ control URL.  The facade's hooks start out empty."
          (supersonic-upnp--track-duration nil)
          (supersonic-upnp--next nil)
          (supersonic-upnp--gapless nil)
+         (supersonic-upnp--queue-generation 0)
+         (supersonic-upnp--current-url nil)
+         (supersonic-upnp--preload-failures nil)
+         (supersonic-upnp--move-on-wait 0)
          (supersonic-upnp--poller (supersonic-upnp--make-poller))
          (supersonic-playback-track-change-hook nil)
          (supersonic-playback-state-change-hook nil)
@@ -5528,6 +5532,92 @@ clears what was preloaded, so the renderer does not play it again."
    (should (equal "http://music/c" (plist-get supersonic-tests--renderer :uri)))
    (should (equal "" (plist-get supersonic-tests--renderer :next-uri)))
    (should-not supersonic-upnp--next)))
+
+(ert-deftest supersonic-tests-upnp-gapless-ignores-a-replaced-queue ()
+  "A renderer moving on to the track preloaded from a queue that is being
+replaced is not taken to have moved on in the new one: no entry of the
+new queue is made current, or scrobbled, before it was loaded."
+  (supersonic-tests--with-upnp
+   (supersonic-tests--resolve (supersonic-upnp--start '("a" "b")))
+   (cl-letf (((symbol-function 'supersonic-upnp--item)
+              (let ((item (symbol-function 'supersonic-upnp--item)))
+                (lambda (id)
+                  (when (equal id "x")
+                    ;; While the new queue's first track is looked up,
+                    ;; the renderer moves on and a poll lands.
+                    (supersonic-tests--upnp-move-on)
+                    (setq supersonic-tests--renderer (plist-put supersonic-tests--renderer :state "PLAYING"))
+                    (supersonic-tests--resolve (supersonic-upnp--poll)))
+                  (funcall item id)))))
+     (supersonic-tests--resolve (supersonic-upnp--start '("x" "y"))))
+   (should-not (assoc "y" supersonic-tests--upnp-scrobbles))
+   (should (equal "x" (supersonic-tests--resolve (supersonic-upnp-status 'track-id))))
+   (should (equal "http://music/x" (plist-get supersonic-tests--renderer :uri)))
+   (should (equal "http://music/y" (plist-get supersonic-tests--renderer :next-uri)))))
+
+(ert-deftest supersonic-tests-upnp-gapless-gives-up-on-an-unknown-url ()
+  "A renderer that took a next track but reports playing a URL other than
+the one it was given cannot be followed: it is given no more next
+tracks, the one it holds is cleared, and its queue moves on by polling."
+  (supersonic-tests--with-upnp
+   (supersonic-tests--resolve (supersonic-upnp--start '("a" "b" "c")))
+   (should (supersonic-upnp--gapless-known-p))
+   ;; This renderer reports its own URL for what it plays.
+   (setq supersonic-tests--renderer (plist-put supersonic-tests--renderer :uri "http://renderer/proxy/1"))
+   (supersonic-tests--resolve (supersonic-upnp--poll))
+   (should-not (supersonic-upnp--gapless-p))
+   (should (equal "" (plist-get supersonic-tests--renderer :next-uri)))
+   (supersonic-tests--upnp-reset-requests)
+   (supersonic-tests--upnp-play-to-the-end)
+   (should (equal "b" (supersonic-tests--resolve (supersonic-upnp-status 'track-id))))
+   (should-not (member "SetNextAVTransportURI" (supersonic-tests--renderer-actions)))))
+
+(ert-deftest supersonic-tests-upnp-gapless-clears-after-a-failed-preload ()
+  "When preloading fails on a renderer known to take a next track, the
+one it may still hold is cleared, so that it does not play that one."
+  (supersonic-tests--with-upnp
+   (supersonic-tests--resolve (supersonic-upnp--start '("a" "b" "c")))
+   (supersonic-tests--resolve (supersonic-upnp--next))
+   (should (equal "http://music/c" (plist-get supersonic-tests--renderer :next-uri)))
+   (cl-letf (((symbol-function 'supersonic-upnp--item)
+              (let ((item (symbol-function 'supersonic-upnp--item)))
+                (lambda (id)
+                  (if (equal id "b") (error "Provider unreachable") (funcall item id))))))
+     (supersonic-tests--resolve (supersonic-upnp--prev)))
+   (should (equal "http://music/a" (plist-get supersonic-tests--renderer :uri)))
+   (should (equal "" (plist-get supersonic-tests--renderer :next-uri)))
+   (should-not supersonic-upnp--next)))
+
+(ert-deftest supersonic-tests-upnp-gapless-waits-for-a-renderer-stopping-on-its-way ()
+  "A renderer that reports a stop at the end of a track, on its way to the
+one preloaded next, is given a moment to move on rather than having
+that track loaded over its own transition."
+  (supersonic-tests--with-upnp
+   (supersonic-tests--resolve (supersonic-upnp--start '("a" "b")))
+   (supersonic-tests--upnp-reset-requests)
+   (cl-letf (((symbol-function 'aio-sleep)
+              (lambda (&rest _)
+                (supersonic-tests--upnp-move-on)
+                (setq supersonic-tests--renderer (plist-put supersonic-tests--renderer :state "PLAYING"))
+                (funcall (supersonic-tests--resolved nil)))))
+     (supersonic-tests--upnp-play-to-the-end))
+   (should (equal "b" (supersonic-tests--resolve (supersonic-upnp-status 'track-id))))
+   (should-not (member "SetAVTransportURI" (supersonic-tests--renderer-actions)))))
+
+(ert-deftest supersonic-tests-upnp-gapless-gives-up-after-refusals-in-a-row ()
+  "A renderer refusing every next track, though not as an invalid
+action, is no longer asked after a few refusals in a row."
+  (supersonic-tests--with-upnp
+   (setq supersonic-tests--renderer
+         (plist-put supersonic-tests--renderer :faults '(("SetNextAVTransportURI" 501 . "Action Failed"))))
+   (supersonic-tests--resolve (supersonic-upnp--start '("a" "b" "c" "d" "e")))
+   (dotimes (_ (1- supersonic-upnp--max-preload-failures))
+     (should (supersonic-upnp--gapless-p))
+     (supersonic-tests--resolve (supersonic-upnp--next)))
+   (should-not (supersonic-upnp--gapless-p))
+   (supersonic-tests--upnp-reset-requests)
+   (supersonic-tests--resolve (supersonic-upnp--next))
+   (should-not (member "SetNextAVTransportURI" (supersonic-tests--renderer-actions)))))
 
 (ert-deftest supersonic-tests-upnp-gapless-falls-back-without-the-action ()
   "A renderer refusing `SetNextAVTransportURI' as an invalid action is
