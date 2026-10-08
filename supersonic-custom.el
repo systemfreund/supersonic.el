@@ -179,7 +179,7 @@ timer (`supersonic-jukebox-poll-interval') only refreshes its cached
 position every few seconds: the two intervals are independent, and
 that backend interpolates the position it answers with forward from
 the wall clock time elapsed since its last poll (see
-`supersonic-jukebox--interpolated-position'), so it still has
+`supersonic-poller-position'), so it still has
 something new to show this often even between polls."
   :type 'number
   :group 'supersonic)
