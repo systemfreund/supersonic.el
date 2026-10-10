@@ -6657,8 +6657,7 @@ sent is exactly the part of the URI after its media type."
   (let ((uri "filesystem_local--x://album/A: B/C"))
     (supersonic-tests--with-ma-server #'supersonic-tests--ma-library
       (aio-wait-for (supersonic-provider-album-tracks uri))
-      (should (equal '(("item_id" . "A: B/C") ("provider_instance_id_or_domain" . "filesystem_local--x")
-                       ("in_library_only" . t))
+      (should (equal '(("item_id" . "A: B/C") ("provider_instance_id_or_domain" . "filesystem_local--x"))
                      (supersonic-tests--ma-args (car supersonic-tests--ma-requests)))))))
 
 (ert-deftest supersonic-tests-ma-rejects-an-old-server-before-sending-the-token ()
@@ -6732,15 +6731,16 @@ is said to be so rather than too old."
         (should (string-match-p "does not look like a Music Assistant server" (error-message-string err))))
       (should (= 1 (length supersonic-tests--ma-requests))))))
 
-(ert-deftest supersonic-tests-ma-asks-for-library-items-only ()
-  "Artist albums and album tracks ask for what is in the library only,
-as the artists and album lists they are opened from are."
+(ert-deftest supersonic-tests-ma-asks-for-library-artist-albums-only ()
+  "Artist albums ask for what is in the library only, as the artists
+list they are opened from is.  Album tracks do not: a library album
+from a streaming provider has its tracks there, not in the library."
   (supersonic-tests--with-ma-server #'supersonic-tests--ma-library
     (aio-wait-for (supersonic-provider-artist-albums "library://artist/24"))
     (should (equal '(("item_id" . "24") ("provider_instance_id_or_domain" . "library") ("in_library_only" . t))
                    (supersonic-tests--ma-args (car supersonic-tests--ma-requests))))
     (aio-wait-for (supersonic-provider-album-tracks "library://album/8"))
-    (should (equal '(("item_id" . "8") ("provider_instance_id_or_domain" . "library") ("in_library_only" . t))
+    (should (equal '(("item_id" . "8") ("provider_instance_id_or_domain" . "library"))
                    (supersonic-tests--ma-args (car supersonic-tests--ma-requests))))))
 
 (ert-deftest supersonic-tests-ma-failures-show-config-hints-in-the-list-buffer ()

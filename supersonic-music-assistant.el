@@ -317,16 +317,10 @@ follows -- which may itself contain slashes, as a file path does."
       (error "Not a Music Assistant item URI: %s" uri))
     (cons (substring uri 0 separator) (substring uri (1+ slash)))))
 
-(defun supersonic-music-assistant--library-item-args (uri)
-  "Return the args naming the item with URI, for commands that take no URI.
-They also ask for what is in the library only, as everything else this
-provider lists is: without `in_library_only', MA adds what every
-linked streaming provider has for a library album, and on older
-servers -- schema 28, for one -- for a library artist too.  A server
-that does not know the argument ignores it, as MA does any argument
-it does not know."
+(defun supersonic-music-assistant--item-args (uri)
+  "Return the args naming the item with URI, for commands that take no URI."
   (pcase-let ((`(,provider . ,item-id) (supersonic-music-assistant--split-uri uri)))
-    `(("item_id" . ,item-id) ("provider_instance_id_or_domain" . ,provider) ("in_library_only" . t))))
+    `(("item_id" . ,item-id) ("provider_instance_id_or_domain" . ,provider))))
 
 ;;;
 ;;; MA JSON -> facade plists
@@ -469,11 +463,17 @@ Subsonic's getArtists leaves them out: they have no albums to open."
 
 (aio-defun
  supersonic-music-assistant--artist-albums (uri)
- "Return a promise resolving to the albums of the artist with URI."
+ "Return a promise resolving to the albums of the artist with URI.
+Those in the library only, as everything else this provider lists:
+without `in_library_only', older servers -- schema 28, for one -- add
+whatever every linked streaming provider has by the artist.  A server
+that does not know the argument ignores it, as MA does any argument
+it does not know."
  (mapcar #'supersonic-music-assistant--album
          (aio-await
           (supersonic-music-assistant--command
-           "music/artists/artist_albums" (supersonic-music-assistant--library-item-args uri)))))
+           "music/artists/artist_albums"
+           `(,@(supersonic-music-assistant--item-args uri) ("in_library_only" . t))))))
 
 (aio-defun
  supersonic-music-assistant--album-list (type count)
@@ -490,11 +490,16 @@ Asks `music/albums/library_items' in the order
 
 (aio-defun
  supersonic-music-assistant--album-tracks (uri)
- "Return a promise resolving to the tracks of the album with URI, in album order."
+ "Return a promise resolving to the tracks of the album with URI, in album order.
+Asks without `in_library_only', as MA's own client does: a library
+album from a streaming provider, Spotify say, usually has none of its
+tracks in the library, and would list none.  Without it, MA lists the
+album's library tracks and adds those of its linked providers that
+are not among them, leaving out what it finds to be the same track."
  (mapcar #'supersonic-music-assistant--track
          (aio-await
           (supersonic-music-assistant--command
-           "music/albums/album_tracks" (supersonic-music-assistant--library-item-args uri)))))
+           "music/albums/album_tracks" (supersonic-music-assistant--item-args uri)))))
 
 (aio-defun
  supersonic-music-assistant--track-by-uri (uri)
@@ -533,12 +538,10 @@ Asks `music/podcasts/library_items' a page at a time."
  "Return a promise resolving to the episodes of the podcast with URI.
 MA keeps no episodes in its library, but fetches them from the
 podcast's provider every time, so this asks without `in_library_only'."
- (pcase-let ((`(,provider . ,item-id) (supersonic-music-assistant--split-uri uri)))
-   (mapcar #'supersonic-music-assistant--episode
-           (aio-await
-            (supersonic-music-assistant--command
-             "music/podcasts/podcast_episodes"
-             `(("item_id" . ,item-id) ("provider_instance_id_or_domain" . ,provider)))))))
+ (mapcar #'supersonic-music-assistant--episode
+         (aio-await
+          (supersonic-music-assistant--command
+           "music/podcasts/podcast_episodes" (supersonic-music-assistant--item-args uri)))))
 
 (defun supersonic-music-assistant--proxy-size (size)
   "Return the size to ask MA's image proxy for to show an image at SIZE.
