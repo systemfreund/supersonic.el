@@ -6627,14 +6627,137 @@ every artist named, and nothing for what the server does not know."
 COUNT albums; a type MA cannot produce is a `user-error'."
   (supersonic-tests--with-ma-server #'supersonic-tests--ma-library
     (pcase-dolist (`(,type . ,args)
-                   '((recent ("limit" . 7) ("order_by" . "last_played_desc") ("played_only" . t))
-                     (random ("limit" . 7) ("order_by" . "random"))
+                   '((random ("limit" . 7) ("order_by" . "random"))
                      (newest ("limit" . 7) ("order_by" . "timestamp_added_desc"))))
       (let ((albums (aio-wait-for (supersonic-provider-album-list type 7))))
         (should (equal "library://album/818" (plist-get (car albums) :id)))
         (should (equal "music/albums/library_items" (supersonic-tests--ma-command (car supersonic-tests--ma-requests))))
         (should (equal args (supersonic-tests--ma-args (car supersonic-tests--ma-requests))))))
     (should-error (aio-wait-for (supersonic-music-assistant--album-list 'starred 7)) :type 'user-error)))
+
+(defun supersonic-tests--ma-recent-history (&optional failing album-less)
+  "Return a handler for the play history and the tracks in it.
+It answers `music/recently_played_items' with at most the limit asked
+for of the captured history: slim track mappings, without an album.  It
+answers `music/item_by_uri' with the captured full track, except 500
+for a URI in FAILING and the track without its album for one in
+ALBUM-LESS.  Anything else as `supersonic-tests--ma-library'."
+  (let* ((json-key-type 'string)
+         (captured (json-read-from-string (supersonic-tests--ma-fixture "recently_played_items")))
+         (tracks (json-read-from-string (supersonic-tests--ma-fixture "recent_tracks"))))
+    (lambda (request)
+      (let ((args (supersonic-tests--ma-args request)))
+        (pcase (supersonic-tests--ma-command request)
+          ("music/recently_played_items"
+           (cons 200 (json-encode
+                      (seq-take captured (assoc-default "limit" args)))))
+          ("music/item_by_uri"
+           (let ((uri (assoc-default "uri" args)))
+             (if (member uri failing)
+                 (cons 500 "Internal Server Error")
+               (cons 200 (json-encode
+                          (if (member uri album-less)
+                              (assoc-delete-all "album" (copy-alist (assoc-default uri tracks)))
+                            (assoc-default uri tracks)))))))
+          (_ (supersonic-tests--ma-library request)))))))
+
+(defun supersonic-tests--ma-sent (command)
+  "Return the args of each COMMAND the fake server received, in order."
+  (mapcar #'cdr (seq-filter (lambda (sent) (equal command (car sent)))
+                            (supersonic-tests--ma-commands))))
+
+(defun supersonic-tests--ma-looked-up ()
+  "Return the URIs the fake server was asked for by `music/item_by_uri', in order."
+  (mapcar (lambda (args) (assoc-default "uri" args))
+          (supersonic-tests--ma-sent "music/item_by_uri")))
+
+(defun supersonic-tests--ma-recent-ids (count)
+  "Return the ids of the at most COUNT recent albums listed."
+  (mapcar (lambda (album) (plist-get album :id))
+          (aio-wait-for (supersonic-provider-album-list 'recent count))))
+
+(ert-deftest supersonic-tests-ma-recent-albums-come-from-the-track-history ()
+  "The recent album list is the albums of the tracks last played, most
+recent first, each once -- MA's own album URIs, a provider's included."
+  (supersonic-tests--with-ma-server (supersonic-tests--ma-recent-history)
+    (let ((albums (aio-wait-for (supersonic-provider-album-list 'recent 50))))
+      (should (equal '("spotify--gXgn7uqw://album/6G3VTaCeobzyhyFrqYli0y" "library://album/537"
+                       "library://album/72" "library://album/8")
+                     (mapcar (lambda (album) (plist-get album :id)) albums)))
+      (should (equal '("Even Angels Cast Shadows" "Omni Trio" 2001)
+                     (mapcar (lambda (key) (plist-get (nth 1 albums) key)) '(:name :artist :year))))
+      (should (string-prefix-p "/imageproxy/" (plist-get (nth 1 albums) :art)))
+      (should (equal '((("limit" . 200) ("media_types" "track")))
+                     (supersonic-tests--ma-sent "music/recently_played_items")))
+      (should (= 6 (length (supersonic-tests--ma-looked-up)))))))
+
+(ert-deftest supersonic-tests-ma-recent-albums-stop-at-count ()
+  "At most COUNT recent albums are listed, and no more tracks looked up
+once they are found than the batch they turn up in."
+  (let ((supersonic-music-assistant--recent-lookups 2))
+    (supersonic-tests--with-ma-server (supersonic-tests--ma-recent-history)
+      (should (equal '("spotify--gXgn7uqw://album/6G3VTaCeobzyhyFrqYli0y" "library://album/537")
+                     (supersonic-tests--ma-recent-ids 2)))
+      (should (equal '("spotify--gXgn7uqw://track/6v7hCIRoJkuYShT0wls1gD"
+                       "spotify--gXgn7uqw://track/7GHav5LtQ83HBHn9f1ku9j"
+                       "library://track/5523" "library://track/5524")
+                     (supersonic-tests--ma-looked-up))))))
+
+(ert-deftest supersonic-tests-ma-recent-albums-skip-unresolvable-tracks ()
+  "A track whose lookup fails, or which has no album, is skipped; its
+album still shows if another track of it resolves."
+  (supersonic-tests--with-ma-server
+      (supersonic-tests--ma-recent-history
+       '("library://track/669" "spotify--gXgn7uqw://track/6v7hCIRoJkuYShT0wls1gD")
+       '("library://track/5523"))
+    (should (equal '("spotify--gXgn7uqw://album/6G3VTaCeobzyhyFrqYli0y" "library://album/537" "library://album/8")
+                   (supersonic-tests--ma-recent-ids 50)))))
+
+(ert-deftest supersonic-tests-ma-recent-albums-report-every-lookup-failing ()
+  "When every lookup fails, the failure is reported rather than an
+empty list that passes for an empty history -- a deliberate departure
+from #90, which only says to skip a track whose lookup fails."
+  (let ((all '("spotify--gXgn7uqw://track/6v7hCIRoJkuYShT0wls1gD"
+               "spotify--gXgn7uqw://track/7GHav5LtQ83HBHn9f1ku9j"
+               "library://track/5523" "library://track/5524"
+               "library://track/669" "library://track/76")))
+    (supersonic-tests--with-ma-server (supersonic-tests--ma-recent-history all)
+      (should-error (aio-wait-for (supersonic-provider-album-list 'recent 50))))
+    ;; A track without an album resolved: nothing failed to report.
+    (supersonic-tests--with-ma-server
+        (supersonic-tests--ma-recent-history (cdr all) (list (car all)))
+      (should-not (aio-wait-for (supersonic-provider-album-list 'recent 50))))))
+
+(ert-deftest supersonic-tests-ma-recent-albums-of-an-empty-history ()
+  "An empty play history lists no recent albums, and looks nothing up."
+  (supersonic-tests--with-ma-server
+      (lambda (request)
+        (if (equal "music/recently_played_items" (supersonic-tests--ma-command request))
+            (cons 200 "[]")
+          (supersonic-tests--ma-library request)))
+    (should-not (aio-wait-for (supersonic-provider-album-list 'recent 50)))
+    (should-not (supersonic-tests--ma-looked-up))))
+
+(ert-deftest supersonic-tests-ma-recent-albums-ask-the-history-again ()
+  "A history that runs out of tracks before COUNT albums are found is
+asked again for twice as many, and only the new tracks are looked up --
+until it comes back short, or has been asked for its maximum."
+  (let ((stale '("spotify--gXgn7uqw://track/6v7hCIRoJkuYShT0wls1gD"
+                 "spotify--gXgn7uqw://track/7GHav5LtQ83HBHn9f1ku9j"
+                 "library://track/5523" "library://track/5524")))
+    (supersonic-tests--with-ma-server (supersonic-tests--ma-recent-history stale)
+      (should (equal '("library://album/72")
+                     (supersonic-tests--ma-recent-ids 1)))
+      (should (equal '(4 8)
+                     (mapcar (lambda (args) (assoc-default "limit" args))
+                             (supersonic-tests--ma-sent "music/recently_played_items"))))
+      (should (equal (append stale '("library://track/669" "library://track/76"))
+                     (supersonic-tests--ma-looked-up))))
+    (let ((supersonic-music-assistant--recent-history-factor 4))
+      (supersonic-tests--with-ma-server (supersonic-tests--ma-recent-history stale)
+        ;; Every lookup made failed, so that is what is reported.
+        (should-error (aio-wait-for (supersonic-provider-album-list 'recent 1)))
+        (should (equal stale (supersonic-tests--ma-looked-up)))))))
 
 (ert-deftest supersonic-tests-ma-artists-are-fetched-a-page-at-a-time ()
   "Artists are asked for a page at a time until a page comes back short."

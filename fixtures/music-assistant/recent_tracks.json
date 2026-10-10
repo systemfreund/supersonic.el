@@ -1,0 +1,1413 @@
+{
+ "spotify--gXgn7uqw://track/6v7hCIRoJkuYShT0wls1gD": {
+  "item_id": "6v7hCIRoJkuYShT0wls1gD",
+  "provider": "spotify--gXgn7uqw",
+  "name": "Cairo FM",
+  "version": "",
+  "sort_name": "cairo fm",
+  "uri": "spotify--gXgn7uqw://track/6v7hCIRoJkuYShT0wls1gD",
+  "external_ids": {
+   "isrc": [
+    "GBAAP2500622"
+   ]
+  },
+  "is_playable": true,
+  "media_type": "track",
+  "provider_mappings": [
+   {
+    "item_id": "6v7hCIRoJkuYShT0wls1gD",
+    "provider_domain": "spotify",
+    "provider_instance": "spotify--gXgn7uqw",
+    "available": true,
+    "in_library": null,
+    "is_unique": null,
+    "audio_format": {
+     "content_type": "ogg",
+     "codec_type": "?",
+     "sample_rate": 44100,
+     "bit_depth": 16,
+     "channels": 2,
+     "output_format_str": "ogg",
+     "bit_rate": 320
+    },
+    "url": "https://open.spotify.com/track/6v7hCIRoJkuYShT0wls1gD",
+    "details": null
+   }
+  ],
+  "metadata": {
+   "images": [
+    {
+     "type": "thumb",
+     "path": "https://i.scdn.co/image/ab67616d0000b2731ee28f525d2cbe7813e242d2",
+     "provider": "spotify--gXgn7uqw",
+     "remotely_accessible": true,
+     "proxy_id": "8a9c451ecfe13b396cc39ac49f7c8121d390471a4bfabf5a80ffc0f0a2a8e847"
+    }
+   ]
+  },
+  "favorite": null,
+  "position": null,
+  "date_added": null,
+  "duration": 181,
+  "artists": [
+   {
+    "item_id": "0wcjJjpvnHb5vK4iwKfxPm",
+    "provider": "spotify--gXgn7uqw",
+    "name": "Alewya",
+    "version": "",
+    "sort_name": "alewya",
+    "uri": "spotify--gXgn7uqw://artist/0wcjJjpvnHb5vK4iwKfxPm",
+    "external_ids": null,
+    "is_playable": true,
+    "media_type": "artist",
+    "provider_mappings": [
+     {
+      "item_id": "0wcjJjpvnHb5vK4iwKfxPm",
+      "provider_domain": "spotify",
+      "provider_instance": "spotify--gXgn7uqw",
+      "available": true,
+      "in_library": null,
+      "is_unique": null,
+      "audio_format": {
+       "content_type": "?",
+       "codec_type": "?",
+       "sample_rate": 44100,
+       "bit_depth": 16,
+       "channels": 2,
+       "output_format_str": "?",
+       "bit_rate": 0
+      },
+      "url": "https://open.spotify.com/artist/0wcjJjpvnHb5vK4iwKfxPm",
+      "details": null
+     }
+    ],
+    "metadata": {
+     "images": null
+    },
+    "favorite": null,
+    "position": null,
+    "date_added": null,
+    "artist_type": "singer"
+   }
+  ],
+  "last_played": 0,
+  "album": {
+   "item_id": "6G3VTaCeobzyhyFrqYli0y",
+   "provider": "spotify--gXgn7uqw",
+   "name": "Zero",
+   "version": "",
+   "sort_name": "zero",
+   "uri": "spotify--gXgn7uqw://album/6G3VTaCeobzyhyFrqYli0y",
+   "external_ids": null,
+   "is_playable": true,
+   "media_type": "album",
+   "provider_mappings": [
+    {
+     "item_id": "6G3VTaCeobzyhyFrqYli0y",
+     "provider_domain": "spotify",
+     "provider_instance": "spotify--gXgn7uqw",
+     "available": true,
+     "in_library": null,
+     "is_unique": null,
+     "audio_format": {
+      "content_type": "ogg",
+      "codec_type": "?",
+      "sample_rate": 44100,
+      "bit_depth": 16,
+      "channels": 2,
+      "output_format_str": "ogg",
+      "bit_rate": 320
+     },
+     "url": "https://open.spotify.com/album/6G3VTaCeobzyhyFrqYli0y",
+     "details": null
+    }
+   ],
+   "metadata": {
+    "description": null,
+    "description_language": null,
+    "life_span": null,
+    "artist_entity_type": null,
+    "review": null,
+    "explicit": null,
+    "images": [
+     {
+      "type": "thumb",
+      "path": "https://i.scdn.co/image/ab67616d0000b2731ee28f525d2cbe7813e242d2",
+      "provider": "spotify--gXgn7uqw",
+      "remotely_accessible": true,
+      "proxy_id": "8a9c451ecfe13b396cc39ac49f7c8121d390471a4bfabf5a80ffc0f0a2a8e847"
+     }
+    ],
+    "grouping": null,
+    "genres": null,
+    "mood": null,
+    "style": null,
+    "copyright": null,
+    "lyrics": null,
+    "lrc_lyrics": null,
+    "transcript": null,
+    "transcript_cues": null,
+    "has_transcript": null,
+    "label": null,
+    "links": null,
+    "performers": null,
+    "preview": null,
+    "popularity": null,
+    "release_date": null,
+    "languages": null,
+    "chapters": null,
+    "collections": null,
+    "last_refresh": null
+   },
+   "favorite": null,
+   "position": null,
+   "date_added": null,
+   "year": 2026,
+   "artists": [
+    {
+     "item_id": "0wcjJjpvnHb5vK4iwKfxPm",
+     "provider": "spotify--gXgn7uqw",
+     "name": "Alewya",
+     "version": "",
+     "sort_name": "alewya",
+     "uri": "spotify--gXgn7uqw://artist/0wcjJjpvnHb5vK4iwKfxPm",
+     "external_ids": null,
+     "is_playable": true,
+     "media_type": "artist",
+     "provider_mappings": [
+      {
+       "item_id": "0wcjJjpvnHb5vK4iwKfxPm",
+       "provider_domain": "spotify",
+       "provider_instance": "spotify--gXgn7uqw",
+       "available": true,
+       "in_library": null,
+       "is_unique": null,
+       "audio_format": {
+        "content_type": "?",
+        "codec_type": "?",
+        "sample_rate": 44100,
+        "bit_depth": 16,
+        "channels": 2,
+        "output_format_str": "?",
+        "bit_rate": 0
+       },
+       "url": "https://open.spotify.com/artist/0wcjJjpvnHb5vK4iwKfxPm",
+       "details": null
+      }
+     ],
+     "metadata": {
+      "description": null,
+      "description_language": null,
+      "life_span": null,
+      "artist_entity_type": null,
+      "review": null,
+      "explicit": null,
+      "images": null,
+      "grouping": null,
+      "genres": null,
+      "mood": null,
+      "style": null,
+      "copyright": null,
+      "lyrics": null,
+      "lrc_lyrics": null,
+      "transcript": null,
+      "transcript_cues": null,
+      "has_transcript": null,
+      "label": null,
+      "links": null,
+      "performers": null,
+      "preview": null,
+      "popularity": null,
+      "release_date": null,
+      "languages": null,
+      "chapters": null,
+      "collections": null,
+      "last_refresh": null
+     },
+     "favorite": null,
+     "position": null,
+     "date_added": null,
+     "artist_type": "singer"
+    }
+   ],
+   "album_type": "album"
+  },
+  "disc_number": 1,
+  "track_number": 12,
+  "audio_metadata": {
+   "bpm": 110.99973934613811,
+   "musical_key": "C minor"
+  }
+ },
+ "spotify--gXgn7uqw://track/7GHav5LtQ83HBHn9f1ku9j": {
+  "item_id": "7GHav5LtQ83HBHn9f1ku9j",
+  "provider": "spotify--gXgn7uqw",
+  "name": "Guttah",
+  "version": "",
+  "sort_name": "guttah",
+  "uri": "spotify--gXgn7uqw://track/7GHav5LtQ83HBHn9f1ku9j",
+  "external_ids": {
+   "isrc": [
+    "GBAAP2500621"
+   ]
+  },
+  "is_playable": true,
+  "media_type": "track",
+  "provider_mappings": [
+   {
+    "item_id": "7GHav5LtQ83HBHn9f1ku9j",
+    "provider_domain": "spotify",
+    "provider_instance": "spotify--gXgn7uqw",
+    "available": true,
+    "in_library": null,
+    "is_unique": null,
+    "audio_format": {
+     "content_type": "ogg",
+     "codec_type": "?",
+     "sample_rate": 44100,
+     "bit_depth": 16,
+     "channels": 2,
+     "output_format_str": "ogg",
+     "bit_rate": 320
+    },
+    "url": "https://open.spotify.com/track/7GHav5LtQ83HBHn9f1ku9j",
+    "details": null
+   }
+  ],
+  "metadata": {
+   "images": [
+    {
+     "type": "thumb",
+     "path": "https://i.scdn.co/image/ab67616d0000b2731ee28f525d2cbe7813e242d2",
+     "provider": "spotify--gXgn7uqw",
+     "remotely_accessible": true,
+     "proxy_id": "8a9c451ecfe13b396cc39ac49f7c8121d390471a4bfabf5a80ffc0f0a2a8e847"
+    }
+   ]
+  },
+  "favorite": null,
+  "position": null,
+  "date_added": null,
+  "duration": 206,
+  "artists": [
+   {
+    "item_id": "0wcjJjpvnHb5vK4iwKfxPm",
+    "provider": "spotify--gXgn7uqw",
+    "name": "Alewya",
+    "version": "",
+    "sort_name": "alewya",
+    "uri": "spotify--gXgn7uqw://artist/0wcjJjpvnHb5vK4iwKfxPm",
+    "external_ids": null,
+    "is_playable": true,
+    "media_type": "artist",
+    "provider_mappings": [
+     {
+      "item_id": "0wcjJjpvnHb5vK4iwKfxPm",
+      "provider_domain": "spotify",
+      "provider_instance": "spotify--gXgn7uqw",
+      "available": true,
+      "in_library": null,
+      "is_unique": null,
+      "audio_format": {
+       "content_type": "?",
+       "codec_type": "?",
+       "sample_rate": 44100,
+       "bit_depth": 16,
+       "channels": 2,
+       "output_format_str": "?",
+       "bit_rate": 0
+      },
+      "url": "https://open.spotify.com/artist/0wcjJjpvnHb5vK4iwKfxPm",
+      "details": null
+     }
+    ],
+    "metadata": {
+     "images": null
+    },
+    "favorite": null,
+    "position": null,
+    "date_added": null,
+    "artist_type": "singer"
+   }
+  ],
+  "last_played": 0,
+  "album": {
+   "item_id": "6G3VTaCeobzyhyFrqYli0y",
+   "provider": "spotify--gXgn7uqw",
+   "name": "Zero",
+   "version": "",
+   "sort_name": "zero",
+   "uri": "spotify--gXgn7uqw://album/6G3VTaCeobzyhyFrqYli0y",
+   "external_ids": null,
+   "is_playable": true,
+   "media_type": "album",
+   "provider_mappings": [
+    {
+     "item_id": "6G3VTaCeobzyhyFrqYli0y",
+     "provider_domain": "spotify",
+     "provider_instance": "spotify--gXgn7uqw",
+     "available": true,
+     "in_library": null,
+     "is_unique": null,
+     "audio_format": {
+      "content_type": "ogg",
+      "codec_type": "?",
+      "sample_rate": 44100,
+      "bit_depth": 16,
+      "channels": 2,
+      "output_format_str": "ogg",
+      "bit_rate": 320
+     },
+     "url": "https://open.spotify.com/album/6G3VTaCeobzyhyFrqYli0y",
+     "details": null
+    }
+   ],
+   "metadata": {
+    "description": null,
+    "description_language": null,
+    "life_span": null,
+    "artist_entity_type": null,
+    "review": null,
+    "explicit": null,
+    "images": [
+     {
+      "type": "thumb",
+      "path": "https://i.scdn.co/image/ab67616d0000b2731ee28f525d2cbe7813e242d2",
+      "provider": "spotify--gXgn7uqw",
+      "remotely_accessible": true,
+      "proxy_id": "8a9c451ecfe13b396cc39ac49f7c8121d390471a4bfabf5a80ffc0f0a2a8e847"
+     }
+    ],
+    "grouping": null,
+    "genres": null,
+    "mood": null,
+    "style": null,
+    "copyright": null,
+    "lyrics": null,
+    "lrc_lyrics": null,
+    "transcript": null,
+    "transcript_cues": null,
+    "has_transcript": null,
+    "label": null,
+    "links": null,
+    "performers": null,
+    "preview": null,
+    "popularity": null,
+    "release_date": null,
+    "languages": null,
+    "chapters": null,
+    "collections": null,
+    "last_refresh": null
+   },
+   "favorite": null,
+   "position": null,
+   "date_added": null,
+   "year": 2026,
+   "artists": [
+    {
+     "item_id": "0wcjJjpvnHb5vK4iwKfxPm",
+     "provider": "spotify--gXgn7uqw",
+     "name": "Alewya",
+     "version": "",
+     "sort_name": "alewya",
+     "uri": "spotify--gXgn7uqw://artist/0wcjJjpvnHb5vK4iwKfxPm",
+     "external_ids": null,
+     "is_playable": true,
+     "media_type": "artist",
+     "provider_mappings": [
+      {
+       "item_id": "0wcjJjpvnHb5vK4iwKfxPm",
+       "provider_domain": "spotify",
+       "provider_instance": "spotify--gXgn7uqw",
+       "available": true,
+       "in_library": null,
+       "is_unique": null,
+       "audio_format": {
+        "content_type": "?",
+        "codec_type": "?",
+        "sample_rate": 44100,
+        "bit_depth": 16,
+        "channels": 2,
+        "output_format_str": "?",
+        "bit_rate": 0
+       },
+       "url": "https://open.spotify.com/artist/0wcjJjpvnHb5vK4iwKfxPm",
+       "details": null
+      }
+     ],
+     "metadata": {
+      "description": null,
+      "description_language": null,
+      "life_span": null,
+      "artist_entity_type": null,
+      "review": null,
+      "explicit": null,
+      "images": null,
+      "grouping": null,
+      "genres": null,
+      "mood": null,
+      "style": null,
+      "copyright": null,
+      "lyrics": null,
+      "lrc_lyrics": null,
+      "transcript": null,
+      "transcript_cues": null,
+      "has_transcript": null,
+      "label": null,
+      "links": null,
+      "performers": null,
+      "preview": null,
+      "popularity": null,
+      "release_date": null,
+      "languages": null,
+      "chapters": null,
+      "collections": null,
+      "last_refresh": null
+     },
+     "favorite": null,
+     "position": null,
+     "date_added": null,
+     "artist_type": "singer"
+    }
+   ],
+   "album_type": "album"
+  },
+  "disc_number": 1,
+  "track_number": 11,
+  "audio_metadata": {
+   "bpm": 162.0544019982505,
+   "musical_key": "E minor"
+  }
+ },
+ "library://track/5523": {
+  "item_id": "5523",
+  "provider": "library",
+  "name": "Higher Ground",
+  "version": "",
+  "sort_name": "higher ground",
+  "uri": "library://track/5523",
+  "external_ids": {
+   "musicbrainz_recordingid": [
+    "2da84cd5-1f1c-4e5e-9680-f4af87f3c40b"
+   ]
+  },
+  "is_playable": true,
+  "media_type": "track",
+  "provider_mappings": [
+   {
+    "item_id": "Omni Trio - Even Angels Cast Shadows (2001)/03_omni_trio-ominni_trio-srm.mp3",
+    "provider_domain": "filesystem_local",
+    "provider_instance": "filesystem_local--CTr9kfcj",
+    "available": true,
+    "in_library": true,
+    "is_unique": null,
+    "audio_format": {
+     "content_type": "mp3",
+     "codec_type": "mp3",
+     "sample_rate": 44100,
+     "bit_depth": 16,
+     "channels": 2,
+     "output_format_str": "mp3",
+     "bit_rate": 193
+    },
+    "url": null,
+    "details": "1702277361"
+   }
+  ],
+  "metadata": {
+   "images": [
+    {
+     "type": "thumb",
+     "path": "Omni Trio - Even Angels Cast Shadows (2001)/cover.png",
+     "provider": "filesystem_local--CTr9kfcj",
+     "remotely_accessible": null,
+     "proxy_id": "1e84287bb3d698824d2d775aa49124ea7b2f5b4a86f6c6646d5db594aa9faf11"
+    },
+    {
+     "type": "thumb",
+     "path": "Omni Trio - Even Angels Cast Shadows (2001)/03_omni_trio-ominni_trio-srm.mp3",
+     "provider": "filesystem_local--CTr9kfcj",
+     "remotely_accessible": null,
+     "proxy_id": "2790ea96858033a369bc43a40023d403acade7009c590da0bbffcacca2bb01eb"
+    }
+   ]
+  },
+  "favorite": null,
+  "position": null,
+  "date_added": "2023-12-11T06:49:21+00:00",
+  "duration": 431,
+  "artists": [
+   {
+    "item_id": "1569",
+    "provider": "library",
+    "name": "Omni Trio",
+    "version": "",
+    "sort_name": "Omni Trio",
+    "uri": "library://artist/1569",
+    "external_ids": {
+     "musicbrainz_artistid": [
+      "507cfd17-86bd-4b7a-a1d9-095011489db5"
+     ]
+    },
+    "is_playable": true,
+    "media_type": "artist",
+    "provider_mappings": [
+     {
+      "item_id": "Omni Trio",
+      "provider_domain": "filesystem_local",
+      "provider_instance": "filesystem_local--CTr9kfcj",
+      "available": true,
+      "in_library": true,
+      "is_unique": null,
+      "audio_format": {
+       "content_type": "?",
+       "codec_type": "?",
+       "sample_rate": 44100,
+       "bit_depth": 16,
+       "channels": 2,
+       "output_format_str": "?",
+       "bit_rate": 0
+      },
+      "url": null,
+      "details": null
+     }
+    ],
+    "metadata": {
+     "images": null
+    },
+    "favorite": null,
+    "position": null,
+    "date_added": "2026-10-10T08:34:24+00:00",
+    "artist_type": "singer"
+   }
+  ],
+  "last_played": 1791629751,
+  "album": {
+   "item_id": "537",
+   "provider": "library",
+   "name": "Even Angels Cast Shadows",
+   "version": "",
+   "sort_name": "even angels cast shadows",
+   "uri": "library://album/537",
+   "external_ids": {
+    "musicbrainz_albumid": [
+     "7f159f55-7c1e-4f2f-82f0-384b9b03dc36"
+    ],
+    "barcode": [
+     "00656360902623"
+    ],
+    "musicbrainz_releasegroupid": [
+     "a92de364-9759-3c72-8031-f4c3c8010795"
+    ]
+   },
+   "is_playable": true,
+   "media_type": "album",
+   "provider_mappings": [
+    {
+     "item_id": "Omni Trio - Even Angels Cast Shadows (2001)",
+     "provider_domain": "filesystem_local",
+     "provider_instance": "filesystem_local--CTr9kfcj",
+     "available": true,
+     "in_library": true,
+     "is_unique": null,
+     "audio_format": {
+      "content_type": "?",
+      "codec_type": "?",
+      "sample_rate": 44100,
+      "bit_depth": 16,
+      "channels": 2,
+      "output_format_str": "?",
+      "bit_rate": 0
+     },
+     "url": "Omni Trio - Even Angels Cast Shadows (2001)",
+     "details": null
+    }
+   ],
+   "metadata": {
+    "description": null,
+    "description_language": null,
+    "life_span": null,
+    "artist_entity_type": null,
+    "review": null,
+    "explicit": null,
+    "images": [
+     {
+      "type": "thumb",
+      "path": "Omni Trio - Even Angels Cast Shadows (2001)/cover.png",
+      "provider": "filesystem_local--CTr9kfcj",
+      "remotely_accessible": null,
+      "proxy_id": "1e84287bb3d698824d2d775aa49124ea7b2f5b4a86f6c6646d5db594aa9faf11"
+     },
+     {
+      "type": "thumb",
+      "path": "Omni Trio - Even Angels Cast Shadows (2001)/folder.jpg",
+      "provider": "filesystem_local--CTr9kfcj",
+      "remotely_accessible": null,
+      "proxy_id": "0a58fc9ce06970aae32cda5e1a59b8d002f43b0d6e54d491005e2fa6688a22bf"
+     }
+    ],
+    "grouping": null,
+    "genres": null,
+    "mood": null,
+    "style": null,
+    "copyright": null,
+    "lyrics": null,
+    "lrc_lyrics": null,
+    "transcript": null,
+    "transcript_cues": null,
+    "has_transcript": null,
+    "label": null,
+    "links": null,
+    "performers": null,
+    "preview": null,
+    "popularity": null,
+    "release_date": null,
+    "languages": null,
+    "chapters": null,
+    "collections": null,
+    "last_refresh": null
+   },
+   "favorite": null,
+   "position": null,
+   "date_added": "2023-12-11T06:49:21+00:00",
+   "year": 2001,
+   "artists": [
+    {
+     "item_id": "1569",
+     "provider": "library",
+     "name": "Omni Trio",
+     "version": "",
+     "sort_name": "Omni Trio",
+     "uri": "library://artist/1569",
+     "external_ids": null,
+     "is_playable": true,
+     "media_type": "artist",
+     "available": true,
+     "image": null,
+     "year": null
+    }
+   ],
+   "album_type": "album"
+  },
+  "disc_number": 1,
+  "track_number": 3,
+  "audio_metadata": {
+   "bpm": 161.87347516519856,
+   "musical_key": "C minor"
+  }
+ },
+ "library://track/5524": {
+  "item_id": "5524",
+  "provider": "library",
+  "name": "Diffusion Loops",
+  "version": "",
+  "sort_name": "diffusion loops",
+  "uri": "library://track/5524",
+  "external_ids": {
+   "musicbrainz_recordingid": [
+    "4c154256-870f-46d4-a8d5-8b5a534c3dbf"
+   ]
+  },
+  "is_playable": true,
+  "media_type": "track",
+  "provider_mappings": [
+   {
+    "item_id": "Omni Trio - Even Angels Cast Shadows (2001)/02_omni_trio-cast_shadows-srm.mp3",
+    "provider_domain": "filesystem_local",
+    "provider_instance": "filesystem_local--CTr9kfcj",
+    "available": true,
+    "in_library": true,
+    "is_unique": null,
+    "audio_format": {
+     "content_type": "mp3",
+     "codec_type": "mp3",
+     "sample_rate": 44100,
+     "bit_depth": 16,
+     "channels": 2,
+     "output_format_str": "mp3",
+     "bit_rate": 193
+    },
+    "url": null,
+    "details": "1702277361"
+   }
+  ],
+  "metadata": {
+   "images": [
+    {
+     "type": "thumb",
+     "path": "Omni Trio - Even Angels Cast Shadows (2001)/cover.png",
+     "provider": "filesystem_local--CTr9kfcj",
+     "remotely_accessible": null,
+     "proxy_id": "1e84287bb3d698824d2d775aa49124ea7b2f5b4a86f6c6646d5db594aa9faf11"
+    },
+    {
+     "type": "thumb",
+     "path": "Omni Trio - Even Angels Cast Shadows (2001)/02_omni_trio-cast_shadows-srm.mp3",
+     "provider": "filesystem_local--CTr9kfcj",
+     "remotely_accessible": null,
+     "proxy_id": "697183086fdf4dc73f7e94ebca228630a18bc42e09d542740f5ddd4dad5593a2"
+    }
+   ]
+  },
+  "favorite": null,
+  "position": null,
+  "date_added": "2023-12-11T06:49:21+00:00",
+  "duration": 360,
+  "artists": [
+   {
+    "item_id": "1569",
+    "provider": "library",
+    "name": "Omni Trio",
+    "version": "",
+    "sort_name": "Omni Trio",
+    "uri": "library://artist/1569",
+    "external_ids": {
+     "musicbrainz_artistid": [
+      "507cfd17-86bd-4b7a-a1d9-095011489db5"
+     ]
+    },
+    "is_playable": true,
+    "media_type": "artist",
+    "provider_mappings": [
+     {
+      "item_id": "Omni Trio",
+      "provider_domain": "filesystem_local",
+      "provider_instance": "filesystem_local--CTr9kfcj",
+      "available": true,
+      "in_library": true,
+      "is_unique": null,
+      "audio_format": {
+       "content_type": "?",
+       "codec_type": "?",
+       "sample_rate": 44100,
+       "bit_depth": 16,
+       "channels": 2,
+       "output_format_str": "?",
+       "bit_rate": 0
+      },
+      "url": null,
+      "details": null
+     }
+    ],
+    "metadata": {
+     "images": null
+    },
+    "favorite": null,
+    "position": null,
+    "date_added": "2026-10-10T08:34:24+00:00",
+    "artist_type": "singer"
+   }
+  ],
+  "last_played": 1791629324,
+  "album": {
+   "item_id": "537",
+   "provider": "library",
+   "name": "Even Angels Cast Shadows",
+   "version": "",
+   "sort_name": "even angels cast shadows",
+   "uri": "library://album/537",
+   "external_ids": {
+    "musicbrainz_albumid": [
+     "7f159f55-7c1e-4f2f-82f0-384b9b03dc36"
+    ],
+    "barcode": [
+     "00656360902623"
+    ],
+    "musicbrainz_releasegroupid": [
+     "a92de364-9759-3c72-8031-f4c3c8010795"
+    ]
+   },
+   "is_playable": true,
+   "media_type": "album",
+   "provider_mappings": [
+    {
+     "item_id": "Omni Trio - Even Angels Cast Shadows (2001)",
+     "provider_domain": "filesystem_local",
+     "provider_instance": "filesystem_local--CTr9kfcj",
+     "available": true,
+     "in_library": true,
+     "is_unique": null,
+     "audio_format": {
+      "content_type": "?",
+      "codec_type": "?",
+      "sample_rate": 44100,
+      "bit_depth": 16,
+      "channels": 2,
+      "output_format_str": "?",
+      "bit_rate": 0
+     },
+     "url": "Omni Trio - Even Angels Cast Shadows (2001)",
+     "details": null
+    }
+   ],
+   "metadata": {
+    "description": null,
+    "description_language": null,
+    "life_span": null,
+    "artist_entity_type": null,
+    "review": null,
+    "explicit": null,
+    "images": [
+     {
+      "type": "thumb",
+      "path": "Omni Trio - Even Angels Cast Shadows (2001)/cover.png",
+      "provider": "filesystem_local--CTr9kfcj",
+      "remotely_accessible": null,
+      "proxy_id": "1e84287bb3d698824d2d775aa49124ea7b2f5b4a86f6c6646d5db594aa9faf11"
+     },
+     {
+      "type": "thumb",
+      "path": "Omni Trio - Even Angels Cast Shadows (2001)/folder.jpg",
+      "provider": "filesystem_local--CTr9kfcj",
+      "remotely_accessible": null,
+      "proxy_id": "0a58fc9ce06970aae32cda5e1a59b8d002f43b0d6e54d491005e2fa6688a22bf"
+     }
+    ],
+    "grouping": null,
+    "genres": null,
+    "mood": null,
+    "style": null,
+    "copyright": null,
+    "lyrics": null,
+    "lrc_lyrics": null,
+    "transcript": null,
+    "transcript_cues": null,
+    "has_transcript": null,
+    "label": null,
+    "links": null,
+    "performers": null,
+    "preview": null,
+    "popularity": null,
+    "release_date": null,
+    "languages": null,
+    "chapters": null,
+    "collections": null,
+    "last_refresh": null
+   },
+   "favorite": null,
+   "position": null,
+   "date_added": "2023-12-11T06:49:21+00:00",
+   "year": 2001,
+   "artists": [
+    {
+     "item_id": "1569",
+     "provider": "library",
+     "name": "Omni Trio",
+     "version": "",
+     "sort_name": "Omni Trio",
+     "uri": "library://artist/1569",
+     "external_ids": null,
+     "is_playable": true,
+     "media_type": "artist",
+     "available": true,
+     "image": null,
+     "year": null
+    }
+   ],
+   "album_type": "album"
+  },
+  "disc_number": 1,
+  "track_number": 2,
+  "audio_metadata": {
+   "bpm": 171.74377465573565,
+   "musical_key": "B minor"
+  }
+ },
+ "library://track/669": {
+  "item_id": "669",
+  "provider": "library",
+  "name": "Ganz Gut",
+  "version": "",
+  "sort_name": "ganz gut",
+  "uri": "library://track/669",
+  "external_ids": null,
+  "is_playable": true,
+  "media_type": "track",
+  "provider_mappings": [
+   {
+    "item_id": "Ganz Gut/Ganz Gut - Ganz Gut - 01 - Ganz Gut.flac",
+    "provider_domain": "filesystem_local",
+    "provider_instance": "filesystem_local--CTr9kfcj",
+    "available": true,
+    "in_library": true,
+    "is_unique": null,
+    "audio_format": {
+     "content_type": "flac",
+     "codec_type": "flac",
+     "sample_rate": 44100,
+     "bit_depth": 16,
+     "channels": 2,
+     "output_format_str": "flac",
+     "bit_rate": 874
+    },
+    "url": null,
+    "details": "1702232917"
+   }
+  ],
+  "metadata": {
+   "images": [
+    {
+     "type": "thumb",
+     "path": "Ganz Gut/cover.jpg",
+     "provider": "filesystem_local--CTr9kfcj",
+     "remotely_accessible": null,
+     "proxy_id": "907f662b9c9c0fd77920a613b9dca29a6f0a97ea92b82f243a9c72e0b8ef3e49"
+    },
+    {
+     "type": "thumb",
+     "path": "Ganz Gut/Ganz Gut - Ganz Gut - 01 - Ganz Gut.flac",
+     "provider": "filesystem_local--CTr9kfcj",
+     "remotely_accessible": null,
+     "proxy_id": "88aed49531967360fd60bd2d51b91667aaaf57d51045376321025cab4a2a9986"
+    }
+   ]
+  },
+  "favorite": null,
+  "position": null,
+  "date_added": "2023-12-10T18:28:37+00:00",
+  "duration": 180,
+  "artists": [
+   {
+    "item_id": "72",
+    "provider": "library",
+    "name": "Danny Breaks",
+    "version": "",
+    "sort_name": "danny breaks",
+    "uri": "library://artist/72",
+    "external_ids": {
+     "musicbrainz_artistid": [
+      "2ab2c317-3988-4d08-852d-b7805dc7b342"
+     ]
+    },
+    "is_playable": true,
+    "media_type": "artist",
+    "provider_mappings": [
+     {
+      "item_id": "72",
+      "provider_domain": "None",
+      "provider_instance": "None",
+      "available": true,
+      "in_library": null,
+      "is_unique": null,
+      "audio_format": {
+       "content_type": "?",
+       "codec_type": "?",
+       "sample_rate": 44100,
+       "bit_depth": 16,
+       "channels": 2,
+       "output_format_str": "?",
+       "bit_rate": 0
+      },
+      "url": null,
+      "details": null
+     }
+    ],
+    "metadata": {
+     "images": [
+      {
+       "type": "thumb",
+       "path": "https://i.scdn.co/image/ab6761610000e5eb0d5a85a14bda92fa50b9b420",
+       "provider": "spotify--gXgn7uqw",
+       "remotely_accessible": true,
+       "proxy_id": "57cffb2b1589e4bae38fcec55731c95c861e9aaed291886a77de412d5e56c001"
+      }
+     ]
+    },
+    "favorite": null,
+    "position": null,
+    "date_added": "2026-10-10T08:33:37+00:00",
+    "artist_type": "singer"
+   }
+  ],
+  "last_played": 1791628135,
+  "album": {
+   "item_id": "72",
+   "provider": "library",
+   "name": "Ganz Gut",
+   "version": "",
+   "sort_name": "ganz gut",
+   "uri": "library://album/72",
+   "external_ids": null,
+   "is_playable": true,
+   "media_type": "album",
+   "provider_mappings": [
+    {
+     "item_id": "Ganz Gut",
+     "provider_domain": "filesystem_local",
+     "provider_instance": "filesystem_local--CTr9kfcj",
+     "available": true,
+     "in_library": true,
+     "is_unique": null,
+     "audio_format": {
+      "content_type": "?",
+      "codec_type": "?",
+      "sample_rate": 44100,
+      "bit_depth": 16,
+      "channels": 2,
+      "output_format_str": "?",
+      "bit_rate": 0
+     },
+     "url": "Ganz Gut",
+     "details": null
+    }
+   ],
+   "metadata": {
+    "description": null,
+    "description_language": null,
+    "life_span": null,
+    "artist_entity_type": null,
+    "review": null,
+    "explicit": null,
+    "images": [
+     {
+      "type": "thumb",
+      "path": "Ganz Gut/cover.jpg",
+      "provider": "filesystem_local--CTr9kfcj",
+      "remotely_accessible": null,
+      "proxy_id": "907f662b9c9c0fd77920a613b9dca29a6f0a97ea92b82f243a9c72e0b8ef3e49"
+     },
+     {
+      "type": "thumb",
+      "path": "Ganz Gut/cover.png",
+      "provider": "filesystem_local--CTr9kfcj",
+      "remotely_accessible": null,
+      "proxy_id": "55afe405ebf6062ce9c3a23e7b831191c492c9fb28941fe943053459678cc85d"
+     }
+    ],
+    "grouping": null,
+    "genres": null,
+    "mood": null,
+    "style": null,
+    "copyright": null,
+    "lyrics": null,
+    "lrc_lyrics": null,
+    "transcript": null,
+    "transcript_cues": null,
+    "has_transcript": null,
+    "label": null,
+    "links": null,
+    "performers": null,
+    "preview": null,
+    "popularity": null,
+    "release_date": null,
+    "languages": null,
+    "chapters": null,
+    "collections": null,
+    "last_refresh": null
+   },
+   "favorite": null,
+   "position": null,
+   "date_added": "2023-12-10T18:28:37+00:00",
+   "year": 2009,
+   "artists": [
+    {
+     "item_id": "6",
+     "provider": "library",
+     "name": "Various Artists",
+     "version": "",
+     "sort_name": "various artists",
+     "uri": "library://artist/6",
+     "external_ids": null,
+     "is_playable": true,
+     "media_type": "artist",
+     "available": true,
+     "image": null,
+     "year": null
+    }
+   ],
+   "album_type": "album"
+  },
+  "disc_number": 0,
+  "track_number": 1,
+  "audio_metadata": {
+   "bpm": 171.22454722707988,
+   "musical_key": "D# minor"
+  }
+ },
+ "library://track/76": {
+  "item_id": "76",
+  "provider": "library",
+  "name": "All I Do Is Think About You",
+  "version": "",
+  "sort_name": "all i do is think about you",
+  "uri": "library://track/76",
+  "external_ids": {
+   "isrc": [
+    "GBEUE1500262"
+   ]
+  },
+  "is_playable": true,
+  "media_type": "track",
+  "provider_mappings": [
+   {
+    "item_id": "Quantic - 1000 Watts [2016]/14 - All I Do Is Think About You.ogg",
+    "provider_domain": "filesystem_local",
+    "provider_instance": "filesystem_local--CTr9kfcj",
+    "available": true,
+    "in_library": true,
+    "is_unique": null,
+    "audio_format": {
+     "content_type": "ogg",
+     "codec_type": "vorbis",
+     "sample_rate": 44100,
+     "bit_depth": 16,
+     "channels": 2,
+     "output_format_str": "ogg",
+     "bit_rate": 312
+    },
+    "url": null,
+    "details": "1730312861"
+   }
+  ],
+  "metadata": {
+   "images": [
+    {
+     "type": "thumb",
+     "path": "Quantic - 1000 Watts [2016]/cover.png",
+     "provider": "filesystem_local--CTr9kfcj",
+     "remotely_accessible": null,
+     "proxy_id": "250016dabc282703a8d8f1ada1beea36e9b1451ceda2494b2643f32bdb1ea5da"
+    },
+    {
+     "type": "thumb",
+     "path": "Quantic - 1000 Watts [2016]/14 - All I Do Is Think About You.ogg",
+     "provider": "filesystem_local--CTr9kfcj",
+     "remotely_accessible": null,
+     "proxy_id": "eb4d4c2769186fe2af5c5f9b652ac9850f152ff1ac47d5c02cdc7699e7c238c9"
+    }
+   ]
+  },
+  "favorite": null,
+  "position": null,
+  "date_added": "2024-10-30T18:27:41+00:00",
+  "duration": 208,
+  "artists": [
+   {
+    "item_id": "24",
+    "provider": "library",
+    "name": "Quantic",
+    "version": "",
+    "sort_name": "quantic",
+    "uri": "library://artist/24",
+    "external_ids": {
+     "musicbrainz_artistid": [
+      "f1560407-8826-4ec9-b78f-e0c3fa3ea4f5"
+     ]
+    },
+    "is_playable": true,
+    "media_type": "artist",
+    "provider_mappings": [
+     {
+      "item_id": "Quantic",
+      "provider_domain": "filesystem_local",
+      "provider_instance": "filesystem_local--CTr9kfcj",
+      "available": true,
+      "in_library": true,
+      "is_unique": null,
+      "audio_format": {
+       "content_type": "?",
+       "codec_type": "?",
+       "sample_rate": 44100,
+       "bit_depth": 16,
+       "channels": 2,
+       "output_format_str": "?",
+       "bit_rate": 0
+      },
+      "url": null,
+      "details": null
+     }
+    ],
+    "metadata": {
+     "images": [
+      {
+       "type": "thumb",
+       "path": "https://i.scdn.co/image/ab6761610000e5eb71337edb39ba6789777dc44b",
+       "provider": "spotify--gXgn7uqw",
+       "remotely_accessible": true,
+       "proxy_id": "8ea9850b3c2937af63efb15da37b36b856c308c66b37f5ccc70f139c73dc72a1"
+      }
+     ]
+    },
+    "favorite": null,
+    "position": null,
+    "date_added": "2026-10-10T08:33:37+00:00",
+    "artist_type": "singer"
+   },
+   {
+    "item_id": "25",
+    "provider": "library",
+    "name": "Flowering Inferno",
+    "version": "",
+    "sort_name": "flowering inferno",
+    "uri": "library://artist/25",
+    "external_ids": null,
+    "is_playable": true,
+    "media_type": "artist",
+    "provider_mappings": [
+     {
+      "item_id": "Flowering Inferno",
+      "provider_domain": "filesystem_local",
+      "provider_instance": "filesystem_local--CTr9kfcj",
+      "available": true,
+      "in_library": true,
+      "is_unique": null,
+      "audio_format": {
+       "content_type": "?",
+       "codec_type": "?",
+       "sample_rate": 44100,
+       "bit_depth": 16,
+       "channels": 2,
+       "output_format_str": "?",
+       "bit_rate": 0
+      },
+      "url": null,
+      "details": null
+     }
+    ],
+    "metadata": {
+     "images": null
+    },
+    "favorite": null,
+    "position": null,
+    "date_added": "2026-10-10T08:33:37+00:00",
+    "artist_type": "singer"
+   },
+   {
+    "item_id": "26",
+    "provider": "library",
+    "name": "Christopher Ellis",
+    "version": "",
+    "sort_name": "christopher ellis",
+    "uri": "library://artist/26",
+    "external_ids": null,
+    "is_playable": true,
+    "media_type": "artist",
+    "provider_mappings": [
+     {
+      "item_id": "Christopher Ellis",
+      "provider_domain": "filesystem_local",
+      "provider_instance": "filesystem_local--CTr9kfcj",
+      "available": true,
+      "in_library": true,
+      "is_unique": null,
+      "audio_format": {
+       "content_type": "?",
+       "codec_type": "?",
+       "sample_rate": 44100,
+       "bit_depth": 16,
+       "channels": 2,
+       "output_format_str": "?",
+       "bit_rate": 0
+      },
+      "url": null,
+      "details": null
+     }
+    ],
+    "metadata": {
+     "images": null
+    },
+    "favorite": null,
+    "position": null,
+    "date_added": "2026-10-10T08:33:37+00:00",
+    "artist_type": "singer"
+   }
+  ],
+  "last_played": 1791626411,
+  "album": {
+   "item_id": "8",
+   "provider": "library",
+   "name": "1000 Watts",
+   "version": "",
+   "sort_name": "1000 watts",
+   "uri": "library://album/8",
+   "external_ids": null,
+   "is_playable": true,
+   "media_type": "album",
+   "provider_mappings": [
+    {
+     "item_id": "Quantic - 1000 Watts [2016]",
+     "provider_domain": "filesystem_local",
+     "provider_instance": "filesystem_local--CTr9kfcj",
+     "available": true,
+     "in_library": true,
+     "is_unique": null,
+     "audio_format": {
+      "content_type": "?",
+      "codec_type": "?",
+      "sample_rate": 44100,
+      "bit_depth": 16,
+      "channels": 2,
+      "output_format_str": "?",
+      "bit_rate": 0
+     },
+     "url": "Quantic - 1000 Watts [2016]",
+     "details": null
+    }
+   ],
+   "metadata": {
+    "description": null,
+    "description_language": null,
+    "life_span": null,
+    "artist_entity_type": null,
+    "review": null,
+    "explicit": null,
+    "images": [
+     {
+      "type": "thumb",
+      "path": "Quantic - 1000 Watts [2016]/cover.png",
+      "provider": "filesystem_local--CTr9kfcj",
+      "remotely_accessible": null,
+      "proxy_id": "250016dabc282703a8d8f1ada1beea36e9b1451ceda2494b2643f32bdb1ea5da"
+     }
+    ],
+    "grouping": null,
+    "genres": null,
+    "mood": null,
+    "style": null,
+    "copyright": null,
+    "lyrics": null,
+    "lrc_lyrics": null,
+    "transcript": null,
+    "transcript_cues": null,
+    "has_transcript": null,
+    "label": null,
+    "links": null,
+    "performers": null,
+    "preview": null,
+    "popularity": null,
+    "release_date": null,
+    "languages": null,
+    "chapters": null,
+    "collections": null,
+    "last_refresh": null
+   },
+   "favorite": null,
+   "position": null,
+   "date_added": "2024-10-30T18:27:27+00:00",
+   "year": 2016,
+   "artists": [
+    {
+     "item_id": "24",
+     "provider": "library",
+     "name": "Quantic",
+     "version": "",
+     "sort_name": "quantic",
+     "uri": "library://artist/24",
+     "external_ids": null,
+     "is_playable": true,
+     "media_type": "artist",
+     "available": true,
+     "image": null,
+     "year": null
+    }
+   ],
+   "album_type": "unknown"
+  },
+  "disc_number": 1,
+  "track_number": 14,
+  "audio_metadata": {
+   "bpm": 132.44132837656178,
+   "musical_key": "B minor"
+  }
+ }
+}

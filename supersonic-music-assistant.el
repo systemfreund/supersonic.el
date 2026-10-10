@@ -102,16 +102,32 @@ It answers any other size with 400; 0, the image as it is, it also
 takes.")
 
 (defconst supersonic-music-assistant--album-list-args
-  '((recent ("order_by" . "last_played_desc") ("played_only" . t))
-    (random ("order_by" . "random"))
+  '((random ("order_by" . "random"))
     (newest ("order_by" . "timestamp_added_desc")))
   "Map of facade album list type to the args producing it.
 The args are for `music/albums/library_items', on top of a limit.
-`recent' asks it too, rather than `music/recently_played_items': that
-answers with slim item mappings, without the artists the album list
-shows, where `library_items' gives the same full albums as every other
-list.  A server too old to know `played_only' ignores it, and lists
-the albums never played after the ones played.")
+`recent' is not among them: MA keeps its play history per track, so
+library albums carry no play data to order or filter by -- and this
+provider's backend plays an album as its tracks anyway.
+`supersonic-music-assistant--recent-albums' derives that list from
+the tracks in `music/recently_played_items' instead.")
+
+(defvar supersonic-music-assistant--recent-lookups 10
+  "How many tracks of the play history to look up at once.
+Each lookup is a request of its own, so the recent albums are looked
+up this many at a time rather than one after the other.")
+
+(defvar supersonic-music-assistant--recent-history-start 4
+  "How many history tracks to ask for per album wanted, at first.
+Tracks of the same album follow each other in the history, so it takes
+several to find each album.  While albums are still missing, the
+history is asked again for twice as many, up to
+`supersonic-music-assistant--recent-history-factor' per album.")
+
+(defvar supersonic-music-assistant--recent-history-factor 16
+  "The most history tracks to ask for per album wanted, before giving up.
+Caps the lookups listing the recent albums makes when the history has
+few albums; see `supersonic-music-assistant--recent-history-start'.")
 
 (defvar supersonic-music-assistant--clock-offset 0
   "Seconds the local clock runs ahead of the server's, as last estimated.
@@ -506,16 +522,85 @@ it does not know."
 
 (aio-defun
  supersonic-music-assistant--album-list (type count)
- "Return a promise resolving to at most COUNT library albums of list TYPE.
-Asks `music/albums/library_items' in the order
-`supersonic-music-assistant--album-list-args' maps TYPE to."
+ "Return a promise resolving to at most COUNT albums of list TYPE.
+For `recent', those of the tracks last played, as
+`supersonic-music-assistant--recent-albums' finds them; for any other
+TYPE, library albums asked of `music/albums/library_items' in the
+order `supersonic-music-assistant--album-list-args' maps TYPE to."
  (let ((args (alist-get type supersonic-music-assistant--album-list-args)))
-   (unless args
-     (user-error "Music Assistant has no `%s' album list" type))
    (mapcar #'supersonic-music-assistant--album
            (aio-await
-            (supersonic-music-assistant--command
-             "music/albums/library_items" `(("limit" . ,count) ,@args))))))
+            (cond
+             ((eq type 'recent) (supersonic-music-assistant--recent-albums count))
+             (args (supersonic-music-assistant--command
+                    "music/albums/library_items" `(("limit" . ,count) ,@args)))
+             (t (user-error "Music Assistant has no `%s' album list" type)))))))
+
+(aio-defun
+ supersonic-music-assistant--recent-albums (count)
+ "Return a promise resolving to the albums of the tracks last played.
+At most COUNT MA album alists, most recently played first, each once.
+The history, `music/recently_played_items', lists slim track mappings
+without their album, so each track is looked up with
+`music/item_by_uri', `supersonic-music-assistant--recent-lookups' at
+a time; a full track carries an album mapping with all the album list
+shows.  A track whose lookup fails, or which has no album, is skipped
+-- unless every lookup fails, which signals the first failure rather
+than pass for an empty history.  A track of a streaming provider is
+looked up there unless the server has it cached; MA throttles those
+calls itself, so a cold cache makes the list slow rather than fail.
+The history has no offset, so when it runs out of tracks before COUNT
+albums are found, it is asked again for twice as many and the tracks
+already looked up are skipped -- until it is exhausted, or
+`supersonic-music-assistant--recent-history-factor' tracks per album
+have been asked for."
+ (let ((connection (supersonic-music-assistant--connection))
+       (limit (* supersonic-music-assistant--recent-history-start count))
+       (max-limit (* supersonic-music-assistant--recent-history-factor count))
+       (skip 0)
+       (albums nil)
+       (any-resolved nil)
+       (failure nil)
+       (done (< count 1)))
+   (while (not done)
+     (let* ((history (aio-await
+                      (supersonic-music-assistant--send
+                       connection "music/recently_played_items"
+                       `(("limit" . ,limit) ("media_types" . ["track"])))))
+            (tracks (seq-filter
+                     (lambda (item)
+                       (and (equal (assoc-default "media_type" item) "track")
+                            (stringp (assoc-default "uri" item))))
+                     (nthcdr skip history))))
+       (while (and tracks (< (length albums) count))
+         (let ((lookups
+                (mapcar (lambda (track)
+                          (aio-catch
+                           (supersonic-music-assistant--send
+                            connection "music/item_by_uri"
+                            `(("uri" . ,(assoc-default "uri" track))))))
+                        (seq-take tracks supersonic-music-assistant--recent-lookups))))
+           (setq tracks (nthcdr supersonic-music-assistant--recent-lookups tracks))
+           (dolist (lookup lookups)
+             (pcase (aio-await lookup)
+               (`(:error . ,err) (unless failure (setq failure err)))
+               (`(:success . ,track)
+                (setq any-resolved t)
+                (let* ((album (and (consp track) (assoc-default "album" track)))
+                       (uri (and (consp album) (assoc-default "uri" album))))
+                  (when (and (stringp uri)
+                             (< (length albums) count)
+                             (not (seq-find (lambda (seen) (equal uri (assoc-default "uri" seen)))
+                                            albums)))
+                    (push album albums))))))))
+       (setq skip (length history))
+       (setq done (or (>= (length albums) count)
+                      (< (length history) limit)
+                      (>= limit max-limit)))
+       (setq limit (min (* 2 limit) max-limit))))
+   (when (and failure (not any-resolved))
+     (signal (car failure) (cdr failure)))
+   (nreverse albums)))
 
 (aio-defun
  supersonic-music-assistant--album-tracks (uri)
