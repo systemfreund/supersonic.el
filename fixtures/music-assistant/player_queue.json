@@ -1,0 +1,295 @@
+{
+  "queue_id": "FDPylNf_QruGA_LHFE28MjdygzDARSmXDlnQ6jeb7So",
+  "active": true,
+  "display_name": "Web (Firefox on Linux)",
+  "available": true,
+  "items": 2,
+  "shuffle_enabled": null,
+  "repeat_mode": "off",
+  "crossfade_enabled": null,
+  "autoplay_enabled": null,
+  "overlay_enabled": null,
+  "overlay_source": null,
+  "overlay_volume": 100,
+  "smart_fades_active": null,
+  "smart_shuffle_active": null,
+  "current_index": 1,
+  "index_in_buffer": 1,
+  "ended": null,
+  "elapsed_time": 3.5667535254974365,
+  "elapsed_time_last_updated": 1791626426.4715338,
+  "playback_speed": 1.0,
+  "state": "idle",
+  "current_item": {
+    "queue_id": "FDPylNf_QruGA_LHFE28MjdygzDARSmXDlnQ6jeb7So",
+    "queue_item_id": "1727ac76c2984e5695bae4faaf7fd584",
+    "name": "Quantic/Flowering Inferno - Spring Tank Fire",
+    "duration": 231,
+    "sort_index": 2,
+    "streamdetails": {
+      "provider": "filesystem_local--CTr9kfcj",
+      "item_id": "Quantic - 1000 Watts [2016]/01 - Spring Tank Fire.ogg",
+      "audio_format": {
+        "content_type": "ogg",
+        "codec_type": "vorbis",
+        "sample_rate": 44100,
+        "bit_depth": 16,
+        "channels": 2,
+        "output_format_str": "ogg",
+        "bit_rate": 320
+      },
+      "media_type": "track",
+      "stream_type": "local_file",
+      "duration": 231,
+      "size": 8319154,
+      "stream_metadata": null,
+      "audio_processing": null,
+      "loudness": -14.2,
+      "loudness_album": null,
+      "prefer_album_loudness": null,
+      "volume_normalization_mode": "measurement_only",
+      "volume_normalization_gain_correct": 0.2,
+      "target_loudness": -14.0,
+      "stream_title": null
+    },
+    "media_item": {
+      "item_id": "72",
+      "provider": "library",
+      "name": "Spring Tank Fire",
+      "version": "",
+      "sort_name": "spring tank fire",
+      "uri": "library://track/72",
+      "external_ids": {
+        "isrc": [
+          "GBEUE1500249"
+        ]
+      },
+      "is_playable": true,
+      "media_type": "track",
+      "provider_mappings": [
+        {
+          "item_id": "Quantic - 1000 Watts [2016]/01 - Spring Tank Fire.ogg",
+          "provider_domain": "filesystem_local",
+          "provider_instance": "filesystem_local--CTr9kfcj",
+          "available": true,
+          "in_library": true,
+          "is_unique": null,
+          "audio_format": {
+            "content_type": "ogg",
+            "codec_type": "vorbis",
+            "sample_rate": 44100,
+            "bit_depth": 16,
+            "channels": 2,
+            "output_format_str": "ogg",
+            "bit_rate": 287
+          },
+          "url": null,
+          "details": "1730312824"
+        }
+      ],
+      "metadata": {
+        "description": "id[spotify.com:track:3aibcsfvGIq0IBUHUHMNIr]",
+        "description_language": null,
+        "life_span": null,
+        "artist_entity_type": null,
+        "review": null,
+        "explicit": null,
+        "images": [
+          {
+            "type": "thumb",
+            "path": "Quantic - 1000 Watts [2016]/cover.png",
+            "provider": "filesystem_local--CTr9kfcj",
+            "remotely_accessible": null,
+            "proxy_id": "250016dabc282703a8d8f1ada1beea36e9b1451ceda2494b2643f32bdb1ea5da"
+          },
+          {
+            "type": "thumb",
+            "path": "Quantic - 1000 Watts [2016]/01 - Spring Tank Fire.ogg",
+            "provider": "filesystem_local--CTr9kfcj",
+            "remotely_accessible": null,
+            "proxy_id": "dffd9bcc2b7adc81536f235daca8520ca8974165c4d1c81aeba3290dc6ba86e9"
+          }
+        ],
+        "grouping": null,
+        "genres": [
+          "latin alternative",
+          "nu jazz",
+          "trip hop",
+          "electronica",
+          "nu-cumbia",
+          "downtempo"
+        ],
+        "mood": null,
+        "style": null,
+        "copyright": null,
+        "lyrics": null,
+        "lrc_lyrics": null,
+        "transcript": null,
+        "transcript_cues": null,
+        "has_transcript": null,
+        "label": null,
+        "links": null,
+        "performers": null,
+        "preview": null,
+        "popularity": null,
+        "release_date": null,
+        "languages": null,
+        "chapters": null,
+        "collections": null,
+        "last_refresh": null
+      },
+      "favorite": null,
+      "position": null,
+      "date_added": "2024-10-30T18:27:04+00:00",
+      "duration": 231,
+      "artists": [
+        {
+          "item_id": "24",
+          "provider": "library",
+          "name": "Quantic",
+          "version": "",
+          "sort_name": "quantic",
+          "uri": "library://artist/24",
+          "external_ids": {
+            "musicbrainz_artistid": [
+              "f1560407-8826-4ec9-b78f-e0c3fa3ea4f5"
+            ]
+          },
+          "is_playable": true,
+          "media_type": "artist",
+          "available": true,
+          "image": null,
+          "year": null
+        },
+        {
+          "item_id": "25",
+          "provider": "library",
+          "name": "Flowering Inferno",
+          "version": "",
+          "sort_name": "flowering inferno",
+          "uri": "library://artist/25",
+          "external_ids": null,
+          "is_playable": true,
+          "media_type": "artist",
+          "available": true,
+          "image": null,
+          "year": null
+        }
+      ],
+      "last_played": 0,
+      "album": {
+        "item_id": "8",
+        "provider": "library",
+        "name": "1000 Watts",
+        "version": "",
+        "sort_name": "1000 watts",
+        "uri": "library://album/8",
+        "external_ids": null,
+        "is_playable": true,
+        "media_type": "album",
+        "provider_mappings": [
+          {
+            "item_id": "Quantic - 1000 Watts [2016]",
+            "provider_domain": "filesystem_local",
+            "provider_instance": "filesystem_local--CTr9kfcj",
+            "available": true,
+            "in_library": true,
+            "is_unique": null,
+            "audio_format": {
+              "content_type": "?",
+              "codec_type": "?",
+              "sample_rate": 44100,
+              "bit_depth": 16,
+              "channels": 2,
+              "output_format_str": "?",
+              "bit_rate": 0
+            },
+            "url": "Quantic - 1000 Watts [2016]",
+            "details": null
+          }
+        ],
+        "metadata": {
+          "description": null,
+          "description_language": null,
+          "life_span": null,
+          "artist_entity_type": null,
+          "review": null,
+          "explicit": null,
+          "images": [
+            {
+              "type": "thumb",
+              "path": "Quantic - 1000 Watts [2016]/cover.png",
+              "provider": "filesystem_local--CTr9kfcj",
+              "remotely_accessible": null,
+              "proxy_id": "250016dabc282703a8d8f1ada1beea36e9b1451ceda2494b2643f32bdb1ea5da"
+            }
+          ],
+          "grouping": null,
+          "genres": null,
+          "mood": null,
+          "style": null,
+          "copyright": null,
+          "lyrics": null,
+          "lrc_lyrics": null,
+          "transcript": null,
+          "transcript_cues": null,
+          "has_transcript": null,
+          "label": null,
+          "links": null,
+          "performers": null,
+          "preview": null,
+          "popularity": null,
+          "release_date": null,
+          "languages": null,
+          "chapters": null,
+          "collections": null,
+          "last_refresh": null
+        },
+        "favorite": null,
+        "position": null,
+        "date_added": "2024-10-30T18:27:27+00:00",
+        "year": 2016,
+        "artists": [
+          {
+            "item_id": "24",
+            "provider": "library",
+            "name": "Quantic",
+            "version": "",
+            "sort_name": "quantic",
+            "uri": "library://artist/24",
+            "external_ids": null,
+            "is_playable": true,
+            "media_type": "artist",
+            "available": true,
+            "image": null,
+            "year": null
+          }
+        ],
+        "album_type": "unknown"
+      },
+      "disc_number": 1,
+      "track_number": 1,
+      "audio_metadata": null
+    },
+    "image": {
+      "type": "thumb",
+      "path": "Quantic - 1000 Watts [2016]/cover.png",
+      "provider": "filesystem_local--CTr9kfcj",
+      "remotely_accessible": null,
+      "proxy_id": "250016dabc282703a8d8f1ada1beea36e9b1451ceda2494b2643f32bdb1ea5da"
+    },
+    "index": 0,
+    "available": true,
+    "extra_attributes": null
+  },
+  "next_item": null,
+  "sources": null,
+  "flow_mode": true,
+  "resume_pos": 4,
+  "is_dynamic": null,
+  "extra_attributes": {
+    "play_action_in_progress": null
+  },
+  "dont_stop_the_music_enabled": null,
+  "radio_source": null
+}

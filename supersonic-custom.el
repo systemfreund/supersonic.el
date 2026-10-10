@@ -562,6 +562,30 @@ under your profile."
   :type 'string
   :group 'supersonic)
 
+(defcustom supersonic-music-assistant-player nil
+  "The Music Assistant player the `music-assistant' backend plays on.
+A plist `(:id ID :name NAME)': ID is the player's id, which is also
+the id of its queue; NAME is its display name, only ever shown to the
+user.
+
+`supersonic-music-assistant-select-player' sets this from the players
+the server has, and saves it if asked to; nil means none is selected."
+  :type '(choice (const :tag "None selected" nil)
+                 (plist :options ((:id string) (:name string))))
+  :group 'supersonic)
+
+(defcustom supersonic-music-assistant-poll-interval 2
+  "Seconds between polls of the Music Assistant player.
+Only while `music-assistant' is the active backend.  This package
+talks to Music Assistant over plain HTTP, which reports nothing on its
+own, so `supersonic-music-assistant-player.el' asks the player's
+queue for its state on this interval.  The now-playing
+buffer, the queue buffer and MPRIS follow the player within one
+interval, changes made from other Music Assistant clients included.
+The position shown in between is counted on from the last poll."
+  :type 'number
+  :group 'supersonic)
+
 (defcustom supersonic-playback-backend 'mpv
   "Which playback backend plays what supersonic.el is asked to play.
 The symbol a backend registered itself under via

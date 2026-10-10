@@ -278,7 +278,32 @@ a feed by URL or downloading an episode.
 
 Music Assistant plays on its own players and gives a client no URL to
 stream a whole track from, so neither mpv nor UPnP can play for it.
-Playback on Music Assistant's players is not there yet.
+`supersonic-music-assistant-player.el` plays on one of those players
+instead -- a speaker, a Chromecast, an AirPlay device, the web player
+in your browser -- the way the jukebox plays on a Subsonic server. It
+loads the provider too:
+
+```
+(use-package supersonic
+  :custom
+  (supersonic-provider 'music-assistant)
+  (supersonic-music-assistant-url "http://192.168.1.10:8095")
+  (supersonic-playback-backend 'music-assistant)
+  :config
+  (require 'supersonic-music-assistant-player))
+```
+
+Pick the player with `M-x supersonic-music-assistant-select-player`,
+which offers the server's players by name. The choice is set as
+`supersonic-music-assistant-player`, and saved for future sessions if
+you say so. Playing, enqueueing and the transport commands then drive
+that player's queue. The backend polls the queue every
+`supersonic-music-assistant-poll-interval` seconds, so the queue
+buffer, now-playing and MPRIS follow it, changes made from other Music
+Assistant clients included. As in Music Assistant's own clients,
+going to the previous track more than a few seconds into one starts
+that one over. Music Assistant keeps its own play history, so nothing
+is scrobbled.
 
 ## Authentication
 
