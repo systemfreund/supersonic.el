@@ -441,6 +441,19 @@ point where what is playing may have changed runs
        (should (equal "Test Artist" (aref (nth 1 entry) 2)))
        (should (equal "Test Album" (aref (nth 1 entry) 3)))))))
 
+(ert-deftest supersonic-tests-queue-parse-uses-the-track-an-entry-brings ()
+  "An entry that brings its `:track' along is shown from that, without
+a lookup; one that does not is looked up as before."
+  (let ((looked-up nil))
+    (cl-letf (((symbol-function 'supersonic-provider-track)
+               (lambda (id) (push id looked-up) (funcall (supersonic-tests--resolved `(:title "Looked up" :id ,id))))))
+      (let ((rows (aio-wait-for
+                   (supersonic-queue-parse
+                    '((:track-id "a" :current t :track (:id "a" :title "Brought" :artist "Ar" :album "Al"))
+                      (:track-id "b" :current nil))))))
+        (should (equal '(["▶" "Brought" "Ar" "Al"] ["" "Looked up" "" ""]) (mapcar #'cadr rows)))
+        (should (equal '("b") looked-up))))))
+
 (ert-deftest supersonic-tests-queue-buffer-follows-track-changes ()
   "An open queue buffer refreshes itself as mpv advances, with no manual refresh."
   (supersonic-tests--with-mpv
@@ -6425,6 +6438,7 @@ and auth-source has the token \"secret-token\" for exactly that host."
   `(let ((supersonic-provider 'music-assistant)
          (supersonic-music-assistant-url "http://ma.test:8095")
          (supersonic-music-assistant--checked-url nil)
+         (supersonic-music-assistant--clock-offset 0)
          (supersonic-tests--ma-requests nil)
          (handler ,handler))
      (cl-letf (((symbol-function 'auth-source-search)
@@ -6896,6 +6910,10 @@ makes `url.el' prompt from a timer."
 (defvar supersonic-tests--ma-queue-entries nil
   "The track ids of the entries the fake server's queue holds.")
 
+(defvar supersonic-tests--ma-queue-items-text nil
+  "What the fake server answers `player_queues/items' with, if non-nil.
+Otherwise it answers with `supersonic-tests--ma-queue-entries'.")
+
 (defvar supersonic-tests--ma-clock 1000000.0
   "Fake wall-clock seconds `float-time' returns in a Music Assistant player test.")
 
@@ -6931,9 +6949,12 @@ values of the queue, overriding these."
           (pcase (supersonic-tests--ma-command request)
             ("player_queues/get" (json-encode supersonic-tests--ma-queue))
             ("player_queues/items"
-             (if (eql 0 (assoc-default "offset" (supersonic-tests--ma-args request)))
-                 (json-encode (vconcat (mapcar #'supersonic-tests--ma-entry supersonic-tests--ma-queue-entries)))
-               "[]"))
+             (cond
+              ((not (eql 0 (assoc-default "offset" (supersonic-tests--ma-args request))))
+               "[]")
+              (supersonic-tests--ma-queue-items-text)
+              (t
+               (json-encode (vconcat (mapcar #'supersonic-tests--ma-entry supersonic-tests--ma-queue-entries))))))
             ("players/all" (supersonic-tests--ma-fixture "players"))
             (_ "null")))))
 
@@ -6946,7 +6967,8 @@ starts out with an empty, idle queue.  `float-time' reads
          (supersonic-music-assistant-player '(:id "player-1" :name "Kitchen"))
          (supersonic-tests--ma-clock 1000000.0)
          (supersonic-tests--ma-queue nil)
-         (supersonic-tests--ma-queue-entries nil))
+         (supersonic-tests--ma-queue-entries nil)
+         (supersonic-tests--ma-queue-items-text nil))
      (supersonic-tests--ma-set-queue "idle" nil)
      (cl-letf (((symbol-function 'float-time) (lambda (&rest _) supersonic-tests--ma-clock)))
        (supersonic-tests--with-ma-server #'supersonic-tests--ma-player-server
@@ -6994,7 +7016,7 @@ and its position, without a request of its own."
   (supersonic-tests--with-ma-player
     (let ((queue (json-read-from-string (supersonic-tests--ma-fixture "player_queue"))))
       (setq supersonic-tests--ma-queue queue))
-    (setq supersonic-tests--ma-queue-entries '("library://track/76" "library://track/72"))
+    (setq supersonic-tests--ma-queue-items-text (supersonic-tests--ma-fixture "player_queue_items"))
     (supersonic-tests--resolve (supersonic-music-assistant-player--poll))
     (should (supersonic-music-assistant-player-live-p))
     (should (equal '("player_queues/get" "player_queues/items") (supersonic-tests--ma-command-names)))
@@ -7004,8 +7026,13 @@ and its position, without a request of its own."
                    (supersonic-tests--resolve (supersonic-music-assistant-player-status 'track-id))))
     (should (supersonic-tests--resolve (supersonic-music-assistant-player-status 'paused)))
     (should (< 3.56 (supersonic-tests--resolve (supersonic-music-assistant-player-status 'position)) 3.57))
-    (should (equal '((:track-id "library://track/76" :current nil) (:track-id "library://track/72" :current t))
-                   (supersonic-tests--resolve (supersonic-music-assistant-player-queue))))
+    (let ((queue (supersonic-tests--resolve (supersonic-music-assistant-player-queue))))
+      (should (equal '(("library://track/76" nil) ("library://track/72" t))
+                     (mapcar (lambda (entry) (list (plist-get entry :track-id) (plist-get entry :current))) queue)))
+      ;; Each entry brings the track its media item describes.
+      (should (equal '("All I Do Is Think About You" "Spring Tank Fire")
+                     (mapcar (lambda (entry) (plist-get (plist-get entry :track) :title)) queue)))
+      (should (equal "1000 Watts" (plist-get (plist-get (car queue) :track) :album))))
     (should (= 231 (plist-get (supersonic-music-assistant-player--snapshot) :duration)))
     (should-not supersonic-tests--ma-requests)))
 
@@ -7046,6 +7073,50 @@ and never past the entry's duration; while paused it stands still."
     (supersonic-tests--resolve (supersonic-music-assistant-player--poll))
     (cl-incf supersonic-tests--ma-clock 5)
     (should (= 10 (supersonic-tests--resolve (supersonic-music-assistant-player-status 'position))))))
+
+(ert-deftest supersonic-tests-ma-notes-how-far-the-server-clock-is-off ()
+  "The `Date' an answer carries sets the clock offset when it is more
+than about two seconds off the local clock, and resets it otherwise;
+an answer without one leaves it.  A poll reads the queue's timestamp
+shifted by that offset, so a server clock running behind does not put
+the position ahead."
+  (let ((supersonic-music-assistant--clock-offset 0)
+        (now (float-time)))
+    (cl-flet ((answer (header)
+                (with-temp-buffer
+                  (insert "HTTP/1.1 200 OK\r\n" header "Content-Type: application/json\r\n\r\n")
+                  (setq-local url-http-end-of-headers (point))
+                  (insert "{}")
+                  (supersonic-music-assistant--note-server-clock)
+                  supersonic-music-assistant--clock-offset)))
+      (should (< 119 (answer (format "date: %s\r\n" (format-time-string "%a, %d %b %Y %T GMT" (- now 120) t))) 122))
+      (should (< 119 (answer "") 122))
+      (should (= 0 (answer (format "Date: %s\r\n" (format-time-string "%a, %d %b %Y %T GMT" now t)))))))
+  (supersonic-tests--with-ma-player
+    (setq supersonic-music-assistant--clock-offset 60)
+    (supersonic-tests--ma-set-queue "playing" '("library://track/1") 0
+                                    "elapsed_time_last_updated" (- supersonic-tests--ma-clock 63))
+    (supersonic-tests--resolve (supersonic-music-assistant-player--poll))
+    (should (= 13 (supersonic-tests--resolve (supersonic-music-assistant-player-status 'position))))))
+
+(ert-deftest supersonic-tests-ma-player-poll-looks-the-token-up-once ()
+  "A poll that also asks for the queue's entries looks the token up
+once for both."
+  (supersonic-tests--with-ma-player
+    (supersonic-tests--ma-set-queue "playing" '("library://track/1"))
+    (let ((lookups 0))
+      (supersonic-tests--counting-auth-lookups lookups
+        (supersonic-tests--resolve (supersonic-music-assistant-player--poll)))
+      (should (equal '("player_queues/get" "player_queues/items") (supersonic-tests--ma-command-names)))
+      (should (= 1 lookups)))))
+
+(ert-deftest supersonic-tests-ma-player-seek-needs-a-position ()
+  "Seeking by an offset before any poll found a position is refused,
+rather than counted from the start of the entry."
+  (supersonic-tests--with-ma-player
+    (cl-letf (((symbol-function 'supersonic-music-assistant-player--seek-to)
+               (lambda (&rest _) (ert-fail "Sought without a position"))))
+      (should-error (supersonic-music-assistant-player-seek 10) :type 'user-error))))
 
 (ert-deftest supersonic-tests-ma-player-operations-send-their-commands ()
   "Each playing operation runs its queue command on the selected player:
@@ -7169,7 +7240,8 @@ queue-change hook when only the entries do."
 
 (ert-deftest supersonic-tests-ma-player-without-a-player ()
   "With no player selected, a playing operation signals a `user-error'
-saying how to select one, and stopping does nothing.  A player the
+saying how to select one, and stopping does nothing, as it does with
+no server set.  A player the
 server does not know fails the poll, reported once, never signalled."
   (let ((supersonic-music-assistant-player nil)
         (supersonic-music-assistant-url "http://ma.test:8095"))
@@ -7178,6 +7250,12 @@ server does not know fails the poll, reported once, never signalled."
                                                 :type 'user-error))))
     (should-error (supersonic-music-assistant-player-toggle-play) :type 'user-error)
     (should-not (supersonic-music-assistant-player-stop)))
+  ;; Nor is there anything to stop with a player but no server.
+  (let ((supersonic-music-assistant-player '(:id "player-1"))
+        (supersonic-music-assistant-url ""))
+    (cl-letf (((symbol-function 'supersonic-music-assistant-player--run)
+               (lambda (&rest _) (ert-fail "Stopped without a server"))))
+      (should-not (supersonic-music-assistant-player-stop))))
   (supersonic-tests--with-ma-player
     (setq supersonic-tests--ma-queue nil)
     (let ((reported nil))

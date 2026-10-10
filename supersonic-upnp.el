@@ -496,7 +496,9 @@ same model often share a name."
           (plist-get renderer :name)
           (url-host (url-generic-parse-url (plist-get renderer :location)))))
 
-;;;###autoload
+;; An explicit cookie: the autoloads generator does not know `aio-defun'
+;; and would copy the whole definition, which fails to load without aio.
+;;;###autoload (autoload 'supersonic-upnp-select-renderer "supersonic-upnp" nil t)
 (aio-defun
  supersonic-upnp-select-renderer (&optional by-url)
  "Select the UPnP renderer to play to.

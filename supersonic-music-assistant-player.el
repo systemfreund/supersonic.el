@@ -116,29 +116,42 @@ unnoticed until something else changes."
   "Return the track id of queue entry ITEM: its media item's URI, or nil."
   (assoc-default "uri" (assoc-default "media_item" item)))
 
-(defun supersonic-music-assistant-player--parse-snapshot (queue entries polled-at)
+(defun supersonic-music-assistant-player--entry-track (item)
+  "Return queue entry ITEM's media item as a facade track plist, or nil.
+An entry carries the whole media item, so the queue buffer need not
+ask `music/item_by_uri' for each entry again."
+  (let ((media-item (assoc-default "media_item" item)))
+    (and (consp media-item) (supersonic-music-assistant--track media-item))))
+
+(defun supersonic-music-assistant-player--parse-snapshot (queue items polled-at)
   "Turn QUEUE, as `player_queues/get' answered, into a snapshot plist.
-ENTRIES are the track ids of its entries, in order.  POLLED-AT is a
+ITEMS are its entries, in order, as (TRACK-ID . TRACK) each; TRACK is
+the entry's track plist, or nil.  POLLED-AT is a
 `float-time' timestamp of when QUEUE was received.
 
 The position is the queue's `elapsed_time' as of its
 `elapsed_time_last_updated', the server's own timestamp, so that
 `supersonic-poller-position' counts on from when the server last
 looked rather than from when the answer arrived -- as MA's own client
-does.  Never later than POLLED-AT, though, for a server whose clock
-runs ahead."
+does.  The timestamp is read on the local clock, shifted by
+`supersonic-music-assistant--clock-offset': a server clock running
+behind would otherwise put the position ahead by as much, and a
+relative seek with it.  Never later than POLLED-AT."
   (let* ((current (assoc-default "current_item" queue))
          (updated (assoc-default "elapsed_time_last_updated" queue))
          (index (assoc-default "current_index" queue)))
     (list :items-key (supersonic-music-assistant-player--items-key queue)
-          :entries entries
+          :items items
+          :entries (mapcar #'car items)
           :current-index (and (integerp index) index)
           :track-id (supersonic-music-assistant-player--entry-id current)
           :playing (equal (assoc-default "state" queue) "playing")
           :ended (and (assoc-default "ended" queue) t)
           :position (assoc-default "elapsed_time" queue)
           :duration (supersonic-music-assistant--positive-integer (assoc-default "duration" current))
-          :polled-at (if (numberp updated) (min updated polled-at) polled-at))))
+          :polled-at (if (numberp updated)
+                         (min (+ updated supersonic-music-assistant--clock-offset) polled-at)
+                       polled-at))))
 
 (aio-defun
  supersonic-music-assistant-player--fetch ()
@@ -147,7 +160,9 @@ Its entries are asked for too, unless it has none, or the snapshot
 polled last found the same `supersonic-music-assistant-player--items-key'.  See
 `supersonic-music-assistant-player--parse-snapshot'."
  (let* ((queue-id (supersonic-music-assistant-player--queue-id))
-        (queue (aio-await (supersonic-music-assistant--command "player_queues/get" `(("queue_id" . ,queue-id)))))
+        (connection (supersonic-music-assistant--connection))
+        (queue (aio-await (supersonic-music-assistant--send
+                           connection "player_queues/get" `(("queue_id" . ,queue-id)))))
         (polled-at (float-time))
         (previous (supersonic-poller-snapshot supersonic-music-assistant-player--poller)))
    (unless (consp queue)
@@ -160,11 +175,13 @@ polled last found the same `supersonic-music-assistant-player--items-key'.  See
       nil)
      ((and previous
            (equal (plist-get previous :items-key) (supersonic-music-assistant-player--items-key queue)))
-      (plist-get previous :entries))
+      (plist-get previous :items))
      (t
-      (mapcar #'supersonic-music-assistant-player--entry-id
+      (mapcar (lambda (item)
+                (cons (supersonic-music-assistant-player--entry-id item)
+                      (supersonic-music-assistant-player--entry-track item)))
               (aio-await (supersonic-music-assistant--all-items
-                          "player_queues/items" `(("queue_id" . ,queue-id)))))))
+                          "player_queues/items" `(("queue_id" . ,queue-id)) connection)))))
     polled-at)))
 
 (defun supersonic-music-assistant-player--summarize (snapshot)
@@ -190,8 +207,9 @@ See `supersonic-poller-announce'."
 ;; re-evaluating this file.
 (defvar supersonic-music-assistant-player--poller (supersonic-music-assistant-player--make-poller)
   "Polls the selected player's queue, and holds what the latest poll found.
-Its snapshot is a plist: `:entries', the track ids of the queue's
-entries, in order; `:current-index', the 0-based index into `:entries'
+Its snapshot is a plist: `:items', the queue's entries, in order, as
+\(TRACK-ID . TRACK) each, TRACK being the entry's track plist or nil;
+`:entries', their track ids; `:current-index', the 0-based index into `:entries'
 of the current entry, or nil; `:track-id', the current entry's track
 id; `:playing', non-nil if the player is actually playing; `:ended',
 non-nil if the queue was played to its end; `:position', the current
@@ -231,11 +249,15 @@ See `supersonic-poller-position'."
 
 (aio-defun
  supersonic-music-assistant-player-queue ()
- "Resolve to the player's queue, read from what the latest poll found."
- (let ((current-index (plist-get (supersonic-music-assistant-player--snapshot) :current-index)))
+ "Resolve to the player's queue, read from what the latest poll found.
+Each entry brings its `:track' along, as the poll found it."
+ (let* ((snapshot (supersonic-music-assistant-player--snapshot))
+        (current-index (plist-get snapshot :current-index)))
    (seq-map-indexed
-    (lambda (id index) (list :track-id id :current (eql index current-index)))
-    (plist-get (supersonic-music-assistant-player--snapshot) :entries))))
+    (lambda (item index)
+      (append (list :track-id (car item) :current (eql index current-index))
+              (and (cdr item) (list :track (cdr item)))))
+    (plist-get snapshot :items))))
 
 ;;;
 ;;; The facade's playing operations
@@ -313,12 +335,13 @@ that entry over instead."
 
 (defun supersonic-music-assistant-player-stop ()
   "Stop the player.
-Nothing to stop with no player selected, which is no reason to keep
-`supersonic-playback-switch-backend' from switching away."
-  (when supersonic-music-assistant-player
-    (ignore
-     (supersonic-music-assistant-player--run
-      (supersonic-music-assistant-player--target) "stop the Music Assistant player" "player_queues/stop"))))
+Nothing to stop with no player selected, or no server to reach it on,
+which is no reason to keep `supersonic-playback-switch-backend' from
+switching away."
+  (let ((target (ignore-error user-error (supersonic-music-assistant-player--target))))
+    (when target
+      (ignore
+       (supersonic-music-assistant-player--run target "stop the Music Assistant player" "player_queues/stop")))))
 
 (aio-defun
  supersonic-music-assistant-player--seek-to (target position)
@@ -337,11 +360,13 @@ refuses to seek."
 MA's `seek' takes an absolute position, which this adds OFFSET to the
 position counted on from the latest poll to get -- rather than
 leaving that to `skip', which adds it to whatever position the server
-last recorded, seconds old while the player is playing."
-  (ignore
-   (supersonic-music-assistant-player--seek-to
-    (supersonic-music-assistant-player--target)
-    (+ (or (supersonic-music-assistant-player--position) 0) offset))))
+last recorded, seconds old while the player is playing.  Signals a
+`user-error' before any poll found a position to seek from."
+  (let ((target (supersonic-music-assistant-player--target))
+        (position (supersonic-music-assistant-player--position)))
+    (unless position
+      (user-error "The Music Assistant player has reported no position to seek from yet"))
+    (ignore (supersonic-music-assistant-player--seek-to target (+ position offset)))))
 
 (defun supersonic-music-assistant-player-seek-fraction (fraction)
   "Seek to FRACTION (0.0 to 1.0) of the way through the player's current entry.
@@ -384,7 +409,9 @@ share a name."
                       (list :id id :name name))))
             players)))
 
-;;;###autoload
+;; An explicit cookie: the autoloads generator does not know `aio-defun'
+;; and would copy the whole definition, which fails to load without aio.
+;;;###autoload (autoload 'supersonic-music-assistant-select-player "supersonic-music-assistant-player" nil t)
 (aio-defun
  supersonic-music-assistant-select-player ()
  "Select the Music Assistant player the `music-assistant' backend plays on.

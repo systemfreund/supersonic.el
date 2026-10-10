@@ -24,6 +24,12 @@ lint: cask
 	        | grep -E '^supersonic[^ ]*\.el:[0-9]+: ') ; \
 	  if [ -n "$$out" ] ; then echo "$$out" ; exit 1 ; fi ; \
 	  echo "checkdoc: clean"
+	@dir=$$(mktemp -d) ; cp $$(cask files) "$$dir" ; \
+	  $(EMACS) -Q --batch --eval "(loaddefs-generate \"$$dir\" \"$$dir/supersonic-autoloads.el\")" \
+	    && $(EMACS) -Q --batch --eval "(load \"$$dir/supersonic-autoloads.el\" nil t)" ; \
+	  ret=$$? ; command rm -rf "$$dir" ; \
+	  if [ $$ret -ne 0 ] ; then echo "autoloads: failed to load in emacs -Q" ; exit 1 ; fi ; \
+	  echo "autoloads: clean"
 
 .PHONY: test
 test: cask

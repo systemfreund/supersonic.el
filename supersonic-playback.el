@@ -309,7 +309,11 @@ without issuing anything."
  supersonic-playback-queue ()
  "Return a promise resolving to the active backend's current play queue.
 Each entry is a plist with `:track-id', a supersonic track id, and
-`:current', non-nil for whichever entry is currently playing.  Resolves
+`:current', non-nil for whichever entry is currently playing.  A
+backend whose player hands out what it plays along with the queue may
+add `:track', the entry's track as `supersonic-provider-track' would
+resolve it, so that showing the queue need not look each entry up
+again.  Resolves
 to nil when nothing is live, the same way `supersonic-playback-status'
 does, so a caller needs no liveness guard of its own before asking --
 an empty queue and no backend to ask look the same from here."

@@ -71,12 +71,18 @@ track starting or ending."
     (when buff
       (supersonic-queue-fetch-and-render buff))))
 
+(defun supersonic-queue--resolved (value)
+  "Return a promise already resolved to VALUE."
+  (let ((promise (aio-promise)))
+    (aio-resolve promise (lambda () value))
+    promise))
+
 (aio-defun
  supersonic-queue-parse (entries)
  "Turn ENTRIES, as resolved by `supersonic-playback-queue', into
 tabulated-list entries.
-Looks each entry's track up through `supersonic-provider-track',
-concurrently (fired up front, below,
+Looks up each entry's track through `supersonic-provider-track', unless
+the entry brings its `:track' along, concurrently (fired up front, below,
 before anything is awaited) and tolerates individual lookup failures
 via `aio-catch', falling back to the \"?\" placeholder row instead of
 aborting the whole render."
@@ -86,8 +92,11 @@ aborting the whole render."
             (let ((track-id (plist-get entry :track-id)))
               (list
                index track-id (plist-get entry :current)
-               (and track-id
-                    (aio-catch (supersonic-provider-track track-id))))))
+               (cond
+                ((plist-get entry :track)
+                 (supersonic-queue--resolved (cons :success (plist-get entry :track))))
+                (track-id
+                 (aio-catch (supersonic-provider-track track-id)))))))
           entries)))
    ;; A plain `mapcar' lambda would call `aio-await' through an ordinary `funcall', outside of this function's own
    ;; generator machinery, which `generator.el' cannot transform -- so this collects results via a `dolist', which
