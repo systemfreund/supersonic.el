@@ -217,10 +217,64 @@ since a backend not yet loaded has never registered itself."
     (maphash (lambda (name _operations) (push name names)) supersonic-playback--backends)
     (nreverse names)))
 
-(defun supersonic-playback-compatible-backend-names ()
-  "Return the names of the registered backends that fit the active provider.
-That is, every backend `supersonic-playback-compatible-p' accepts."
-  (seq-filter #'supersonic-playback-compatible-p (supersonic-playback-backend-names)))
+(defun supersonic-playback-compatible-backend-names (&optional provider)
+  "Return the names of the registered backends that fit PROVIDER.
+That is, every backend `supersonic-playback-compatible-p' accepts.
+PROVIDER defaults to the active one, `supersonic-provider'."
+  (seq-filter (lambda (backend) (supersonic-playback-compatible-p backend provider))
+              (supersonic-playback-backend-names)))
+
+(defvar supersonic-playback--last-backend nil
+  "Alist of provider name to the backend last active with it this session.
+Kept by `supersonic-playback-select', so that
+`supersonic-playback-backend-for-provider' can return to it.")
+
+(defun supersonic-playback-select (backend &optional provider)
+  "Make BACKEND the active backend, and PROVIDER, if given, the active provider.
+Does nothing if neither changes.  Otherwise first stops whatever the
+active backend is playing -- even when only the provider changes,
+since what it has queued are the old provider's ids -- unless that
+backend was never registered and so has nothing to stop.  Remembers
+both the pairing left and the one entered, for
+`supersonic-playback-backend-for-provider'.
+
+Checks nothing: whether BACKEND can play for PROVIDER is the caller's
+business, settled before calling this."
+  (let ((provider (or provider supersonic-provider)))
+    (unless (and (eq provider supersonic-provider) (eq backend supersonic-playback-backend))
+      (setf (alist-get supersonic-provider supersonic-playback--last-backend) supersonic-playback-backend)
+      (when (memq supersonic-playback-backend (supersonic-playback-backend-names))
+        (supersonic-playback-stop))
+      (setq supersonic-provider provider)
+      (setq supersonic-playback-backend backend)
+      (setf (alist-get provider supersonic-playback--last-backend) backend))))
+
+(defun supersonic-playback-backend-for-provider (provider)
+  "Return the backend to play on once PROVIDER is active.
+The active backend, if it can play for PROVIDER -- see
+`supersonic-playback-compatible-p'.  Otherwise the one backend that
+can, or of several, the one last active with PROVIDER; failing both,
+prompts among them.  A provider no backend can play for, and an empty
+answer to the prompt, are refused with a `user-error', so that
+declining leaves everything as it was."
+  (if (supersonic-playback-compatible-p supersonic-playback-backend provider)
+      supersonic-playback-backend
+    (let ((backends (supersonic-playback-compatible-backend-names provider))
+          (last (alist-get provider supersonic-playback--last-backend)))
+      (cond
+       ((null backends)
+        (user-error "No registered playback backend can play for the `%s' provider" provider))
+       ((null (cdr backends)) (car backends))
+       ((memq last backends) last)
+       (t
+        (let ((answer (completing-read
+                       (format "The `%s' backend cannot play for `%s'; switch backend to: "
+                               supersonic-playback-backend provider)
+                       (mapcar #'symbol-name backends) nil t)))
+          (when (equal answer "")
+            (user-error "Kept the `%s' provider and the `%s' backend"
+                        supersonic-provider supersonic-playback-backend))
+          (intern answer)))))))
 
 (defun supersonic-playback-start (ids)
   "Replace the play queue with IDS and start playing immediately."
@@ -359,14 +413,14 @@ BACKEND that is not registered, or cannot play for the active
 provider, is refused with a `user-error' before anything is stopped.
 
 Before `supersonic-playback-backend' actually changes, this calls
-`supersonic-playback-stop' against whichever backend is still active --
-which is why the switch has to happen here rather than via a plain
-`setq': mpv's `stop' kills its process, and the jukebox backend's
-`stop' sends the server a `stop' action, so nothing each backend's own
-`stop' mapping already knows how to tear down keeps running
-unsupervised just because Emacs stopped pointing at it.  No queue is
-carried over -- each backend starts from whatever state it is
-independently in."
+`supersonic-playback-stop' against whichever backend is still active,
+via `supersonic-playback-select' -- which is why the switch has to
+happen here rather than via a plain `setq': mpv's `stop' kills its
+process, and the jukebox backend's `stop' sends the server a `stop'
+action, so nothing each backend's own `stop' mapping already knows how
+to tear down keeps running unsupervised just because Emacs stopped
+pointing at it.  No queue is carried over -- each backend starts from
+whatever state it is independently in."
   (interactive
    (list
     (intern
@@ -376,9 +430,7 @@ independently in."
     (if (gethash backend supersonic-playback--backends)
         (supersonic-playback--incompatible backend)
       (user-error "No playback backend named `%s' is registered" backend)))
-  (unless (eq backend supersonic-playback-backend)
-    (supersonic-playback-stop)
-    (setq supersonic-playback-backend backend)))
+  (supersonic-playback-select backend))
 
 ;;;###autoload
 (defun supersonic-seek-forward (&optional seconds)

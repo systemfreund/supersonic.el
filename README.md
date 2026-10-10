@@ -305,6 +305,16 @@ going to the previous track more than a few seconds into one starts
 that one over. Music Assistant keeps its own play history, so nothing
 is scrobbled.
 
+With both providers loaded, `M-x supersonic-provider-switch` (`P` in
+the `supersonic` transient) switches between them. Playback stops. If
+the current playback backend cannot play for the new provider, the
+backend switches too: to the only one that can, or to the one you last
+used with that provider. It only asks when neither settles it, and
+declining then switches nothing. The open artist, album, track, search
+and podcast buffers belong to the old provider, so they are closed.
+The transient hides what the active provider cannot do. For Music
+Assistant, that means adding a podcast and downloading an episode.
+
 ## Authentication
 
 Add a `~/.authinfo.gpg` or `~/.authinfo` file with the following contents

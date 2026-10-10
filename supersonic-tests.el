@@ -7309,6 +7309,262 @@ every other one -- and sets it for the session unless asked to save."
                    (supersonic-music-assistant-player--choices
                     (supersonic-music-assistant-player--selectable players))))))
 
+;;;
+;;; Switching providers (#61)
+;;;
+
+(defmacro supersonic-tests--with-provider-switch (&rest body)
+  "Run BODY with `subsonic' active on a `test-from' backend tied to it.
+A `test-to' backend plays only for the fake provider
+`supersonic-tests-fake', registered with no operations.  STOPPED, bound
+for BODY, collects the backends whose `stop' was called.  The provider
+and backend registries are restored afterwards."
+  (declare (indent 0))
+  `(let ((supersonic-provider 'subsonic)
+         (supersonic-playback-backend 'test-from)
+         (supersonic-provider--providers (copy-hash-table supersonic-provider--providers))
+         (supersonic-playback--backends (copy-hash-table supersonic-playback--backends))
+         (supersonic-playback--compatibility (copy-hash-table supersonic-playback--compatibility))
+         (supersonic-playback--last-backend nil)
+         (stopped nil))
+     (supersonic-provider-register 'supersonic-tests-fake '())
+     (supersonic-playback-register-backend
+      'test-from `((stop . ,(lambda () (push 'test-from stopped)))) :providers '(subsonic))
+     (supersonic-playback-register-backend
+      'test-to `((stop . ,(lambda () (push 'test-to stopped)))) :providers '(supersonic-tests-fake))
+     ,@body))
+
+(defvar supersonic-tests--offered nil
+  "The collections `supersonic-tests--answering' was offered, latest first.")
+
+(defun supersonic-tests--answering (&rest answers)
+  "Return a `completing-read' stand-in giving ANSWERS in turn.
+Each call also records its collection in `supersonic-tests--offered'."
+  (lambda (_prompt collection &rest _)
+    (push collection supersonic-tests--offered)
+    (pop answers)))
+
+(ert-deftest supersonic-tests-provider-switch-keeps-a-fitting-backend ()
+  "Switching to a provider the active backend can play for keeps that
+backend without asking -- but stops it, since what it has queued are
+the old provider's ids.  The active provider is not offered."
+  (supersonic-tests--with-provider-switch
+    (supersonic-playback-register-backend 'test-from `((stop . ,(lambda () (push 'test-from stopped)))))
+    (let ((supersonic-tests--offered nil))
+      (cl-letf (((symbol-function 'completing-read) (supersonic-tests--answering "supersonic-tests-fake")))
+        (call-interactively #'supersonic-provider-switch))
+      (should (= 1 (length supersonic-tests--offered)))
+      (should-not (member "subsonic" (car supersonic-tests--offered))))
+    (should (eq 'supersonic-tests-fake supersonic-provider))
+    (should (eq 'test-from supersonic-playback-backend))
+    (should (equal '(test-from) stopped))))
+
+(ert-deftest supersonic-tests-provider-switch-to-the-active-provider-is-a-no-op ()
+  "Called for the provider and backend already active, the switch stops
+nothing and kills no buffer."
+  (supersonic-tests--with-provider-switch
+    (let ((artists (generate-new-buffer "*supersonic-tests-artists*")))
+      (unwind-protect
+          (progn
+            (with-current-buffer artists (supersonic-artist-mode))
+            (supersonic-provider-switch 'subsonic)
+            (should (buffer-live-p artists)))
+        (kill-buffer artists)))
+    (should (eq 'test-from supersonic-playback-backend))
+    (should-not stopped)))
+
+(ert-deftest supersonic-tests-provider-switch-empty-answer-changes-nothing ()
+  "An empty answer to the provider prompt declines, rather than asking
+for a provider named \"\"."
+  (supersonic-tests--with-provider-switch
+    (cl-letf (((symbol-function 'completing-read) (supersonic-tests--answering "")))
+      (let ((err (should-error (call-interactively #'supersonic-provider-switch) :type 'user-error)))
+        (should (string-match-p "Kept" (cadr err)))))
+    (should (eq 'subsonic supersonic-provider))
+    (should-not stopped)))
+
+(ert-deftest supersonic-tests-provider-switch-past-an-unregistered-backend ()
+  "An active backend that was never registered has nothing to stop, and
+does not keep the switch from fixing it."
+  (supersonic-tests--with-provider-switch
+    (setq supersonic-playback-backend 'supersonic-tests-nonesuch)
+    (supersonic-provider-switch 'supersonic-tests-fake)
+    (should (eq 'supersonic-tests-fake supersonic-provider))
+    (should (eq 'test-to supersonic-playback-backend))
+    (should-not stopped)))
+
+(ert-deftest supersonic-tests-provider-switch-takes-the-only-fitting-backend ()
+  "When the active backend cannot play for the new provider and only one
+backend can, the switch takes that one without asking, and stops the
+outgoing one."
+  (supersonic-tests--with-provider-switch
+    (let ((supersonic-tests--offered nil))
+      (cl-letf (((symbol-function 'completing-read) (supersonic-tests--answering "supersonic-tests-fake")))
+        (call-interactively #'supersonic-provider-switch))
+      (should (= 1 (length supersonic-tests--offered))))
+    (should (eq 'supersonic-tests-fake supersonic-provider))
+    (should (eq 'test-to supersonic-playback-backend))
+    (should (equal '(test-from) stopped))))
+
+(ert-deftest supersonic-tests-provider-switch-returns-to-the-last-backend ()
+  "Of several fitting backends, the one last used with the provider is
+taken without asking -- switching away and back restores it."
+  (supersonic-tests--with-provider-switch
+    (supersonic-playback-register-backend 'test-to-2 '((stop . ignore)) :providers '(supersonic-tests-fake))
+    (supersonic-playback-register-backend 'test-from-2 '((stop . ignore)) :providers '(subsonic))
+    (setq supersonic-playback-backend 'test-from-2)
+    (setq supersonic-playback--last-backend '((supersonic-tests-fake . test-to-2)))
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (&rest _) (ert-fail "Asked for a backend it should have remembered"))))
+      (supersonic-provider-switch 'supersonic-tests-fake)
+      (should (eq 'test-to-2 supersonic-playback-backend))
+      (supersonic-provider-switch 'subsonic)
+      (should (eq 'test-from-2 supersonic-playback-backend)))
+    (should (eq 'subsonic supersonic-provider))))
+
+(ert-deftest supersonic-tests-provider-switch-asks-among-several-backends ()
+  "Of several fitting backends with none used with the provider before,
+the switch offers just those."
+  (supersonic-tests--with-provider-switch
+    (supersonic-playback-register-backend 'test-to-2 '((stop . ignore)) :providers '(supersonic-tests-fake))
+    (let ((supersonic-tests--offered nil))
+      (cl-letf (((symbol-function 'completing-read)
+                 (supersonic-tests--answering "supersonic-tests-fake" "test-to-2")))
+        (call-interactively #'supersonic-provider-switch))
+      (should (equal '("test-to" "test-to-2") (sort (copy-sequence (car supersonic-tests--offered)) #'string<))))
+    (should (eq 'supersonic-tests-fake supersonic-provider))
+    (should (eq 'test-to-2 supersonic-playback-backend))
+    (should (equal '(test-from) stopped))))
+
+(ert-deftest supersonic-tests-provider-switch-declined-changes-nothing ()
+  "Declining the backend prompt leaves provider and backend as they were,
+and stops nothing."
+  (supersonic-tests--with-provider-switch
+    (supersonic-playback-register-backend 'test-to-2 '((stop . ignore)) :providers '(supersonic-tests-fake))
+    (cl-letf (((symbol-function 'completing-read) (supersonic-tests--answering "supersonic-tests-fake" "")))
+      (should-error (call-interactively #'supersonic-provider-switch) :type 'user-error))
+    (should (eq 'subsonic supersonic-provider))
+    (should (eq 'test-from supersonic-playback-backend))
+    (should-not stopped)))
+
+(ert-deftest supersonic-tests-provider-switch-refuses-an-incompatible-pairing ()
+  "A provider no backend can play for, a backend that cannot play for
+PROVIDER, and an unregistered provider are each a `user-error' that
+changes nothing."
+  (supersonic-tests--with-provider-switch
+    (supersonic-provider-register 'supersonic-tests-orphan '())
+    (should-error (supersonic-provider-switch 'supersonic-tests-orphan) :type 'user-error)
+    (should-error (supersonic-provider-switch 'supersonic-tests-fake 'test-from) :type 'user-error)
+    (should-error (supersonic-provider-switch 'supersonic-tests-nonesuch) :type 'user-error)
+    (should (eq 'subsonic supersonic-provider))
+    (should (eq 'test-from supersonic-playback-backend))
+    (should-not stopped)))
+
+(ert-deftest supersonic-tests-provider-switch-returns-to-a-backend-chosen-with-k ()
+  "A backend chosen with `supersonic-playback-switch-backend' is the one
+a later provider switch returns to."
+  (supersonic-tests--with-provider-switch
+    (supersonic-playback-register-backend 'test-from-2 '((stop . ignore)) :providers '(subsonic))
+    (supersonic-playback-switch-backend 'test-from-2)
+    (supersonic-provider-switch 'supersonic-tests-fake)
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (&rest _) (ert-fail "Asked for a backend it should have remembered"))))
+      (supersonic-provider-switch 'subsonic))
+    (should (eq 'test-from-2 supersonic-playback-backend))))
+
+(ert-deftest supersonic-tests-switch-backend-past-an-unregistered-backend ()
+  "An active backend that was never registered does not keep
+`supersonic-playback-switch-backend' from replacing it."
+  (supersonic-tests--with-provider-switch
+    (setq supersonic-playback-backend 'supersonic-tests-nonesuch)
+    (supersonic-playback-switch-backend 'test-from)
+    (should (eq 'test-from supersonic-playback-backend))
+    (should-not stopped)))
+
+(ert-deftest supersonic-tests-compatible-backend-names-for-another-provider ()
+  "`supersonic-playback-compatible-backend-names' answers for a provider
+other than the active one when given it."
+  (supersonic-tests--with-provider-switch
+    (should (equal '(test-to) (supersonic-playback-compatible-backend-names 'supersonic-tests-fake)))
+    (should (memq 'test-from (supersonic-playback-compatible-backend-names)))))
+
+(define-derived-mode supersonic-tests--derived-artist-mode supersonic-artist-mode "Test Artists"
+  "A list mode of the user's own, derived from one of supersonic.el's.")
+
+(ert-deftest supersonic-tests-provider-switch-kills-the-old-providers-lists ()
+  "The outgoing provider's list buffers are killed; the queue buffer,
+which follows the backend, is not."
+  (supersonic-tests--with-provider-switch
+    (let ((artists (generate-new-buffer "*supersonic-tests-artists*"))
+          (derived (generate-new-buffer "*supersonic-tests-derived*"))
+          (queue (generate-new-buffer "*supersonic-tests-queue*")))
+      (unwind-protect
+          (progn
+            (with-current-buffer artists (supersonic-artist-mode))
+            (with-current-buffer derived (supersonic-tests--derived-artist-mode))
+            (with-current-buffer queue (supersonic-queue-mode))
+            (supersonic-provider-switch 'supersonic-tests-fake 'test-to)
+            (should-not (buffer-live-p artists))
+            (should-not (buffer-live-p derived))
+            (should (buffer-live-p queue)))
+        (dolist (buffer (list artists derived queue))
+          (when (buffer-live-p buffer)
+            (kill-buffer buffer)))))))
+
+(ert-deftest supersonic-tests-transient-exposes-provider-switch ()
+  "The `supersonic' transient offers the provider switch next to the
+backend switch."
+  (should
+   (eq
+    'supersonic-provider-switch
+    (plist-get (cdr (transient-get-suffix 'supersonic "P")) :command))))
+
+(defun supersonic-tests--suffix-shown-p (prefix key)
+  "Return non-nil if PREFIX's suffix on KEY would be shown right now."
+  (let ((predicate (plist-get (cdr (transient-get-suffix prefix key)) :if)))
+    (or (null predicate) (funcall predicate))))
+
+(ert-deftest supersonic-tests-transient-hides-what-the-provider-lacks ()
+  "Entries needing an operation the active provider lacks are hidden;
+with every operation present, every entry shows."
+  (supersonic-tests--with-provider '()
+    (dolist (key '("a" "e" "r" "n" "s" "p"))
+      (should-not (supersonic-tests--suffix-shown-p 'supersonic key)))
+    (should-not (supersonic-tests--suffix-shown-p 'supersonic-podcast-help "a"))
+    (should-not (supersonic-tests--suffix-shown-p 'supersonic-podcast-episode-help "d"))
+    (should-not (supersonic-tests--suffix-shown-p 'supersonic-podcast-help "RET"))
+    (should (supersonic-tests--suffix-shown-p 'supersonic "k"))
+    (should (supersonic-tests--suffix-shown-p 'supersonic "P")))
+  (supersonic-tests--with-provider
+      (mapcar (lambda (operation) (cons operation #'ignore)) supersonic-provider-operations)
+    (dolist (key '("a" "e" "r" "n" "s" "p"))
+      (should (supersonic-tests--suffix-shown-p 'supersonic key)))
+    (should (supersonic-tests--suffix-shown-p 'supersonic-podcast-help "a"))
+    (should (supersonic-tests--suffix-shown-p 'supersonic-podcast-help "RET"))
+    (should (supersonic-tests--suffix-shown-p 'supersonic-podcast-episode-help "d"))))
+
+(ert-deftest supersonic-tests-transient-shows-everything-for-an-unloaded-provider ()
+  "With a provider that is not registered, every entry shows, so that
+using one reports the missing provider instead of leaving an empty
+menu with no hint why."
+  (let ((supersonic-provider 'supersonic-tests-nonesuch))
+    (dolist (key '("a" "e" "r" "n" "s" "p"))
+      (should (supersonic-tests--suffix-shown-p 'supersonic key)))
+    (should (supersonic-tests--suffix-shown-p 'supersonic-podcast-help "a"))
+    (should (supersonic-tests--suffix-shown-p 'supersonic-podcast-episode-help "d"))))
+
+(ert-deftest supersonic-tests-transient-hides-podcast-management-for-music-assistant ()
+  "Music Assistant lists podcasts but cannot add one or download an
+episode, so only those two entries go; Subsonic keeps them all."
+  (let ((supersonic-provider 'music-assistant))
+    (should (supersonic-tests--suffix-shown-p 'supersonic "p"))
+    (should-not (supersonic-tests--suffix-shown-p 'supersonic-podcast-help "a"))
+    (should-not (supersonic-tests--suffix-shown-p 'supersonic-podcast-episode-help "d")))
+  (let ((supersonic-provider 'subsonic))
+    (should (supersonic-tests--suffix-shown-p 'supersonic "p"))
+    (should (supersonic-tests--suffix-shown-p 'supersonic-podcast-help "a"))
+    (should (supersonic-tests--suffix-shown-p 'supersonic-podcast-episode-help "d"))))
+
 (provide 'supersonic-tests)
 
 ;;; supersonic-tests.el ends here

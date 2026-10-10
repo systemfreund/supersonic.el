@@ -1738,8 +1738,8 @@ has no podcasts to subscribe to, which is reported before asking."
 (transient-define-prefix
  supersonic-podcast-help () "Help transient for podcasts."
  ["Supersonic podcast help"
-  ("a" "Add a podcast" supersonic-add-podcast)
-  ("RET" "Open a podcast" supersonic-open-podcast-episodes)])
+  ("a" "Add a podcast" supersonic-add-podcast :if supersonic--offer-add-podcast-p)
+  ("RET" "Open a podcast" supersonic-open-podcast-episodes :if supersonic--offer-podcast-episodes-p)])
 
 (defvar supersonic-podcast-mode-map
   (let ((map (make-sparse-keymap)))
@@ -1817,7 +1817,7 @@ EPISODES is as resolved by `supersonic-provider-podcast-episodes'."
 (transient-define-prefix
  supersonic-podcast-episode-help () "Help transient for podcast episodes."
  ["Supersonic podcast episode help"
-  ("d" "Download" supersonic-download-podcast-episode)
+  ("d" "Download" supersonic-download-podcast-episode :if supersonic--offer-download-podcast-episode-p)
   ("RET" "Start playing" supersonic-play-podcast)])
 
 
@@ -1848,16 +1848,128 @@ Opened by `supersonic-podcast-episodes'."
  (setq tabulated-list-use-header-line supersonic-list-use-header-line)
  (tabulated-list-init-header))
 
+;;;
+;;; Switching providers
+;;;
+
+(defconst supersonic--provider-list-modes
+  '(supersonic-artist-mode supersonic-album-mode supersonic-album-type-mode
+    supersonic-tracks-mode supersonic-search-mode
+    supersonic-podcast-mode supersonic-podcast-episodes-mode)
+  "Major modes of the list buffers showing what a library provider handed out.
+Their entries are that provider's ids, which mean nothing to any
+other, so `supersonic-provider-switch' kills them.  The queue and
+now-playing buffers are not among them: they show what the playback
+backend reports, which the switch stops.")
+
+(defun supersonic--kill-provider-list-buffers ()
+  "Kill every buffer whose mode is or derives from a provider list mode.
+The provider list modes are `supersonic--provider-list-modes'."
+  (dolist (buffer (buffer-list))
+    (when (with-current-buffer buffer
+            (apply #'derived-mode-p supersonic--provider-list-modes))
+      (kill-buffer buffer))))
+
+;;;###autoload
+(defun supersonic-provider-switch (provider &optional backend)
+  "Make PROVIDER the active library provider, and BACKEND the playback backend.
+Interactively, prompts among the registered providers other than the
+active one; an empty answer switches nothing.  BACKEND nil
+picks one without asking where it can: the active backend if it can
+play for PROVIDER, else the only one that can, else the one last used
+with PROVIDER this session.  Only when none of these settles it does
+it prompt among the backends that can -- see
+`supersonic-playback-backend-for-provider' -- and declining switches
+nothing.
+
+A PROVIDER that is not registered, or a backend that cannot play for
+it, is refused with a `user-error' before anything changes, so this
+never leaves the two incompatible.
+
+Playback is stopped whenever the provider actually changes, even on a
+backend that is kept: what it has queued are the old provider's ids,
+which the queue, now-playing and MPRIS would otherwise go on looking
+up in the new one.  See `supersonic-playback-select'.
+
+The list buffers of the outgoing provider -- artists, albums, tracks,
+search results, podcasts -- are killed rather than refreshed: their
+entries are that provider's ids, which mean nothing to the new one,
+and an album list of one artist could not even be refreshed without
+its artist."
+  (interactive
+   (let ((providers (mapcar #'symbol-name (remq supersonic-provider (supersonic-provider-names)))))
+     (unless providers
+       (user-error "No other library provider is registered"))
+     (let ((answer (completing-read "Switch to library provider: " providers nil t nil nil (car providers))))
+       (when (equal answer "")
+         (user-error "Kept the `%s' provider" supersonic-provider))
+       (list (intern answer)))))
+  (unless (memq provider (supersonic-provider-names))
+    (user-error "No library provider named `%s' is registered" provider))
+  (let ((backend (or backend (supersonic-playback-backend-for-provider provider)))
+        (provider-changes (not (eq provider supersonic-provider))))
+    (unless (supersonic-playback-compatible-p backend provider)
+      (user-error "The `%s' playback backend cannot play for the `%s' provider" backend provider))
+    (supersonic-playback-select backend provider)
+    (when provider-changes
+      (supersonic--kill-provider-list-buffers))
+    (message "[Supersonic] Provider `%s', backend `%s'" provider backend)))
+
+;;;
+;;; Transient
+;;;
+
+;; `:if' predicates hiding the entries whose command needs an
+;; operation the active provider lacks.  The commands themselves still
+;; say so via `supersonic-provider-require' when called by other means.
+
+(defun supersonic--offers-p (operation)
+  "Return non-nil if the transient should offer an entry needing OPERATION.
+That is, if the active provider implements it -- or is not registered
+at all, typically because its file is not loaded: hiding every entry
+would then leave no hint why, whereas using one reports that the
+provider is missing."
+  (or (not (memq supersonic-provider (supersonic-provider-names)))
+      (supersonic-provider-supports-p operation)))
+
+(defun supersonic--offer-artists-p ()
+  "Return non-nil if the transient should offer listing artists."
+  (supersonic--offers-p 'artists))
+
+(defun supersonic--offer-album-list-p ()
+  "Return non-nil if the transient should offer listing albums across artists."
+  (supersonic--offers-p 'album-list))
+
+(defun supersonic--offer-search-p ()
+  "Return non-nil if the transient should offer searching."
+  (supersonic--offers-p 'search))
+
+(defun supersonic--offer-podcasts-p ()
+  "Return non-nil if the transient should offer listing podcasts."
+  (supersonic--offers-p 'podcasts))
+
+(defun supersonic--offer-podcast-episodes-p ()
+  "Return non-nil if the transient should offer opening a podcast's episodes."
+  (supersonic--offers-p 'podcast-episodes))
+
+(defun supersonic--offer-add-podcast-p ()
+  "Return non-nil if the transient should offer subscribing to a podcast feed."
+  (supersonic--offers-p 'add-podcast))
+
+(defun supersonic--offer-download-podcast-episode-p ()
+  "Return non-nil if the transient should offer downloading a podcast episode."
+  (supersonic--offers-p 'download-podcast-episode))
+
 ;;;###autoload (autoload 'supersonic "supersonic" nil t)
 (transient-define-prefix
  supersonic () "Help transient for supersonic."
  [["Supersonic"
-   ("a" "Artists" supersonic-artists)
-   ("e" "Recent Albums" supersonic-recent-albums)
-   ("r" "Random Albums" supersonic-random-albums)
-   ("n" "Newest Albums" supersonic-newest-albums)
-   ("s" "Search" supersonic-search)
-   ("p" "Podcasts" supersonic-podcasts)]
+   ("a" "Artists" supersonic-artists :if supersonic--offer-artists-p)
+   ("e" "Recent Albums" supersonic-recent-albums :if supersonic--offer-album-list-p)
+   ("r" "Random Albums" supersonic-random-albums :if supersonic--offer-album-list-p)
+   ("n" "Newest Albums" supersonic-newest-albums :if supersonic--offer-album-list-p)
+   ("s" "Search" supersonic-search :if supersonic--offer-search-p)
+   ("p" "Podcasts" supersonic-podcasts :if supersonic--offer-podcasts-p)]
   ["Controls"
    ("Q" "Show queue" supersonic-show-queue)
    ("N" "Now playing" supersonic-show-now-playing)
@@ -1866,7 +1978,8 @@ Opened by `supersonic-podcast-episodes'."
    ("b" "Previous track" supersonic-prev-track)
    ("F" "Seek forward" supersonic-seek-forward :transient t)
    ("B" "Seek back" supersonic-seek-back :transient t)
-   ("k" "Switch backend" supersonic-playback-switch-backend)]])
+   ("k" "Switch backend" supersonic-playback-switch-backend)
+   ("P" "Switch provider" supersonic-provider-switch)]])
 
 (defun supersonic-unload-function ()
   "Undo the `supersonic-playback.el' hook entries this file adds at load time.
