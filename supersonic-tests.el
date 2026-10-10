@@ -7345,16 +7345,52 @@ Each call also records its collection in `supersonic-tests--offered'."
     (pop answers)))
 
 (ert-deftest supersonic-tests-provider-switch-keeps-a-fitting-backend ()
-  "Switching to a provider the active backend can play for changes only
-the provider: the backend is neither asked about nor stopped."
+  "Switching to a provider the active backend can play for keeps that
+backend without asking -- but stops it, since what it has queued are
+the old provider's ids.  The active provider is not offered."
   (supersonic-tests--with-provider-switch
     (supersonic-playback-register-backend 'test-from `((stop . ,(lambda () (push 'test-from stopped)))))
     (let ((supersonic-tests--offered nil))
       (cl-letf (((symbol-function 'completing-read) (supersonic-tests--answering "supersonic-tests-fake")))
         (call-interactively #'supersonic-provider-switch))
-      (should (= 1 (length supersonic-tests--offered))))
+      (should (= 1 (length supersonic-tests--offered)))
+      (should-not (member "subsonic" (car supersonic-tests--offered))))
     (should (eq 'supersonic-tests-fake supersonic-provider))
     (should (eq 'test-from supersonic-playback-backend))
+    (should (equal '(test-from) stopped))))
+
+(ert-deftest supersonic-tests-provider-switch-to-the-active-provider-is-a-no-op ()
+  "Called for the provider and backend already active, the switch stops
+nothing and kills no buffer."
+  (supersonic-tests--with-provider-switch
+    (let ((artists (generate-new-buffer "*supersonic-tests-artists*")))
+      (unwind-protect
+          (progn
+            (with-current-buffer artists (supersonic-artist-mode))
+            (supersonic-provider-switch 'subsonic)
+            (should (buffer-live-p artists)))
+        (kill-buffer artists)))
+    (should (eq 'test-from supersonic-playback-backend))
+    (should-not stopped)))
+
+(ert-deftest supersonic-tests-provider-switch-empty-answer-changes-nothing ()
+  "An empty answer to the provider prompt declines, rather than asking
+for a provider named \"\"."
+  (supersonic-tests--with-provider-switch
+    (cl-letf (((symbol-function 'completing-read) (supersonic-tests--answering "")))
+      (let ((err (should-error (call-interactively #'supersonic-provider-switch) :type 'user-error)))
+        (should (string-match-p "Kept" (cadr err)))))
+    (should (eq 'subsonic supersonic-provider))
+    (should-not stopped)))
+
+(ert-deftest supersonic-tests-provider-switch-past-an-unregistered-backend ()
+  "An active backend that was never registered has nothing to stop, and
+does not keep the switch from fixing it."
+  (supersonic-tests--with-provider-switch
+    (setq supersonic-playback-backend 'supersonic-tests-nonesuch)
+    (supersonic-provider-switch 'supersonic-tests-fake)
+    (should (eq 'supersonic-tests-fake supersonic-provider))
+    (should (eq 'test-to supersonic-playback-backend))
     (should-not stopped)))
 
 (ert-deftest supersonic-tests-provider-switch-takes-the-only-fitting-backend ()
@@ -7424,22 +7460,28 @@ changes nothing."
     (should (eq 'test-from supersonic-playback-backend))
     (should-not stopped)))
 
+(define-derived-mode supersonic-tests--derived-artist-mode supersonic-artist-mode "Test Artists"
+  "A list mode of the user's own, derived from one of supersonic.el's.")
+
 (ert-deftest supersonic-tests-provider-switch-kills-the-old-providers-lists ()
   "The outgoing provider's list buffers are killed; the queue buffer,
 which follows the backend, is not."
   (supersonic-tests--with-provider-switch
     (let ((artists (generate-new-buffer "*supersonic-tests-artists*"))
+          (derived (generate-new-buffer "*supersonic-tests-derived*"))
           (queue (generate-new-buffer "*supersonic-tests-queue*")))
       (unwind-protect
           (progn
             (with-current-buffer artists (supersonic-artist-mode))
+            (with-current-buffer derived (supersonic-tests--derived-artist-mode))
             (with-current-buffer queue (supersonic-queue-mode))
             (supersonic-provider-switch 'supersonic-tests-fake 'test-to)
             (should-not (buffer-live-p artists))
+            (should-not (buffer-live-p derived))
             (should (buffer-live-p queue)))
-        (kill-buffer queue)
-        (when (buffer-live-p artists)
-          (kill-buffer artists))))))
+        (dolist (buffer (list artists derived queue))
+          (when (buffer-live-p buffer)
+            (kill-buffer buffer)))))))
 
 (ert-deftest supersonic-tests-transient-exposes-provider-switch ()
   "The `supersonic' transient offers the provider switch next to the
@@ -7462,11 +7504,22 @@ with every operation present, every entry shows."
       (should-not (supersonic-tests--suffix-shown-p 'supersonic key)))
     (should-not (supersonic-tests--suffix-shown-p 'supersonic-podcast-help "a"))
     (should-not (supersonic-tests--suffix-shown-p 'supersonic-podcast-episode-help "d"))
-    (should (supersonic-tests--suffix-shown-p 'supersonic-podcast-help "RET"))
+    (should-not (supersonic-tests--suffix-shown-p 'supersonic-podcast-help "RET"))
     (should (supersonic-tests--suffix-shown-p 'supersonic "k"))
     (should (supersonic-tests--suffix-shown-p 'supersonic "P")))
   (supersonic-tests--with-provider
       (mapcar (lambda (operation) (cons operation #'ignore)) supersonic-provider-operations)
+    (dolist (key '("a" "e" "r" "n" "s" "p"))
+      (should (supersonic-tests--suffix-shown-p 'supersonic key)))
+    (should (supersonic-tests--suffix-shown-p 'supersonic-podcast-help "a"))
+    (should (supersonic-tests--suffix-shown-p 'supersonic-podcast-help "RET"))
+    (should (supersonic-tests--suffix-shown-p 'supersonic-podcast-episode-help "d"))))
+
+(ert-deftest supersonic-tests-transient-shows-everything-for-an-unloaded-provider ()
+  "With a provider that is not registered, every entry shows, so that
+using one reports the missing provider instead of leaving an empty
+menu with no hint why."
+  (let ((supersonic-provider 'supersonic-tests-nonesuch))
     (dolist (key '("a" "e" "r" "n" "s" "p"))
       (should (supersonic-tests--suffix-shown-p 'supersonic key)))
     (should (supersonic-tests--suffix-shown-p 'supersonic-podcast-help "a"))
