@@ -1,0 +1,122 @@
+[
+ {
+  "item_id": "6v7hCIRoJkuYShT0wls1gD",
+  "provider": "spotify--gXgn7uqw",
+  "name": "Cairo FM",
+  "version": "",
+  "sort_name": "cairo fm",
+  "uri": "spotify--gXgn7uqw://track/6v7hCIRoJkuYShT0wls1gD",
+  "external_ids": null,
+  "is_playable": true,
+  "media_type": "track",
+  "available": true,
+  "image": {
+   "type": "thumb",
+   "path": "https://i.scdn.co/image/ab67616d0000b2731ee28f525d2cbe7813e242d2",
+   "provider": "spotify--gXgn7uqw",
+   "remotely_accessible": true,
+   "proxy_id": "8a9c451ecfe13b396cc39ac49f7c8121d390471a4bfabf5a80ffc0f0a2a8e847"
+  },
+  "year": null
+ },
+ {
+  "item_id": "7GHav5LtQ83HBHn9f1ku9j",
+  "provider": "spotify--gXgn7uqw",
+  "name": "Guttah",
+  "version": "",
+  "sort_name": "guttah",
+  "uri": "spotify--gXgn7uqw://track/7GHav5LtQ83HBHn9f1ku9j",
+  "external_ids": null,
+  "is_playable": true,
+  "media_type": "track",
+  "available": true,
+  "image": {
+   "type": "thumb",
+   "path": "https://i.scdn.co/image/ab67616d0000b2731ee28f525d2cbe7813e242d2",
+   "provider": "spotify--gXgn7uqw",
+   "remotely_accessible": true,
+   "proxy_id": "8a9c451ecfe13b396cc39ac49f7c8121d390471a4bfabf5a80ffc0f0a2a8e847"
+  },
+  "year": null
+ },
+ {
+  "item_id": "5523",
+  "provider": "library",
+  "name": "Higher Ground",
+  "version": "",
+  "sort_name": "higher ground",
+  "uri": "library://track/5523",
+  "external_ids": null,
+  "is_playable": true,
+  "media_type": "track",
+  "available": true,
+  "image": {
+   "type": "thumb",
+   "path": "Omni Trio - Even Angels Cast Shadows (2001)/cover.png",
+   "provider": "filesystem_local--CTr9kfcj",
+   "remotely_accessible": null,
+   "proxy_id": "1e84287bb3d698824d2d775aa49124ea7b2f5b4a86f6c6646d5db594aa9faf11"
+  },
+  "year": null
+ },
+ {
+  "item_id": "5524",
+  "provider": "library",
+  "name": "Diffusion Loops",
+  "version": "",
+  "sort_name": "diffusion loops",
+  "uri": "library://track/5524",
+  "external_ids": null,
+  "is_playable": true,
+  "media_type": "track",
+  "available": true,
+  "image": {
+   "type": "thumb",
+   "path": "Omni Trio - Even Angels Cast Shadows (2001)/cover.png",
+   "provider": "filesystem_local--CTr9kfcj",
+   "remotely_accessible": null,
+   "proxy_id": "1e84287bb3d698824d2d775aa49124ea7b2f5b4a86f6c6646d5db594aa9faf11"
+  },
+  "year": null
+ },
+ {
+  "item_id": "669",
+  "provider": "library",
+  "name": "Ganz Gut",
+  "version": "",
+  "sort_name": "ganz gut",
+  "uri": "library://track/669",
+  "external_ids": null,
+  "is_playable": true,
+  "media_type": "track",
+  "available": true,
+  "image": {
+   "type": "thumb",
+   "path": "Ganz Gut/cover.jpg",
+   "provider": "filesystem_local--CTr9kfcj",
+   "remotely_accessible": null,
+   "proxy_id": "907f662b9c9c0fd77920a613b9dca29a6f0a97ea92b82f243a9c72e0b8ef3e49"
+  },
+  "year": null
+ },
+ {
+  "item_id": "76",
+  "provider": "library",
+  "name": "All I Do Is Think About You",
+  "version": "",
+  "sort_name": "all i do is think about you",
+  "uri": "library://track/76",
+  "external_ids": null,
+  "is_playable": true,
+  "media_type": "track",
+  "available": true,
+  "image": {
+   "type": "thumb",
+   "path": "Quantic - 1000 Watts [2016]/cover.png",
+   "provider": "filesystem_local--CTr9kfcj",
+   "remotely_accessible": null,
+   "proxy_id": "250016dabc282703a8d8f1ada1beea36e9b1451ceda2494b2643f32bdb1ea5da"
+  },
+  "year": null
+ }
+]
