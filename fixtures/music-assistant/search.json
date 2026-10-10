@@ -1,0 +1,609 @@
+{
+ "artists": [
+  {
+   "item_id": "24",
+   "provider": "library",
+   "name": "Quantic",
+   "version": "",
+   "sort_name": "quantic",
+   "uri": "library://artist/24",
+   "external_ids": [],
+   "is_playable": true,
+   "media_type": "artist",
+   "provider_mappings": [
+    {
+     "item_id": "Quantic",
+     "provider_domain": "filesystem_local",
+     "provider_instance": "filesystem_local--CTr9kfcj",
+     "available": true,
+     "in_library": true,
+     "is_unique": null,
+     "audio_format": {
+      "content_type": "?",
+      "codec_type": "?",
+      "sample_rate": 44100,
+      "bit_depth": 16,
+      "channels": 2,
+      "output_format_str": "?",
+      "bit_rate": 0
+     },
+     "url": null,
+     "details": null
+    }
+   ],
+   "metadata": {
+    "description": null,
+    "description_language": null,
+    "life_span": null,
+    "artist_entity_type": null,
+    "review": null,
+    "explicit": null,
+    "images": null,
+    "grouping": null,
+    "genres": null,
+    "mood": null,
+    "style": null,
+    "copyright": null,
+    "lyrics": null,
+    "lrc_lyrics": null,
+    "transcript": null,
+    "transcript_cues": null,
+    "has_transcript": null,
+    "label": null,
+    "links": null,
+    "performers": null,
+    "preview": null,
+    "popularity": null,
+    "release_date": null,
+    "languages": null,
+    "chapters": null,
+    "collections": null,
+    "last_refresh": null
+   },
+   "favorite": false,
+   "position": null,
+   "date_added": "2026-10-10T08:33:37+00:00",
+   "artist_type": "singer"
+  },
+  {
+   "item_id": "454",
+   "provider": "library",
+   "name": "The Quantic Soul Orchestra",
+   "version": "",
+   "sort_name": "quantic soul orchestra, the",
+   "uri": "library://artist/454",
+   "external_ids": [],
+   "is_playable": true,
+   "media_type": "artist",
+   "provider_mappings": [
+    {
+     "item_id": "The Quantic Soul Orchestra",
+     "provider_domain": "filesystem_local",
+     "provider_instance": "filesystem_local--CTr9kfcj",
+     "available": true,
+     "in_library": true,
+     "is_unique": null,
+     "audio_format": {
+      "content_type": "?",
+      "codec_type": "?",
+      "sample_rate": 44100,
+      "bit_depth": 16,
+      "channels": 2,
+      "output_format_str": "?",
+      "bit_rate": 0
+     },
+     "url": null,
+     "details": null
+    }
+   ],
+   "metadata": {
+    "description": null,
+    "description_language": null,
+    "life_span": null,
+    "artist_entity_type": null,
+    "review": null,
+    "explicit": null,
+    "images": null,
+    "grouping": null,
+    "genres": null,
+    "mood": null,
+    "style": null,
+    "copyright": null,
+    "lyrics": null,
+    "lrc_lyrics": null,
+    "transcript": null,
+    "transcript_cues": null,
+    "has_transcript": null,
+    "label": null,
+    "links": null,
+    "performers": null,
+    "preview": null,
+    "popularity": null,
+    "release_date": null,
+    "languages": null,
+    "chapters": null,
+    "collections": null,
+    "last_refresh": null
+   },
+   "favorite": false,
+   "position": null,
+   "date_added": "2026-10-10T08:33:44+00:00",
+   "artist_type": "singer"
+  }
+ ],
+ "albums": [
+  {
+   "item_id": "8",
+   "provider": "library",
+   "name": "1000 Watts",
+   "version": "",
+   "sort_name": "1000 watts",
+   "uri": "library://album/8",
+   "external_ids": [],
+   "is_playable": true,
+   "media_type": "album",
+   "provider_mappings": [
+    {
+     "item_id": "Quantic - 1000 Watts [2016]",
+     "provider_domain": "filesystem_local",
+     "provider_instance": "filesystem_local--CTr9kfcj",
+     "available": true,
+     "in_library": true,
+     "is_unique": null,
+     "audio_format": {
+      "content_type": "?",
+      "codec_type": "?",
+      "sample_rate": 44100,
+      "bit_depth": 16,
+      "channels": 2,
+      "output_format_str": "?",
+      "bit_rate": 0
+     },
+     "url": "Quantic - 1000 Watts [2016]",
+     "details": null
+    }
+   ],
+   "metadata": {
+    "description": null,
+    "description_language": null,
+    "life_span": null,
+    "artist_entity_type": null,
+    "review": null,
+    "explicit": null,
+    "images": [
+     {
+      "type": "thumb",
+      "path": "Quantic - 1000 Watts [2016]/cover.png",
+      "provider": "filesystem_local--CTr9kfcj",
+      "remotely_accessible": false,
+      "proxy_id": "250016dabc282703a8d8f1ada1beea36e9b1451ceda2494b2643f32bdb1ea5da"
+     }
+    ],
+    "grouping": null,
+    "genres": null,
+    "mood": null,
+    "style": null,
+    "copyright": null,
+    "lyrics": null,
+    "lrc_lyrics": null,
+    "transcript": null,
+    "transcript_cues": null,
+    "has_transcript": null,
+    "label": null,
+    "links": null,
+    "performers": null,
+    "preview": null,
+    "popularity": null,
+    "release_date": null,
+    "languages": null,
+    "chapters": null,
+    "collections": null,
+    "last_refresh": null
+   },
+   "favorite": false,
+   "position": null,
+   "date_added": "2024-10-30T18:27:27+00:00",
+   "year": 2016,
+   "artists": [
+    {
+     "item_id": "24",
+     "provider": "library",
+     "name": "Quantic",
+     "version": "",
+     "sort_name": "quantic",
+     "uri": "library://artist/24",
+     "external_ids": [],
+     "is_playable": true,
+     "media_type": "artist",
+     "available": true,
+     "image": null,
+     "year": null
+    }
+   ],
+   "album_type": "unknown"
+  },
+  {
+   "item_id": "351",
+   "provider": "library",
+   "name": "The 5th Exotic",
+   "version": "",
+   "sort_name": "5th exotic, the",
+   "uri": "library://album/351",
+   "external_ids": [],
+   "is_playable": true,
+   "media_type": "album",
+   "provider_mappings": [
+    {
+     "item_id": "Quantic - The 5th Exotic (2001)",
+     "provider_domain": "filesystem_local",
+     "provider_instance": "filesystem_local--CTr9kfcj",
+     "available": true,
+     "in_library": true,
+     "is_unique": null,
+     "audio_format": {
+      "content_type": "?",
+      "codec_type": "?",
+      "sample_rate": 44100,
+      "bit_depth": 16,
+      "channels": 2,
+      "output_format_str": "?",
+      "bit_rate": 0
+     },
+     "url": "Quantic - The 5th Exotic (2001)",
+     "details": null
+    }
+   ],
+   "metadata": {
+    "description": null,
+    "description_language": null,
+    "life_span": null,
+    "artist_entity_type": null,
+    "review": null,
+    "explicit": null,
+    "images": [
+     {
+      "type": "thumb",
+      "path": "Quantic - The 5th Exotic (2001)/cover.png",
+      "provider": "filesystem_local--CTr9kfcj",
+      "remotely_accessible": false,
+      "proxy_id": "3188d75ef6f8d20952d22ea6e7fd24d3d88a479f986f53878dcee7b848316704"
+     }
+    ],
+    "grouping": null,
+    "genres": null,
+    "mood": null,
+    "style": null,
+    "copyright": null,
+    "lyrics": null,
+    "lrc_lyrics": null,
+    "transcript": null,
+    "transcript_cues": null,
+    "has_transcript": null,
+    "label": null,
+    "links": null,
+    "performers": null,
+    "preview": null,
+    "popularity": null,
+    "release_date": null,
+    "languages": null,
+    "chapters": null,
+    "collections": null,
+    "last_refresh": null
+   },
+   "favorite": false,
+   "position": null,
+   "date_added": "2026-02-22T22:03:51+00:00",
+   "year": 2001,
+   "artists": [
+    {
+     "item_id": "24",
+     "provider": "library",
+     "name": "Quantic",
+     "version": "",
+     "sort_name": "quantic",
+     "uri": "library://artist/24",
+     "external_ids": [],
+     "is_playable": true,
+     "media_type": "artist",
+     "available": true,
+     "image": null,
+     "year": null
+    }
+   ],
+   "album_type": "unknown"
+  }
+ ],
+ "genres": [],
+ "tracks": [
+  {
+   "item_id": "77",
+   "provider": "library",
+   "name": "1000 Watts",
+   "version": "",
+   "sort_name": "1000 watts",
+   "uri": "library://track/77",
+   "external_ids": [
+    [
+     "isrc",
+     "GBEUE1500256"
+    ]
+   ],
+   "is_playable": true,
+   "media_type": "track",
+   "provider_mappings": [
+    {
+     "item_id": "Quantic - 1000 Watts [2016]/08 - 1000 Watts.ogg",
+     "provider_domain": "filesystem_local",
+     "provider_instance": "filesystem_local--CTr9kfcj",
+     "available": true,
+     "in_library": true,
+     "is_unique": null,
+     "audio_format": {
+      "content_type": "ogg",
+      "codec_type": "vorbis",
+      "sample_rate": 44100,
+      "bit_depth": 16,
+      "channels": 2,
+      "output_format_str": "ogg",
+      "bit_rate": 316
+     },
+     "url": null,
+     "details": "1730312846"
+    }
+   ],
+   "metadata": {
+    "description": "id[spotify.com:track:2C4yIMhiyC93dA0T9tT4eC]",
+    "description_language": null,
+    "life_span": null,
+    "artist_entity_type": null,
+    "review": null,
+    "explicit": null,
+    "images": [
+     {
+      "type": "thumb",
+      "path": "Quantic - 1000 Watts [2016]/cover.png",
+      "provider": "filesystem_local--CTr9kfcj",
+      "remotely_accessible": false,
+      "proxy_id": "250016dabc282703a8d8f1ada1beea36e9b1451ceda2494b2643f32bdb1ea5da"
+     },
+     {
+      "type": "thumb",
+      "path": "Quantic - 1000 Watts [2016]/08 - 1000 Watts.ogg",
+      "provider": "filesystem_local--CTr9kfcj",
+      "remotely_accessible": false,
+      "proxy_id": "03885ce54a3a762d085f14795e9aeae1f2176371bc1cdb0e18f76fa5cd94082d"
+     }
+    ],
+    "grouping": null,
+    "genres": [
+     "latin alternative",
+     "nu jazz",
+     "trip hop",
+     "electronica",
+     "nu-cumbia",
+     "downtempo"
+    ],
+    "mood": null,
+    "style": null,
+    "copyright": null,
+    "lyrics": null,
+    "lrc_lyrics": null,
+    "transcript": null,
+    "transcript_cues": null,
+    "has_transcript": null,
+    "label": null,
+    "links": null,
+    "performers": null,
+    "preview": null,
+    "popularity": null,
+    "release_date": null,
+    "languages": null,
+    "chapters": null,
+    "collections": null,
+    "last_refresh": null
+   },
+   "favorite": false,
+   "position": null,
+   "date_added": "2024-10-30T18:27:26+00:00",
+   "duration": 279,
+   "artists": [
+    {
+     "item_id": "24",
+     "provider": "library",
+     "name": "Quantic",
+     "version": "",
+     "sort_name": "quantic",
+     "uri": "library://artist/24",
+     "external_ids": [],
+     "is_playable": true,
+     "media_type": "artist",
+     "available": true,
+     "image": null,
+     "year": null
+    },
+    {
+     "item_id": "25",
+     "provider": "library",
+     "name": "Flowering Inferno",
+     "version": "",
+     "sort_name": "flowering inferno",
+     "uri": "library://artist/25",
+     "external_ids": [],
+     "is_playable": true,
+     "media_type": "artist",
+     "available": true,
+     "image": null,
+     "year": null
+    },
+    {
+     "item_id": "26",
+     "provider": "library",
+     "name": "Christopher Ellis",
+     "version": "",
+     "sort_name": "christopher ellis",
+     "uri": "library://artist/26",
+     "external_ids": [],
+     "is_playable": true,
+     "media_type": "artist",
+     "available": true,
+     "image": null,
+     "year": null
+    }
+   ],
+   "last_played": 0,
+   "album": {
+    "item_id": "8",
+    "provider": "library",
+    "name": "1000 Watts",
+    "version": "",
+    "sort_name": "1000 watts",
+    "uri": "library://album/8",
+    "external_ids": [],
+    "is_playable": true,
+    "media_type": "album",
+    "available": true,
+    "image": {
+     "type": "thumb",
+     "path": "Quantic - 1000 Watts [2016]/cover.png",
+     "provider": "filesystem_local--CTr9kfcj",
+     "remotely_accessible": false,
+     "proxy_id": "250016dabc282703a8d8f1ada1beea36e9b1451ceda2494b2643f32bdb1ea5da"
+    },
+    "year": 2016
+   },
+   "disc_number": 1,
+   "track_number": 8,
+   "audio_metadata": null
+  },
+  {
+   "item_id": "3551",
+   "provider": "library",
+   "name": "The 5th Exotic",
+   "version": "",
+   "sort_name": "5th exotic, the",
+   "uri": "library://track/3551",
+   "external_ids": [
+    [
+     "isrc",
+     "GBEUE0100595"
+    ]
+   ],
+   "is_playable": true,
+   "media_type": "track",
+   "provider_mappings": [
+    {
+     "item_id": "Quantic - The 5th Exotic (2001)/Quantic - The 5th Exotic - 01-02 The 5th Exotic.flac",
+     "provider_domain": "filesystem_local",
+     "provider_instance": "filesystem_local--CTr9kfcj",
+     "available": true,
+     "in_library": true,
+     "is_unique": null,
+     "audio_format": {
+      "content_type": "flac",
+      "codec_type": "flac",
+      "sample_rate": 44100,
+      "bit_depth": 16,
+      "channels": 2,
+      "output_format_str": "flac",
+      "bit_rate": 837
+     },
+     "url": null,
+     "details": "1771794174"
+    }
+   ],
+   "metadata": {
+    "description": "Downloaded from music.binimum.org/tidal.squid.wtf",
+    "description_language": null,
+    "life_span": null,
+    "artist_entity_type": null,
+    "review": null,
+    "explicit": null,
+    "images": [
+     {
+      "type": "thumb",
+      "path": "Quantic - The 5th Exotic (2001)/cover.png",
+      "provider": "filesystem_local--CTr9kfcj",
+      "remotely_accessible": false,
+      "proxy_id": "3188d75ef6f8d20952d22ea6e7fd24d3d88a479f986f53878dcee7b848316704"
+     },
+     {
+      "type": "thumb",
+      "path": "Quantic - The 5th Exotic (2001)/Quantic - The 5th Exotic - 01-02 The 5th Exotic.flac",
+      "provider": "filesystem_local--CTr9kfcj",
+      "remotely_accessible": false,
+      "proxy_id": "a17cb910268d6e92027788f55301be1f73f191af8f9c26abd1f3a9d88cf0bff4"
+     }
+    ],
+    "grouping": null,
+    "genres": [],
+    "mood": null,
+    "style": null,
+    "copyright": null,
+    "lyrics": null,
+    "lrc_lyrics": null,
+    "transcript": null,
+    "transcript_cues": null,
+    "has_transcript": null,
+    "label": null,
+    "links": null,
+    "performers": null,
+    "preview": null,
+    "popularity": null,
+    "release_date": null,
+    "languages": null,
+    "chapters": null,
+    "collections": null,
+    "last_refresh": null
+   },
+   "favorite": false,
+   "position": null,
+   "date_added": "2026-02-22T22:03:50+00:00",
+   "duration": 247,
+   "artists": [
+    {
+     "item_id": "24",
+     "provider": "library",
+     "name": "Quantic",
+     "version": "",
+     "sort_name": "quantic",
+     "uri": "library://artist/24",
+     "external_ids": [],
+     "is_playable": true,
+     "media_type": "artist",
+     "available": true,
+     "image": null,
+     "year": null
+    }
+   ],
+   "last_played": 0,
+   "album": {
+    "item_id": "351",
+    "provider": "library",
+    "name": "The 5th Exotic",
+    "version": "",
+    "sort_name": "5th exotic, the",
+    "uri": "library://album/351",
+    "external_ids": [],
+    "is_playable": true,
+    "media_type": "album",
+    "available": true,
+    "image": {
+     "type": "thumb",
+     "path": "Quantic - The 5th Exotic (2001)/cover.png",
+     "provider": "filesystem_local--CTr9kfcj",
+     "remotely_accessible": false,
+     "proxy_id": "3188d75ef6f8d20952d22ea6e7fd24d3d88a479f986f53878dcee7b848316704"
+    },
+    "year": 2001
+   },
+   "disc_number": 1,
+   "track_number": 2,
+   "audio_metadata": null
+  }
+ ],
+ "playlists": [],
+ "radio": [],
+ "audiobooks": [],
+ "podcasts": [],
+ "sound_effects": []
+}

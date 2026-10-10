@@ -1,0 +1,202 @@
+[
+ {
+  "item_id": "8",
+  "provider": "library",
+  "name": "1000 Watts",
+  "version": "",
+  "sort_name": "1000 watts",
+  "uri": "library://album/8",
+  "external_ids": [],
+  "is_playable": true,
+  "media_type": "album",
+  "provider_mappings": [
+   {
+    "item_id": "Quantic - 1000 Watts [2016]",
+    "provider_domain": "filesystem_local",
+    "provider_instance": "filesystem_local--CTr9kfcj",
+    "available": true,
+    "in_library": true,
+    "is_unique": null,
+    "audio_format": {
+     "content_type": "?",
+     "codec_type": "?",
+     "sample_rate": 44100,
+     "bit_depth": 16,
+     "channels": 2,
+     "output_format_str": "?",
+     "bit_rate": 0
+    },
+    "url": "Quantic - 1000 Watts [2016]",
+    "details": null
+   }
+  ],
+  "metadata": {
+   "description": null,
+   "description_language": null,
+   "life_span": null,
+   "artist_entity_type": null,
+   "review": null,
+   "explicit": null,
+   "images": [
+    {
+     "type": "thumb",
+     "path": "Quantic - 1000 Watts [2016]/cover.png",
+     "provider": "filesystem_local--CTr9kfcj",
+     "remotely_accessible": false,
+     "proxy_id": "250016dabc282703a8d8f1ada1beea36e9b1451ceda2494b2643f32bdb1ea5da"
+    }
+   ],
+   "grouping": null,
+   "genres": null,
+   "mood": null,
+   "style": null,
+   "copyright": null,
+   "lyrics": null,
+   "lrc_lyrics": null,
+   "transcript": null,
+   "transcript_cues": null,
+   "has_transcript": null,
+   "label": null,
+   "links": null,
+   "performers": null,
+   "preview": null,
+   "popularity": null,
+   "release_date": null,
+   "languages": null,
+   "chapters": null,
+   "collections": null,
+   "last_refresh": null
+  },
+  "favorite": false,
+  "position": null,
+  "date_added": "2024-10-30T18:27:27+00:00",
+  "year": 2016,
+  "artists": [
+   {
+    "item_id": "24",
+    "provider": "library",
+    "name": "Quantic",
+    "version": "",
+    "sort_name": "quantic",
+    "uri": "library://artist/24",
+    "external_ids": [],
+    "is_playable": true,
+    "media_type": "artist",
+    "available": true,
+    "image": null,
+    "year": null
+   }
+  ],
+  "album_type": "unknown"
+ },
+ {
+  "item_id": "70",
+  "provider": "library",
+  "name": "An Announcement to Answer",
+  "version": "",
+  "sort_name": "announcement to answer, an",
+  "uri": "library://album/70",
+  "external_ids": [
+   [
+    "musicbrainz_albumid",
+    "43ad7be2-2012-3592-988f-c22320ad13d0"
+   ],
+   [
+    "musicbrainz_releasegroupid",
+    "34c42c6b-abf5-3f16-afc9-c7252c180a20"
+   ],
+   [
+    "barcode",
+    "05060006330827"
+   ]
+  ],
+  "is_playable": true,
+  "media_type": "album",
+  "provider_mappings": [
+   {
+    "item_id": "Quantic - An Announcement To Answer (2006)",
+    "provider_domain": "filesystem_local",
+    "provider_instance": "filesystem_local--CTr9kfcj",
+    "available": true,
+    "in_library": true,
+    "is_unique": null,
+    "audio_format": {
+     "content_type": "?",
+     "codec_type": "?",
+     "sample_rate": 44100,
+     "bit_depth": 16,
+     "channels": 2,
+     "output_format_str": "?",
+     "bit_rate": 0
+    },
+    "url": "Quantic - An Announcement To Answer (2006)",
+    "details": null
+   }
+  ],
+  "metadata": {
+   "description": null,
+   "description_language": null,
+   "life_span": null,
+   "artist_entity_type": null,
+   "review": null,
+   "explicit": null,
+   "images": [
+    {
+     "type": "thumb",
+     "path": "Quantic - An Announcement To Answer (2006)/cover.png",
+     "provider": "filesystem_local--CTr9kfcj",
+     "remotely_accessible": false,
+     "proxy_id": "0b21901d384dc81ee86eaeb70709c7b42a6adb979ca6744ac64628cf5a5856f9"
+    },
+    {
+     "type": "thumb",
+     "path": "Quantic - An Announcement To Answer (2006)/Folder.jpg",
+     "provider": "filesystem_local--CTr9kfcj",
+     "remotely_accessible": false,
+     "proxy_id": "095ed678b82df3edc8d75bd8dd65de2f1d352d0943cfabc3af3480ee54715aa9"
+    }
+   ],
+   "grouping": null,
+   "genres": null,
+   "mood": null,
+   "style": null,
+   "copyright": null,
+   "lyrics": null,
+   "lrc_lyrics": null,
+   "transcript": null,
+   "transcript_cues": null,
+   "has_transcript": null,
+   "label": null,
+   "links": null,
+   "performers": null,
+   "preview": null,
+   "popularity": null,
+   "release_date": null,
+   "languages": null,
+   "chapters": null,
+   "collections": null,
+   "last_refresh": null
+  },
+  "favorite": false,
+  "position": null,
+  "date_added": "2023-12-11T08:16:34+00:00",
+  "year": 2006,
+  "artists": [
+   {
+    "item_id": "24",
+    "provider": "library",
+    "name": "Quantic",
+    "version": "",
+    "sort_name": "quantic",
+    "uri": "library://artist/24",
+    "external_ids": [],
+    "is_playable": true,
+    "media_type": "artist",
+    "available": true,
+    "image": null,
+    "year": null
+   }
+  ],
+  "album_type": "album"
+ }
+]

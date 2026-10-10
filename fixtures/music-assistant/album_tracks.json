@@ -1,0 +1,468 @@
+[
+ {
+  "item_id": "72",
+  "provider": "library",
+  "name": "Spring Tank Fire",
+  "version": "",
+  "sort_name": "spring tank fire",
+  "uri": "library://track/72",
+  "external_ids": [
+   [
+    "isrc",
+    "GBEUE1500249"
+   ]
+  ],
+  "is_playable": true,
+  "media_type": "track",
+  "provider_mappings": [
+   {
+    "item_id": "Quantic - 1000 Watts [2016]/01 - Spring Tank Fire.ogg",
+    "provider_domain": "filesystem_local",
+    "provider_instance": "filesystem_local--CTr9kfcj",
+    "available": true,
+    "in_library": true,
+    "is_unique": null,
+    "audio_format": {
+     "content_type": "ogg",
+     "codec_type": "vorbis",
+     "sample_rate": 44100,
+     "bit_depth": 16,
+     "channels": 2,
+     "output_format_str": "ogg",
+     "bit_rate": 287
+    },
+    "url": null,
+    "details": "1730312824"
+   }
+  ],
+  "metadata": {
+   "description": "id[spotify.com:track:3aibcsfvGIq0IBUHUHMNIr]",
+   "description_language": null,
+   "life_span": null,
+   "artist_entity_type": null,
+   "review": null,
+   "explicit": null,
+   "images": [
+    {
+     "type": "thumb",
+     "path": "Quantic - 1000 Watts [2016]/cover.png",
+     "provider": "filesystem_local--CTr9kfcj",
+     "remotely_accessible": false,
+     "proxy_id": "250016dabc282703a8d8f1ada1beea36e9b1451ceda2494b2643f32bdb1ea5da"
+    },
+    {
+     "type": "thumb",
+     "path": "Quantic - 1000 Watts [2016]/01 - Spring Tank Fire.ogg",
+     "provider": "filesystem_local--CTr9kfcj",
+     "remotely_accessible": false,
+     "proxy_id": "dffd9bcc2b7adc81536f235daca8520ca8974165c4d1c81aeba3290dc6ba86e9"
+    }
+   ],
+   "grouping": null,
+   "genres": [
+    "latin alternative",
+    "nu jazz",
+    "trip hop",
+    "electronica",
+    "nu-cumbia",
+    "downtempo"
+   ],
+   "mood": null,
+   "style": null,
+   "copyright": null,
+   "lyrics": null,
+   "lrc_lyrics": null,
+   "transcript": null,
+   "transcript_cues": null,
+   "has_transcript": null,
+   "label": null,
+   "links": null,
+   "performers": null,
+   "preview": null,
+   "popularity": null,
+   "release_date": null,
+   "languages": null,
+   "chapters": null,
+   "collections": null,
+   "last_refresh": null
+  },
+  "favorite": false,
+  "position": null,
+  "date_added": "2024-10-30T18:27:04+00:00",
+  "duration": 231,
+  "artists": [
+   {
+    "item_id": "24",
+    "provider": "library",
+    "name": "Quantic",
+    "version": "",
+    "sort_name": "quantic",
+    "uri": "library://artist/24",
+    "external_ids": [],
+    "is_playable": true,
+    "media_type": "artist",
+    "available": true,
+    "image": null,
+    "year": null
+   },
+   {
+    "item_id": "25",
+    "provider": "library",
+    "name": "Flowering Inferno",
+    "version": "",
+    "sort_name": "flowering inferno",
+    "uri": "library://artist/25",
+    "external_ids": [],
+    "is_playable": true,
+    "media_type": "artist",
+    "available": true,
+    "image": null,
+    "year": null
+   }
+  ],
+  "last_played": 0,
+  "album": {
+   "item_id": "8",
+   "provider": "library",
+   "name": "1000 Watts",
+   "version": "",
+   "sort_name": "1000 watts",
+   "uri": "library://album/8",
+   "external_ids": [],
+   "is_playable": true,
+   "media_type": "album",
+   "available": true,
+   "image": {
+    "type": "thumb",
+    "path": "Quantic - 1000 Watts [2016]/cover.png",
+    "provider": "filesystem_local--CTr9kfcj",
+    "remotely_accessible": false,
+    "proxy_id": "250016dabc282703a8d8f1ada1beea36e9b1451ceda2494b2643f32bdb1ea5da"
+   },
+   "year": 2016
+  },
+  "disc_number": 1,
+  "track_number": 1,
+  "audio_metadata": null
+ },
+ {
+  "item_id": "79",
+  "provider": "library",
+  "name": "A Life Worth Living",
+  "version": "",
+  "sort_name": "life worth living, a",
+  "uri": "library://track/79",
+  "external_ids": [
+   [
+    "isrc",
+    "GBEUE1500250"
+   ]
+  ],
+  "is_playable": true,
+  "media_type": "track",
+  "provider_mappings": [
+   {
+    "item_id": "Quantic - 1000 Watts [2016]/02 - A Life Worth Living.ogg",
+    "provider_domain": "filesystem_local",
+    "provider_instance": "filesystem_local--CTr9kfcj",
+    "available": true,
+    "in_library": true,
+    "is_unique": null,
+    "audio_format": {
+     "content_type": "ogg",
+     "codec_type": "vorbis",
+     "sample_rate": 44100,
+     "bit_depth": 16,
+     "channels": 2,
+     "output_format_str": "ogg",
+     "bit_rate": 306
+    },
+    "url": null,
+    "details": "1730312830"
+   }
+  ],
+  "metadata": {
+   "description": "id[spotify.com:track:79pxx0cgPBXTVUZJgRG2LD]",
+   "description_language": null,
+   "life_span": null,
+   "artist_entity_type": null,
+   "review": null,
+   "explicit": null,
+   "images": [
+    {
+     "type": "thumb",
+     "path": "Quantic - 1000 Watts [2016]/cover.png",
+     "provider": "filesystem_local--CTr9kfcj",
+     "remotely_accessible": false,
+     "proxy_id": "250016dabc282703a8d8f1ada1beea36e9b1451ceda2494b2643f32bdb1ea5da"
+    },
+    {
+     "type": "thumb",
+     "path": "Quantic - 1000 Watts [2016]/02 - A Life Worth Living.ogg",
+     "provider": "filesystem_local--CTr9kfcj",
+     "remotely_accessible": false,
+     "proxy_id": "5504c98f582182b27e06690d5549e9c15f82fe174b3bd57a7def0e0e36c1fb20"
+    }
+   ],
+   "grouping": null,
+   "genres": [
+    "latin alternative",
+    "nu jazz",
+    "trip hop",
+    "electronica",
+    "nu-cumbia",
+    "downtempo"
+   ],
+   "mood": null,
+   "style": null,
+   "copyright": null,
+   "lyrics": null,
+   "lrc_lyrics": null,
+   "transcript": null,
+   "transcript_cues": null,
+   "has_transcript": null,
+   "label": null,
+   "links": null,
+   "performers": null,
+   "preview": null,
+   "popularity": null,
+   "release_date": null,
+   "languages": null,
+   "chapters": null,
+   "collections": null,
+   "last_refresh": null
+  },
+  "favorite": false,
+  "position": null,
+  "date_added": "2024-10-30T18:27:10+00:00",
+  "duration": 308,
+  "artists": [
+   {
+    "item_id": "24",
+    "provider": "library",
+    "name": "Quantic",
+    "version": "",
+    "sort_name": "quantic",
+    "uri": "library://artist/24",
+    "external_ids": [],
+    "is_playable": true,
+    "media_type": "artist",
+    "available": true,
+    "image": null,
+    "year": null
+   },
+   {
+    "item_id": "25",
+    "provider": "library",
+    "name": "Flowering Inferno",
+    "version": "",
+    "sort_name": "flowering inferno",
+    "uri": "library://artist/25",
+    "external_ids": [],
+    "is_playable": true,
+    "media_type": "artist",
+    "available": true,
+    "image": null,
+    "year": null
+   },
+   {
+    "item_id": "28",
+    "provider": "library",
+    "name": "U-Roy",
+    "version": "",
+    "sort_name": "u-roy",
+    "uri": "library://artist/28",
+    "external_ids": [],
+    "is_playable": true,
+    "media_type": "artist",
+    "available": true,
+    "image": null,
+    "year": null
+   },
+   {
+    "item_id": "29",
+    "provider": "library",
+    "name": "Alice Russell",
+    "version": "",
+    "sort_name": "alice russell",
+    "uri": "library://artist/29",
+    "external_ids": [],
+    "is_playable": true,
+    "media_type": "artist",
+    "available": true,
+    "image": null,
+    "year": null
+   }
+  ],
+  "last_played": 0,
+  "album": {
+   "item_id": "8",
+   "provider": "library",
+   "name": "1000 Watts",
+   "version": "",
+   "sort_name": "1000 watts",
+   "uri": "library://album/8",
+   "external_ids": [],
+   "is_playable": true,
+   "media_type": "album",
+   "available": true,
+   "image": {
+    "type": "thumb",
+    "path": "Quantic - 1000 Watts [2016]/cover.png",
+    "provider": "filesystem_local--CTr9kfcj",
+    "remotely_accessible": false,
+    "proxy_id": "250016dabc282703a8d8f1ada1beea36e9b1451ceda2494b2643f32bdb1ea5da"
+   },
+   "year": 2016
+  },
+  "disc_number": 1,
+  "track_number": 2,
+  "audio_metadata": null
+ },
+ {
+  "item_id": "73",
+  "provider": "library",
+  "name": "Homeward Bound",
+  "version": "",
+  "sort_name": "homeward bound",
+  "uri": "library://track/73",
+  "external_ids": [
+   [
+    "isrc",
+    "GBEUE1500251"
+   ]
+  ],
+  "is_playable": true,
+  "media_type": "track",
+  "provider_mappings": [
+   {
+    "item_id": "Quantic - 1000 Watts [2016]/03 - Homeward Bound.ogg",
+    "provider_domain": "filesystem_local",
+    "provider_instance": "filesystem_local--CTr9kfcj",
+    "available": true,
+    "in_library": true,
+    "is_unique": null,
+    "audio_format": {
+     "content_type": "ogg",
+     "codec_type": "vorbis",
+     "sample_rate": 44100,
+     "bit_depth": 16,
+     "channels": 2,
+     "output_format_str": "ogg",
+     "bit_rate": 291
+    },
+    "url": null,
+    "details": "1730312834"
+   }
+  ],
+  "metadata": {
+   "description": "id[spotify.com:track:3QxCv7D5rePEPAttqgJE8g]",
+   "description_language": null,
+   "life_span": null,
+   "artist_entity_type": null,
+   "review": null,
+   "explicit": null,
+   "images": [
+    {
+     "type": "thumb",
+     "path": "Quantic - 1000 Watts [2016]/cover.png",
+     "provider": "filesystem_local--CTr9kfcj",
+     "remotely_accessible": false,
+     "proxy_id": "250016dabc282703a8d8f1ada1beea36e9b1451ceda2494b2643f32bdb1ea5da"
+    },
+    {
+     "type": "thumb",
+     "path": "Quantic - 1000 Watts [2016]/03 - Homeward Bound.ogg",
+     "provider": "filesystem_local--CTr9kfcj",
+     "remotely_accessible": false,
+     "proxy_id": "eca5bad267f272ad3b62f32d2d421521f11564891ab08b54b72f0057b2225da4"
+    }
+   ],
+   "grouping": null,
+   "genres": [
+    "latin alternative",
+    "nu jazz",
+    "trip hop",
+    "electronica",
+    "nu-cumbia",
+    "downtempo"
+   ],
+   "mood": null,
+   "style": null,
+   "copyright": null,
+   "lyrics": null,
+   "lrc_lyrics": null,
+   "transcript": null,
+   "transcript_cues": null,
+   "has_transcript": null,
+   "label": null,
+   "links": null,
+   "performers": null,
+   "preview": null,
+   "popularity": null,
+   "release_date": null,
+   "languages": null,
+   "chapters": null,
+   "collections": null,
+   "last_refresh": null
+  },
+  "favorite": false,
+  "position": null,
+  "date_added": "2024-10-30T18:27:14+00:00",
+  "duration": 291,
+  "artists": [
+   {
+    "item_id": "24",
+    "provider": "library",
+    "name": "Quantic",
+    "version": "",
+    "sort_name": "quantic",
+    "uri": "library://artist/24",
+    "external_ids": [],
+    "is_playable": true,
+    "media_type": "artist",
+    "available": true,
+    "image": null,
+    "year": null
+   },
+   {
+    "item_id": "25",
+    "provider": "library",
+    "name": "Flowering Inferno",
+    "version": "",
+    "sort_name": "flowering inferno",
+    "uri": "library://artist/25",
+    "external_ids": [],
+    "is_playable": true,
+    "media_type": "artist",
+    "available": true,
+    "image": null,
+    "year": null
+   }
+  ],
+  "last_played": 0,
+  "album": {
+   "item_id": "8",
+   "provider": "library",
+   "name": "1000 Watts",
+   "version": "",
+   "sort_name": "1000 watts",
+   "uri": "library://album/8",
+   "external_ids": [],
+   "is_playable": true,
+   "media_type": "album",
+   "available": true,
+   "image": {
+    "type": "thumb",
+    "path": "Quantic - 1000 Watts [2016]/cover.png",
+    "provider": "filesystem_local--CTr9kfcj",
+    "remotely_accessible": false,
+    "proxy_id": "250016dabc282703a8d8f1ada1beea36e9b1451ceda2494b2643f32bdb1ea5da"
+   },
+   "year": 2016
+  },
+  "disc_number": 1,
+  "track_number": 3,
+  "audio_metadata": null
+ }
+]

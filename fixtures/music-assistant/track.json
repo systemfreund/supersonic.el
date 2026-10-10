@@ -1,0 +1,249 @@
+{
+ "item_id": "7131",
+ "provider": "library",
+ "name": "Kawmélito",
+ "version": "",
+ "sort_name": "kawmelito",
+ "uri": "library://track/7131",
+ "external_ids": [
+  [
+   "isrc",
+   "FR6KN2300010"
+  ]
+ ],
+ "is_playable": true,
+ "media_type": "track",
+ "provider_mappings": [
+  {
+   "item_id": "Polobi & the Gwo Ka Masters - Abri Cyclonique/Kawmélito_-_Polobi_&_the_Gwo_Ka_Masters.mp3",
+   "provider_domain": "filesystem_local",
+   "provider_instance": "filesystem_local--CTr9kfcj",
+   "available": true,
+   "in_library": true,
+   "is_unique": null,
+   "audio_format": {
+    "content_type": "mp3",
+    "codec_type": "mp3",
+    "sample_rate": 44100,
+    "bit_depth": 16,
+    "channels": 2,
+    "output_format_str": "mp3",
+    "bit_rate": 330
+   },
+   "url": null,
+   "details": "1700746973"
+  }
+ ],
+ "metadata": {
+  "description": null,
+  "description_language": null,
+  "life_span": null,
+  "artist_entity_type": null,
+  "review": null,
+  "explicit": null,
+  "images": [
+   {
+    "type": "thumb",
+    "path": "Polobi & the Gwo Ka Masters - Abri Cyclonique/cover.png",
+    "provider": "filesystem_local--CTr9kfcj",
+    "remotely_accessible": false,
+    "proxy_id": "8c51c16de65125db78e8db769a70ddc4c3881d9ef70737419488e1f27a3569d1"
+   },
+   {
+    "type": "thumb",
+    "path": "Polobi & the Gwo Ka Masters - Abri Cyclonique/Kawmélito_-_Polobi_&_the_Gwo_Ka_Masters.mp3",
+    "provider": "filesystem_local--CTr9kfcj",
+    "remotely_accessible": false,
+    "proxy_id": "317725a6453b584b8c0bdd76c83ae524a0e6580486b20a04aa9ef6ca797cba49"
+   }
+  ],
+  "grouping": null,
+  "genres": [],
+  "mood": null,
+  "style": null,
+  "copyright": null,
+  "lyrics": null,
+  "lrc_lyrics": null,
+  "transcript": null,
+  "transcript_cues": null,
+  "has_transcript": null,
+  "label": null,
+  "links": null,
+  "performers": null,
+  "preview": null,
+  "popularity": null,
+  "release_date": null,
+  "languages": null,
+  "chapters": null,
+  "collections": null,
+  "last_refresh": null
+ },
+ "favorite": false,
+ "position": null,
+ "date_added": "2023-11-23T13:42:53+00:00",
+ "duration": 212,
+ "artists": [
+  {
+   "item_id": "2000",
+   "provider": "library",
+   "name": "Polobi & the Gwo Ka Masters",
+   "version": "",
+   "sort_name": "polobi & the gwo ka masters",
+   "uri": "library://artist/2000",
+   "external_ids": [],
+   "is_playable": true,
+   "media_type": "artist",
+   "provider_mappings": [
+    {
+     "item_id": "Polobi & the Gwo Ka Masters",
+     "provider_domain": "filesystem_local",
+     "provider_instance": "filesystem_local--CTr9kfcj",
+     "available": true,
+     "in_library": true,
+     "is_unique": null,
+     "audio_format": {
+      "content_type": "?",
+      "codec_type": "?",
+      "sample_rate": 44100,
+      "bit_depth": 16,
+      "channels": 2,
+      "output_format_str": "?",
+      "bit_rate": 0
+     },
+     "url": null,
+     "details": null
+    }
+   ],
+   "metadata": {
+    "description": null,
+    "description_language": null,
+    "life_span": null,
+    "artist_entity_type": null,
+    "review": null,
+    "explicit": null,
+    "images": null,
+    "grouping": null,
+    "genres": null,
+    "mood": null,
+    "style": null,
+    "copyright": null,
+    "lyrics": null,
+    "lrc_lyrics": null,
+    "transcript": null,
+    "transcript_cues": null,
+    "has_transcript": null,
+    "label": null,
+    "links": null,
+    "performers": null,
+    "preview": null,
+    "popularity": null,
+    "release_date": null,
+    "languages": null,
+    "chapters": null,
+    "collections": null,
+    "last_refresh": null
+   },
+   "favorite": false,
+   "position": null,
+   "date_added": "2026-10-10T08:34:41+00:00",
+   "artist_type": "singer"
+  }
+ ],
+ "last_played": 0,
+ "album": {
+  "item_id": "686",
+  "provider": "library",
+  "name": "Abri Cyclonique",
+  "version": "",
+  "sort_name": "abri cyclonique",
+  "uri": "library://album/686",
+  "external_ids": [],
+  "is_playable": true,
+  "media_type": "album",
+  "provider_mappings": [
+   {
+    "item_id": "Polobi & the Gwo Ka Masters - Abri Cyclonique",
+    "provider_domain": "filesystem_local",
+    "provider_instance": "filesystem_local--CTr9kfcj",
+    "available": true,
+    "in_library": true,
+    "is_unique": null,
+    "audio_format": {
+     "content_type": "?",
+     "codec_type": "?",
+     "sample_rate": 44100,
+     "bit_depth": 16,
+     "channels": 2,
+     "output_format_str": "?",
+     "bit_rate": 0
+    },
+    "url": "Polobi & the Gwo Ka Masters - Abri Cyclonique",
+    "details": null
+   }
+  ],
+  "metadata": {
+   "description": null,
+   "description_language": null,
+   "life_span": null,
+   "artist_entity_type": null,
+   "review": null,
+   "explicit": null,
+   "images": [
+    {
+     "type": "thumb",
+     "path": "Polobi & the Gwo Ka Masters - Abri Cyclonique/cover.png",
+     "provider": "filesystem_local--CTr9kfcj",
+     "remotely_accessible": false,
+     "proxy_id": "8c51c16de65125db78e8db769a70ddc4c3881d9ef70737419488e1f27a3569d1"
+    }
+   ],
+   "grouping": null,
+   "genres": null,
+   "mood": null,
+   "style": null,
+   "copyright": null,
+   "lyrics": null,
+   "lrc_lyrics": null,
+   "transcript": null,
+   "transcript_cues": null,
+   "has_transcript": null,
+   "label": null,
+   "links": null,
+   "performers": null,
+   "preview": null,
+   "popularity": null,
+   "release_date": null,
+   "languages": null,
+   "chapters": null,
+   "collections": null,
+   "last_refresh": null
+  },
+  "favorite": false,
+  "position": null,
+  "date_added": "2023-11-23T12:18:57+00:00",
+  "year": 2023,
+  "artists": [
+   {
+    "item_id": "6",
+    "provider": "library",
+    "name": "Various Artists",
+    "version": "",
+    "sort_name": "various artists",
+    "uri": "library://artist/6",
+    "external_ids": [],
+    "is_playable": true,
+    "media_type": "artist",
+    "available": true,
+    "image": null,
+    "year": null
+   }
+  ],
+  "album_type": "unknown"
+ },
+ "disc_number": 0,
+ "track_number": 1,
+ "audio_metadata": {
+  "bpm": 120.04526166902406,
+  "musical_key": "D# major"
+ }
+}

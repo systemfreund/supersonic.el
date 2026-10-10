@@ -541,9 +541,25 @@ that the other one has no equivalent of."
 The symbol a provider registered itself under via
 `supersonic-provider-register': where the artist, album and track
 lists and search results come from, and what the ids in them mean.
-Only `subsonic' is built in, and selecting a provider whose file has
-not been loaded is reported when a list buffer is next opened."
-  :type '(choice (const :tag "Subsonic-compatible server" subsonic) (symbol :tag "Other registered provider"))
+Only `subsonic' is built in; `music-assistant' needs
+`supersonic-music-assistant' loaded first.  Selecting a provider whose
+file has not been loaded is reported when a list buffer is next opened."
+  :type '(choice (const :tag "Subsonic-compatible server" subsonic)
+                 (const :tag "Music Assistant server" music-assistant)
+                 (symbol :tag "Other registered provider"))
+  :group 'supersonic)
+
+(defcustom supersonic-music-assistant-url nil
+  "Address of the server the `music-assistant' provider browses.
+Its scheme, host and port, e.g. \"http://192.168.1.10:8095\".  The
+token is looked up in auth-source with exactly this string as the
+host, so the authinfo line for it reads
+
+  machine http://192.168.1.10:8095 password TOKEN
+
+where TOKEN is a long-lived token created in Music Assistant's web UI,
+under your profile."
+  :type '(choice (const :tag "Not set" nil) string)
   :group 'supersonic)
 
 (defcustom supersonic-playback-backend 'mpv
