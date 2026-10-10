@@ -53,8 +53,11 @@
 ;; Only `:id' is guaranteed; any other key may be missing, meaning the
 ;; provider does not know it.  `:duration' is in seconds, `:year' and
 ;; `:track' are numbers, `:size' is in bytes, and `:art' is an opaque
-;; cover-art reference that need not be the item's own id.  A provider
-;; may add keys of its own on top.
+;; cover-art reference that need not be the item's own id.  An
+;; episode's `:status' is free text in the provider's own words --
+;; Subsonic's "completed", Music Assistant's "played" -- for display
+;; only, never to be matched on.  A provider may add keys of its own on
+;; top.
 ;;
 ;; As with playback backends, not every provider can do everything, so
 ;; every operation is optional: one a provider leaves out is reported

@@ -359,7 +359,10 @@ MA reports an unknown year, duration or track number as null or zero."
 Looks where MA's own client does, in its `get_media_item_image': at
 the single image an item mapping carries, then at the album's image,
 so that a track shows its album's cover rather than art of its own,
-then at the item's own images, and last at its artists' images."
+then at the item's own images, then at its artists' images.  A thumb
+not found there is made up for by a landscape image, looked for the
+same way -- at every level, so that an album with only a landscape
+image still wins over its artist's thumb."
   (and (consp data)
        (or (let ((image (assoc-default "image" data)))
              (and (consp image) (equal (assoc-default "type" image) type) image))
@@ -367,7 +370,9 @@ then at the item's own images, and last at its artists' images."
            (seq-find (lambda (image) (equal (assoc-default "type" image) type))
                      (assoc-default "images" (assoc-default "metadata" data)))
            (seq-some (lambda (artist) (supersonic-music-assistant--image artist type))
-                     (assoc-default "artists" data)))))
+                     (assoc-default "artists" data))
+           (and (equal type "thumb")
+                (supersonic-music-assistant--image data "landscape")))))
 
 (defun supersonic-music-assistant--art (data)
   "Return the `:art' reference of MA item DATA, or nil if it shows no image.
@@ -379,10 +384,8 @@ it, where the feed's own may be thousands of pixels wide.  Only an
 image without a proxy id, from an older server, is referred to by its
 URL, if it has one anyone can fetch, which
 `supersonic-music-assistant--cover-art' then fetches as it is; any
-other is left without art.  A landscape image stands in for a missing
-thumb, as it does in MA's client."
-  (let* ((image (or (supersonic-music-assistant--image data "thumb")
-                    (supersonic-music-assistant--image data "landscape")))
+other is left without art."
+  (let* ((image (supersonic-music-assistant--image data "thumb"))
          (path (assoc-default "path" image))
          (proxy-id (assoc-default "proxy_id" image)))
     (cond
@@ -554,6 +557,19 @@ since only the proxy scales."
               (supersonic-music-assistant--proxy-size size))
     art))
 
+(defun supersonic-music-assistant--retrieve-image (url)
+  "Start a GET of the image at URL, returning a promise of (STATUS . BUFFER).
+Marked noninteractive, so that a server answering 401 -- a public
+image's host is whatever a feed points at -- makes `url.el' fail the
+request rather than prompt for a user name and password, from a timer
+in the middle of painting a list.  `url.el' still asks auth-source for
+that host first, as it does for any 401; only the prompts are gone.
+A plain function, as
+`supersonic-music-assistant--retrieve' is, so that the binding is
+certain to be in effect while `url-retrieve' reads it."
+  (let ((url-request-noninteractive t))
+    (supersonic-url-retrieve url)))
+
 (aio-defun
  supersonic-music-assistant--cover-art (art size)
  "Return a promise resolving to the bytes of the image ART refers to, at SIZE.
@@ -561,7 +577,7 @@ ART is an `:art' reference, as made by `supersonic-music-assistant--art'.
 No token goes with the request: MA's image proxy serves anyone, as it
 must for the players it points at images, and a public URL needs none."
  (let ((url (supersonic-music-assistant--cover-art-request-url art size)))
-   (pcase-let ((`(,status . ,buffer) (aio-await (supersonic-url-retrieve url))))
+   (pcase-let ((`(,status . ,buffer) (aio-await (supersonic-music-assistant--retrieve-image url))))
      (unwind-protect
          (let ((err (plist-get status :error)))
            (when err

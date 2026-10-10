@@ -6382,7 +6382,9 @@ not its id, through the active provider."
 (defvar supersonic-tests--ma-requests nil
   "The requests the fake Music Assistant server received, most recent first.
 Each is a plist (:url URL :method METHOD :headers HEADERS :body BODY),
-BODY being the parsed JSON a POST sent, nil for a GET.")
+BODY being the parsed JSON a POST sent, nil for a GET, plus the
+`url-max-redirections' and `url-request-noninteractive' it was started
+with.")
 
 (defun supersonic-tests--ma-command (request)
   "Return the command REQUEST ran, or nil for a request other than `/api'."
@@ -6434,6 +6436,7 @@ and auth-source has the token \"secret-token\" for exactly that host."
                 (lambda (url)
                   (let* ((request (list :url url
                                         :max-redirections url-max-redirections
+                                        :noninteractive url-request-noninteractive
                                         :method url-request-method
                                         :headers url-request-extra-headers
                                         :body (and url-request-data
@@ -6805,8 +6808,9 @@ PATH, if given, is a public URL the image can also be fetched from."
 (ert-deftest supersonic-tests-ma-art-falls-back-the-way-the-client-does ()
   "An item mapping's own image comes first, then the album's, so that a
 track shows its album's cover, then the item's own images, then its
-artists'; a landscape image stands in only for a missing thumb, and an
-item with no image gets no `:art' at all."
+artists'; a landscape image stands in only for a missing thumb, at each
+level, so an album's landscape image beats its artist's thumb.  An item
+with no image gets no `:art' at all."
   (let ((own `(("images" ,(supersonic-tests--ma-image "own"))))
         (artists `((("uri" . "library://artist/1")
                     ("metadata" ("images" ,(supersonic-tests--ma-image "artist")))))))
@@ -6828,6 +6832,10 @@ item with no image gets no `:art' at all."
                    (supersonic-music-assistant--art
                     `(("metadata" ("images" ,(supersonic-tests--ma-image "wide" "landscape")
                                    ,(supersonic-tests--ma-image "thumb")))))))
+    (should (equal "/imageproxy/album-wide"
+                   (supersonic-music-assistant--art
+                    `(("album" ("image" . ,(supersonic-tests--ma-image "album-wide" "landscape")))
+                      ("artists" ,@artists)))))
     (should-not (plist-member (supersonic-music-assistant--album '(("uri" . "library://album/1") ("metadata" ("images"))))
                               :art))))
 
@@ -6852,7 +6860,9 @@ smaller than the one wanted, and for the image as it is past them."
 (ert-deftest supersonic-tests-ma-cover-art-asks-the-proxy-without-a-token ()
   "Cover art is a GET of the proxied path at a size the proxy scales to,
 resolving to the bytes; no token is looked up, sent or put in the URL.
-A public URL is fetched as it is, and a failure says which URL failed."
+A public URL is fetched as it is, and a failure says which URL failed.
+Every request is noninteractive, so that a host answering 401 never
+makes `url.el' prompt from a timer."
   (supersonic-tests--with-ma-server (lambda (_request) (cons 200 "jpeg bytes"))
     (let ((lookups 0))
       (supersonic-tests--counting-auth-lookups lookups
@@ -6864,7 +6874,8 @@ A public URL is fetched as it is, and a failure says which URL failed."
                    (mapcar (lambda (request) (plist-get request :url)) supersonic-tests--ma-requests)))
     (dolist (request supersonic-tests--ma-requests)
       (should-not (plist-get request :body))
-      (should-not (assoc "Authorization" (plist-get request :headers)))))
+      (should-not (assoc "Authorization" (plist-get request :headers)))
+      (should (plist-get request :noninteractive))))
   (supersonic-tests--with-ma-server (lambda (_request) (cons 404 ""))
     (should (string-match-p "cover art from http://ma.test:8095/imageproxy/abc\\?size=512"
                             (error-message-string
