@@ -6710,6 +6710,20 @@ album still shows if another track of it resolves."
                    (mapcar (lambda (album) (plist-get album :id))
                            (aio-wait-for (supersonic-provider-album-list 'recent 50)))))))
 
+(ert-deftest supersonic-tests-ma-recent-albums-report-every-lookup-failing ()
+  "When every lookup fails, the failure is reported rather than an
+empty list that passes for an empty history."
+  (let ((all '("spotify--gXgn7uqw://track/6v7hCIRoJkuYShT0wls1gD"
+               "spotify--gXgn7uqw://track/7GHav5LtQ83HBHn9f1ku9j"
+               "library://track/5523" "library://track/5524"
+               "library://track/669" "library://track/76")))
+    (supersonic-tests--with-ma-server (supersonic-tests--ma-recent-history all)
+      (should-error (aio-wait-for (supersonic-provider-album-list 'recent 50))))
+    ;; A track without an album resolved: nothing failed to report.
+    (supersonic-tests--with-ma-server
+        (supersonic-tests--ma-recent-history (cdr all) (list (car all)))
+      (should-not (aio-wait-for (supersonic-provider-album-list 'recent 50))))))
+
 (ert-deftest supersonic-tests-ma-recent-albums-of-an-empty-history ()
   "An empty play history lists no recent albums, and looks nothing up."
   (supersonic-tests--with-ma-server
@@ -6740,7 +6754,8 @@ until it comes back short, or has been asked for its maximum."
                      (supersonic-tests--ma-looked-up))))
     (let ((supersonic-music-assistant--recent-history-factor 4))
       (supersonic-tests--with-ma-server (supersonic-tests--ma-recent-history stale)
-        (should-not (aio-wait-for (supersonic-provider-album-list 'recent 1)))
+        ;; Every lookup made failed, so that is what is reported.
+        (should-error (aio-wait-for (supersonic-provider-album-list 'recent 1)))
         (should (equal stale (supersonic-tests--ma-looked-up)))))))
 
 (ert-deftest supersonic-tests-ma-artists-are-fetched-a-page-at-a-time ()
