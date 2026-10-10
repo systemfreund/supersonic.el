@@ -246,8 +246,8 @@ transcoded before and kept in its transcoding cache.
 
 `supersonic-music-assistant.el` browses a
 [Music Assistant](https://www.music-assistant.io/) server instead of a
-Subsonic one: artists, albums, album lists and search. Like the
-jukebox, it is opt-in:
+Subsonic one: artists, albums, album lists, search, podcasts and cover
+art. Like the jukebox, it is opt-in:
 
 ```
 (use-package supersonic
@@ -266,7 +266,13 @@ exactly, as for Subsonic:
 
     machine http://192.168.1.10:8095 password TOKEN
 
-It is sent in a request header only, never in a URL.
+It is sent in a request header only, never in a URL. Cover art comes
+from the server's image proxy, which needs no token, so none is sent
+with it.
+
+Podcasts are whatever podcasts are in the server's library; subscribe
+to one in Music Assistant itself, since it has no equivalent of adding
+a feed by URL or downloading an episode.
 
 Music Assistant plays on its own players and gives a client no URL to
 stream a whole track from, so neither mpv nor UPnP can play for it.
