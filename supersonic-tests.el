@@ -7325,7 +7325,7 @@ and backend registries are restored afterwards."
          (supersonic-provider--providers (copy-hash-table supersonic-provider--providers))
          (supersonic-playback--backends (copy-hash-table supersonic-playback--backends))
          (supersonic-playback--compatibility (copy-hash-table supersonic-playback--compatibility))
-         (supersonic--provider-last-backend nil)
+         (supersonic-playback--last-backend nil)
          (stopped nil))
      (supersonic-provider-register 'supersonic-tests-fake '())
      (supersonic-playback-register-backend
@@ -7413,7 +7413,7 @@ taken without asking -- switching away and back restores it."
     (supersonic-playback-register-backend 'test-to-2 '((stop . ignore)) :providers '(supersonic-tests-fake))
     (supersonic-playback-register-backend 'test-from-2 '((stop . ignore)) :providers '(subsonic))
     (setq supersonic-playback-backend 'test-from-2)
-    (setq supersonic--provider-last-backend '((supersonic-tests-fake . test-to-2)))
+    (setq supersonic-playback--last-backend '((supersonic-tests-fake . test-to-2)))
     (cl-letf (((symbol-function 'completing-read)
                (lambda (&rest _) (ert-fail "Asked for a backend it should have remembered"))))
       (supersonic-provider-switch 'supersonic-tests-fake)
@@ -7459,6 +7459,34 @@ changes nothing."
     (should (eq 'subsonic supersonic-provider))
     (should (eq 'test-from supersonic-playback-backend))
     (should-not stopped)))
+
+(ert-deftest supersonic-tests-provider-switch-returns-to-a-backend-chosen-with-k ()
+  "A backend chosen with `supersonic-playback-switch-backend' is the one
+a later provider switch returns to."
+  (supersonic-tests--with-provider-switch
+    (supersonic-playback-register-backend 'test-from-2 '((stop . ignore)) :providers '(subsonic))
+    (supersonic-playback-switch-backend 'test-from-2)
+    (supersonic-provider-switch 'supersonic-tests-fake)
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (&rest _) (ert-fail "Asked for a backend it should have remembered"))))
+      (supersonic-provider-switch 'subsonic))
+    (should (eq 'test-from-2 supersonic-playback-backend))))
+
+(ert-deftest supersonic-tests-switch-backend-past-an-unregistered-backend ()
+  "An active backend that was never registered does not keep
+`supersonic-playback-switch-backend' from replacing it."
+  (supersonic-tests--with-provider-switch
+    (setq supersonic-playback-backend 'supersonic-tests-nonesuch)
+    (supersonic-playback-switch-backend 'test-from)
+    (should (eq 'test-from supersonic-playback-backend))
+    (should-not stopped)))
+
+(ert-deftest supersonic-tests-compatible-backend-names-for-another-provider ()
+  "`supersonic-playback-compatible-backend-names' answers for a provider
+other than the active one when given it."
+  (supersonic-tests--with-provider-switch
+    (should (equal '(test-to) (supersonic-playback-compatible-backend-names 'supersonic-tests-fake)))
+    (should (memq 'test-from (supersonic-playback-compatible-backend-names)))))
 
 (define-derived-mode supersonic-tests--derived-artist-mode supersonic-artist-mode "Test Artists"
   "A list mode of the user's own, derived from one of supersonic.el's.")
