@@ -3,10 +3,36 @@
 [![CI](https://github.com/systemfreund/supersonic.el/actions/workflows/ci.yml/badge.svg)](https://github.com/systemfreund/supersonic.el/actions/workflows/ci.yml)
 <!-- [![MELPA](https://melpa.org/packages/supersonic-badge.svg)](https://melpa.org/#/supersonic) -->
 
-This is a subsonic client for emacs using [mpv](https://mpv.io/) for music playing. It
-works with any server implementing the Subsonic API, such as
-[Navidrome](https://www.navidrome.org/), [Nextcloud Music](https://apps.nextcloud.com/apps/music), [Airsonic](https://airsonic.github.io/),
-[Gonic](https://github.com/sentriz/gonic) or [Ampache](https://ampache.org/).
+A music client for Emacs: browse your library's artists, albums,
+album lists and podcasts, search it, and play it locally or on the
+speakers around your home.
+
+## Supported servers and playback
+
+| Server (provider)                    | Playback backend     | Where the music plays                                    |
+|--------------------------------------|----------------------|----------------------------------------------------------|
+| [Subsonic](#subsonic)                | [mpv](#local-playback-with-mpv) (default) | locally, on the machine running Emacs |
+|                                      | [Jukebox](#jukebox)  | the Subsonic server's own speakers                       |
+|                                      | [UPnP/DLNA](#upnpdlna) | AV receivers, network speakers, smart TVs              |
+| [Music Assistant](#music-assistant)  | [Music Assistant player](#playing-on-a-music-assistant-player) | any player Music Assistant has: speakers, Chromecast, AirPlay, Sonos, its web player |
+
+*Subsonic* means any server implementing the Subsonic API, such as
+[Navidrome](https://www.navidrome.org/),
+[Nextcloud Music](https://apps.nextcloud.com/apps/music),
+[Airsonic](https://airsonic.github.io/),
+[Gonic](https://github.com/sentriz/gonic) or
+[Ampache](https://ampache.org/).
+[Music Assistant](https://www.music-assistant.io/) is supported from
+server schema version 28 on.
+
+Contents:
+
+- [Installation](#installation)
+- [Subsonic](#subsonic): [connection](#connecting-to-a-subsonic-server), [mpv](#local-playback-with-mpv), [jukebox](#jukebox), [UPnP/DLNA](#upnpdlna)
+- [Music Assistant](#music-assistant): [connection](#connecting-to-music-assistant), [players](#playing-on-a-music-assistant-player)
+- [Switching providers](#switching-providers)
+- [Credentials in KeePassXC](#credentials-in-keepassxc-via-secret-service)
+- [Usage](#usage): [play queue](#play-queue), [now playing](#now-playing), [cover art](#cover-art), [MPRIS](#mpris)
 
 <img width="1445" height="1041" alt="image" src="https://github.com/user-attachments/assets/095571c2-0c8c-4c38-9fa8-d1ae1b5c10ec" />
 <img width="1924" height="1081" alt="image" src="https://github.com/user-attachments/assets/e7e698ca-6b1f-4505-8452-1118b6a66762" />
@@ -17,11 +43,11 @@ works with any server implementing the Subsonic API, such as
 
 Based on [subsonic.el](https://git.sr.ht/~amk/subsonic.el)
 
-## Usage
+## Installation
 
 ~The package is available on melpa as `supersonic`~ (not available, yet. Please clone the repository instead.)
 
-Example use-package config:
+Example use-package config, for a Subsonic server played with mpv:
 
 ```elisp
 (use-package supersonic
@@ -29,20 +55,251 @@ Example use-package config:
   :commands supersonic
   :bind (("C-c m" . supersonic))
   :custom
-  (supersonic-host "https://mysubsonicserver:4355") ;; For authentication see section below
+  (supersonic-host "https://mysubsonicserver:4355") ;; see "Connecting to a Subsonic server"
   (supersonic-enable-scrobbling t))
 ```
 
-`supersonic-host` may be given without a scheme, in which case
-`https://` is assumed. In case you are running a subsonic server
-without HTTPS, prefix it with `http://` instead.
+The sections below show what to add for the other backends and for
+Music Assistant. Use the `supersonic` command to open a transient
+with commonly used commands available. For a list of available
+configuration options check `customize-group supersonic`.
 
-Use the `supersonic` command to open a transient with commonly used
-commands available.
+## Subsonic
 
-For a list of available configuration options check `customize-group supersonic`
+The `subsonic` provider is built in and active by default.
 
-## Play queue
+### Connecting to a Subsonic server
+
+Set `supersonic-host` to your server's URL. It may be given without a
+scheme, in which case `https://` is assumed. In case you are running a
+Subsonic server without HTTPS, prefix it with `http://` instead.
+
+Then add a `~/.authinfo.gpg` or `~/.authinfo` file with the following
+contents
+
+    machine SUBSONIC_URL login USERNAME password PASSWORD
+
+`SUBSONIC_URL` is the URL of your server, e.g.
+`https://mysubsonicserver:4355` or `http://localhost:1234`.
+
+Make sure the `machine` field in your authinfo entry matches `supersonic-host`
+exactly, scheme included. To keep the credentials in KeePassXC
+instead, see [below](#credentials-in-keepassxc-via-secret-service).
+
+### Local playback with mpv
+
+The default backend: tracks play in a local [mpv](https://mpv.io/)
+process, which needs to be installed. Nothing else to configure.
+mpv plays for any provider that can name a URL to stream from, which
+today is Subsonic.
+
+### Jukebox
+
+`supersonic-jukebox.el` plays back through the Subsonic server's own
+remote jukebox instead of a local mpv process, so tracks play out of
+the server's own speakers. It is not loaded or activated automatically,
+and supersonic.el has no dependency on it. Enable it explicitly and
+select it as the active backend:
+
+```elisp
+(use-package supersonic
+  :custom
+  (supersonic-playback-backend 'jukebox)
+  :config
+  (require 'supersonic-jukebox))
+```
+
+The jukebox only plays for the `subsonic` provider, since only a
+Subsonic server has a jukebox to control. With any other provider,
+playback commands report that the two do not fit, and
+`supersonic-playback-switch-backend` does not offer `jukebox`.
+
+### UPnP/DLNA
+
+`supersonic-upnp.el` plays to UPnP/DLNA renderers: AV receivers,
+network speakers, smart TVs. Like the jukebox, it is opt-in:
+
+```elisp
+(use-package supersonic
+  :custom
+  (supersonic-playback-backend 'upnp)
+  :config
+  (require 'supersonic-upnp))
+```
+
+or `M-x supersonic-playback-switch-backend` once it is loaded. Like
+mpv, it plays for any provider that can name a URL to stream from.
+
+To pick the renderer to play to, run
+`M-x supersonic-upnp-select-renderer`. It searches your LAN for
+renderers for a few seconds (`supersonic-upnp-discovery-timeout`) and
+offers them by name. If a renderer does not show up, for example
+because multicast does not reach it, enter the URL of its device
+description instead; with a prefix argument (`C-u`), no search is
+made at all. The choice is set as `supersonic-upnp-renderer`, and
+saved to your `custom-file` only if you confirm.
+
+Most renderers hold only one track at a time, so the play queue is
+kept in Emacs, which polls the renderer every
+`supersonic-upnp-poll-interval` seconds and gives it the next track
+once one has ended. The queue therefore only moves on while Emacs
+is running.
+
+Renderers that can hold a next track (`SetNextAVTransportURI`) are
+given it as soon as the current one plays, and move on to it
+themselves, without waiting for a poll. Whether that is gapless is up
+to the renderer: some, such as LG webOS TVs, still pause briefly
+between tracks. Renderers without it are detected automatically and
+keep the poll-driven advance.
+
+A renderer fetches the audio itself, so it is handed the same stream
+URL mpv would play, plus a cover art URL for its display. With the
+`subsonic` provider, both URLs carry your Subsonic username and the
+non-expiring token derived from your password. They are sent:
+
+- to whichever device you select, without asking first,
+- in plain text over your LAN, since UPnP control is unencrypted
+  SOAP over HTTP,
+- to a device that may log or cache them.
+
+Anyone holding those URLs can use the Subsonic API as that user
+until the password changes. For casting, use a dedicated Subsonic
+user with as few privileges as possible (no admin, no settings or
+upload rights).
+
+The renderer also has to reach `supersonic-host` on its own: a
+`localhost` address, a VPN-only address or a reverse proxy with its
+own login will not work from the renderer. supersonic.el warns when the
+stream URL points at `localhost`.
+
+By default a renderer gets the same stream mpv would. Many cheap
+renderers cannot decode FLAC or Opus; for those, have the server
+transcode with `supersonic-upnp-stream-format`:
+
+```elisp
+(setq supersonic-upnp-stream-format '(:format "mp3" :max-bit-rate 320))
+```
+
+Before a renderer is given a track, supersonic.el asks the server
+whether it can serve parts of the stream, which is what a renderer
+needs to seek within it. A transcoded stream usually cannot be
+seeked: its length is not known until it has been transcoded.
+Navidrome, for one, serves it with seeking once it has been
+transcoded before and kept in its transcoding cache.
+
+## Music Assistant
+
+`supersonic-music-assistant.el` browses a
+[Music Assistant](https://www.music-assistant.io/) server instead of a
+Subsonic one: artists, albums, album lists, search, podcasts and cover
+art.
+
+Music Assistant plays on its own players and gives a client no URL to
+stream a whole track from, so neither mpv nor UPnP can play for it.
+Its only backend is the [Music Assistant player](#playing-on-a-music-assistant-player).
+
+### Connecting to Music Assistant
+
+The provider is opt-in:
+
+```elisp
+(use-package supersonic
+  :custom
+  (supersonic-provider 'music-assistant)
+  (supersonic-music-assistant-url "http://192.168.1.10:8095")
+  :config
+  (require 'supersonic-music-assistant))
+```
+
+It needs a long-lived token, created in Music Assistant's web UI under
+your profile, and a server with schema version 28 or later (see the
+server's `/info`). The token goes into your authinfo with the server's
+URL as the `machine`, matching `supersonic-music-assistant-url`
+exactly, as for Subsonic:
+
+    machine http://192.168.1.10:8095 password TOKEN
+
+It is sent in a request header only, never in a URL. Cover art comes
+from the server's image proxy, which needs no token, so none is sent
+with it. A server older than schema 31 does not tell its clients how
+to reach images through the proxy; there, only images with a public
+URL, such as podcast covers, are shown.
+
+Podcasts are whatever podcasts are in the server's library; subscribe
+to one in Music Assistant itself, since it has no equivalent of adding
+a feed by URL or downloading an episode. The transient hides those two
+commands while Music Assistant is the active provider.
+
+### Playing on a Music Assistant player
+
+`supersonic-music-assistant-player.el` plays on one of Music
+Assistant's players -- a speaker, a Chromecast, an AirPlay device, the
+web player in your browser -- the way the jukebox plays on a Subsonic
+server. It loads the provider too, so this replaces the `require`
+above:
+
+```elisp
+(use-package supersonic
+  :custom
+  (supersonic-provider 'music-assistant)
+  (supersonic-music-assistant-url "http://192.168.1.10:8095")
+  (supersonic-playback-backend 'music-assistant)
+  :config
+  (require 'supersonic-music-assistant-player))
+```
+
+Pick the player with `M-x supersonic-music-assistant-select-player`,
+which offers the server's players by name. The choice is set as
+`supersonic-music-assistant-player`, and saved for future sessions if
+you say so. Playing, enqueueing and the transport commands then drive
+that player's queue. The backend polls the queue every
+`supersonic-music-assistant-poll-interval` seconds, so the queue
+buffer, now-playing and MPRIS follow it, changes made from other Music
+Assistant clients included. As in Music Assistant's own clients,
+going to the previous track more than a few seconds into one starts
+that one over. Music Assistant keeps its own play history, so nothing
+is scrobbled.
+
+## Switching providers
+
+With Music Assistant loaded alongside the built-in Subsonic provider,
+`M-x supersonic-provider-switch` (`P` in the `supersonic` transient)
+switches between them. Playback stops. If the current playback backend
+cannot play for the new provider, the backend switches too: to the
+only one that can, or to the one you last used with that provider. It
+only asks when neither settles it, and declining then switches
+nothing. The open artist, album, track, search and podcast buffers
+belong to the old provider, so they are closed. The transient hides
+what the active provider cannot do.
+
+`M-x supersonic-playback-switch-backend` (`k` in the transient)
+switches the backend alone, offering only those that can play for the
+active provider.
+
+## Credentials in KeePassXC via Secret Service
+
+If you'd rather keep the Subsonic password or the Music Assistant
+token in KeePassXC than in an authinfo file, enable *Secret Service
+Integration* under `Tools -> Settings -> Secret Service Integration`
+and unlock the database. Then [tell](https://www.gnu.org/software/emacs/manual/html_node/auth/Secret-Service-API.html#Secret-Service-API-1) Emacs to also search that collection
+
+`auth-source`'s Secret Service backend only matches on an entry's
+custom *Attributes*, not on its regular URL/username fields, so add
+these on the `Advanced` tab of the entry:
+
+- `host` set to the same value as `supersonic-host` (with scheme, e.g.
+  `https://coolsupersonic.example.com`), or as
+  `supersonic-music-assistant-url` for a Music Assistant token
+- `user` set to your Subsonic username (not needed for Music
+  Assistant)
+
+The entry's regular password field is used as the secret.
+
+## Usage
+
+Everything below works the same with every provider and backend.
+
+### Play queue
 
 In the tracks and albums buffers, `RET` replaces the current play
 queue and starts playing immediately, while `a` adds to the play
@@ -54,10 +311,10 @@ to back:
 - Albums buffer: `RET` opens the album's track list; `a` adds the
   whole album to the play queue directly, without opening it.
 
-## Now playing
+### Now playing
 
 `N` in the `supersonic` transient (`supersonic-show-now-playing`) opens
-a buffer for the track mpv is currently on: cover art, title, artist,
+a buffer for the track currently playing: cover art, title, artist,
 album, format, duration and size, plus clickable playback controls.
 
 Keys in that buffer: `SPC` play/pause, `n`/`p` next/previous track,
@@ -103,12 +360,6 @@ whichever of them the library knows. A row of your own reads it with `plist-get`
              t)
 ```
 
-**Migrating custom functions:** before, these functions were handed the
-raw Subsonic `getSong` alist. They now get the plist above instead, so
-`(assoc-default "title" song)` becomes `(plist-get song :title)`, and
-the camel-cased keys become keywords: `"coverArt"` is `:art`,
-`"contentType"` is `:content-type`.
-
 By default the now-playing buffer opens in the selected window, replacing
 whatever was there. To keep it pinned in its own window instead, e.g. to
 browse albums or tracks alongside it as in the screenshot above, put it
@@ -126,13 +377,20 @@ in a side window via `display-buffer-alist`:
 right, leaving whichever list buffer you had open (artist albums, search
 results, ...) in place on the left.
 
-## Cover art
+**Migrating custom functions:** before, these functions were handed the
+raw Subsonic `getSong` alist. They now get the plist above instead, so
+`(assoc-default "title" song)` becomes `(plist-get song :title)`, and
+the camel-cased keys become keywords: `"coverArt"` is `:art`,
+`"contentType"` is `:content-type`.
+
+### Cover art
 
 Cover art is on by default (`supersonic-enable-art`) and needs a
-graphical frame to draw it in. Its size is set per view: `supersonic-list-art-size` 
-for the album and podcast lists, `supersonic-now-playing-art-size` here. 
+graphical frame to draw it in. Its size is set per view: `supersonic-list-art-size`
+for the album and podcast lists, `supersonic-now-playing-art-size` for
+the now-playing buffer.
 
-## MPRIS
+### MPRIS
 
 `supersonic-mpris.el` exposes supersonic.el's playback as an MPRIS
 player on the D-Bus session bus, so desktop environments and tools such
@@ -140,206 +398,9 @@ as `playerctl` can see and control it. It is not loaded or activated
 automatically, and supersonic.el has no dependency on it. Enable it
 explicitly:
 
-```
+```elisp
 (use-package supersonic
   :config
   (require 'supersonic-mpris)
   (supersonic-mpris-mode t))
 ```
-
-## Jukebox playback
-
-`supersonic-jukebox.el` plays back through the Subsonic server's own
-remote jukebox instead of a local mpv process, so tracks play out of 
-the server's own speakers. It is not loaded or activated automatically, 
-and supersonic.el has no dependency on it. Enable it explicitly and 
-select it as the active backend:
-
-```
-(use-package supersonic
-  :custom
-  (supersonic-playback-backend 'jukebox)
-  :config
-  (require 'supersonic-jukebox))
-```
-
-The jukebox only plays for the `subsonic` provider, since only a
-Subsonic server has a jukebox to control. With any other provider,
-playback commands report that the two do not fit, and
-`supersonic-playback-switch-backend` does not offer `jukebox`. mpv
-plays for any provider that can name a URL to stream from.
-
-## UPnP/DLNA playback
-
-`supersonic-upnp.el` plays to UPnP/DLNA renderers: AV receivers,
-network speakers, smart TVs. Like the jukebox, it is opt-in:
-
-```
-(use-package supersonic
-  :custom
-  (supersonic-playback-backend 'upnp)
-  :config
-  (require 'supersonic-upnp))
-```
-
-or `M-x supersonic-playback-switch-backend` once it is loaded. It
-plays for any provider that can name a URL to stream from.
-
-Most renderers hold only one track at a time, so the play queue is
-kept in Emacs, which polls the renderer every
-`supersonic-upnp-poll-interval` seconds and gives it the next track
-once one has ended. The queue therefore only moves on while Emacs
-is running.
-
-Renderers that can hold a next track (`SetNextAVTransportURI`) are
-given it as soon as the current one plays, and move on to it
-themselves, without waiting for a poll. Whether that is gapless is up
-to the renderer: some, such as LG webOS TVs, still pause briefly
-between tracks. Renderers without it are detected automatically and
-keep the poll-driven advance.
-
-To pick the renderer to play to, run
-`M-x supersonic-upnp-select-renderer`. It searches your LAN for
-renderers for a few seconds (`supersonic-upnp-discovery-timeout`) and
-offers them by name. If a renderer does not show up, for example
-because multicast does not reach it, enter the URL of its device
-description instead; with a prefix argument (`C-u`), no search is
-made at all. The choice is set as `supersonic-upnp-renderer`, and
-saved to your `custom-file` only if you confirm.
-
-A renderer fetches the audio itself, so it is handed the same stream
-URL mpv would play, plus a cover art URL for its display. With the
-`subsonic` provider, both URLs carry your Subsonic username and the
-non-expiring token derived from your password. They are sent:
-
-- to whichever device you select, without asking first,
-- in plain text over your LAN, since UPnP control is unencrypted
-  SOAP over HTTP,
-- to a device that may log or cache them.
-
-Anyone holding those URLs can use the Subsonic API as that user
-until the password changes. For casting, use a dedicated Subsonic
-user with as few privileges as possible (no admin, no settings or
-upload rights).
-
-The renderer also has to reach `supersonic-host` on its own: a
-`localhost` address, a VPN-only address or a reverse proxy with its
-own login will not work from the renderer. supersonic.el warns when the
-stream URL points at `localhost`.
-
-By default a renderer gets the same stream mpv would. Many cheap
-renderers cannot decode FLAC or Opus; for those, have the server
-transcode with `supersonic-upnp-stream-format`:
-
-```
-(setq supersonic-upnp-stream-format '(:format "mp3" :max-bit-rate 320))
-```
-
-Before a renderer is given a track, supersonic.el asks the server
-whether it can serve parts of the stream, which is what a renderer
-needs to seek within it. A transcoded stream usually cannot be
-seeked: its length is not known until it has been transcoded.
-Navidrome, for one, serves it with seeking once it has been
-transcoded before and kept in its transcoding cache.
-
-## Music Assistant
-
-`supersonic-music-assistant.el` browses a
-[Music Assistant](https://www.music-assistant.io/) server instead of a
-Subsonic one: artists, albums, album lists, search, podcasts and cover
-art. Like the jukebox, it is opt-in:
-
-```
-(use-package supersonic
-  :custom
-  (supersonic-provider 'music-assistant)
-  (supersonic-music-assistant-url "http://192.168.1.10:8095")
-  :config
-  (require 'supersonic-music-assistant))
-```
-
-It needs a long-lived token, created in Music Assistant's web UI under
-your profile, and a server with schema version 28 or later (see the
-server's `/info`). The token goes into your authinfo with the server's
-URL as the `machine`, matching `supersonic-music-assistant-url`
-exactly, as for Subsonic:
-
-    machine http://192.168.1.10:8095 password TOKEN
-
-It is sent in a request header only, never in a URL. Cover art comes
-from the server's image proxy, which needs no token, so none is sent
-with it. A server older than schema 31 does not tell its clients how
-to reach images through the proxy; there, only images with a public
-URL, such as podcast covers, are shown.
-
-Podcasts are whatever podcasts are in the server's library; subscribe
-to one in Music Assistant itself, since it has no equivalent of adding
-a feed by URL or downloading an episode.
-
-Music Assistant plays on its own players and gives a client no URL to
-stream a whole track from, so neither mpv nor UPnP can play for it.
-`supersonic-music-assistant-player.el` plays on one of those players
-instead -- a speaker, a Chromecast, an AirPlay device, the web player
-in your browser -- the way the jukebox plays on a Subsonic server. It
-loads the provider too:
-
-```
-(use-package supersonic
-  :custom
-  (supersonic-provider 'music-assistant)
-  (supersonic-music-assistant-url "http://192.168.1.10:8095")
-  (supersonic-playback-backend 'music-assistant)
-  :config
-  (require 'supersonic-music-assistant-player))
-```
-
-Pick the player with `M-x supersonic-music-assistant-select-player`,
-which offers the server's players by name. The choice is set as
-`supersonic-music-assistant-player`, and saved for future sessions if
-you say so. Playing, enqueueing and the transport commands then drive
-that player's queue. The backend polls the queue every
-`supersonic-music-assistant-poll-interval` seconds, so the queue
-buffer, now-playing and MPRIS follow it, changes made from other Music
-Assistant clients included. As in Music Assistant's own clients,
-going to the previous track more than a few seconds into one starts
-that one over. Music Assistant keeps its own play history, so nothing
-is scrobbled.
-
-With both providers loaded, `M-x supersonic-provider-switch` (`P` in
-the `supersonic` transient) switches between them. Playback stops. If
-the current playback backend cannot play for the new provider, the
-backend switches too: to the only one that can, or to the one you last
-used with that provider. It only asks when neither settles it, and
-declining then switches nothing. The open artist, album, track, search
-and podcast buffers belong to the old provider, so they are closed.
-The transient hides what the active provider cannot do. For Music
-Assistant, that means adding a podcast and downloading an episode.
-
-## Authentication
-
-Add a `~/.authinfo.gpg` or `~/.authinfo` file with the following contents
-
-    machine SUBSONIC_URL login USERNAME password PASSWORD
-
-`SUBSONIC_URL` is the URL of your server, e.g.
-`https://mysubsonicserver:4355` or `http://localhost:1234`.
-
-Make sure the `machine` field in your authinfo entry matches `supersonic-host` 
-exactly, scheme included.
-
-### KeePassXC via Secret Service
-
-If you'd rather keep the credentials in KeePassXC than in an
-authinfo file, enable *Secret Service Integration* under
-`Tools -> Settings -> Secret Service Integration` and unlock the
-database. Then [tell](https://www.gnu.org/software/emacs/manual/html_node/auth/Secret-Service-API.html#Secret-Service-API-1) Emacs to also search that collection
-
-`auth-source`'s Secret Service backend only matches on an entry's
-custom *Attributes*, not on its regular URL/username fields, so add
-these on the `Advanced` tab of the entry:
-
-- `host` set to the same value as `supersonic-host` (with scheme, e.g.
-  `https://coolsupersonic.example.com`)
-- `user` set to your subsonic username
-
-The entry's regular password field is used as the secret.
