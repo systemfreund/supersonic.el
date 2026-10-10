@@ -356,19 +356,20 @@ MA reports an unknown year, duration or track number as null or zero."
 
 (defun supersonic-music-assistant--image (data type)
   "Return the image of TYPE, e.g. \"thumb\", that MA item DATA shows, or nil.
-Looks where MA's own client does, in its `get_media_item_image': at
-the single image an item mapping carries, then at the album's image,
-so that a track shows its album's cover rather than art of its own,
-then at the item's own images, then at its artists' images.  A thumb
-not found there is made up for by a landscape image, looked for the
-same way -- at every level, so that an album with only a landscape
-image still wins over its artist's thumb."
+Looks at the item's own image first -- the single one an item mapping
+carries, then those in its metadata -- and only for an item without
+one at its album's image, then at its artists' images.  So a track
+with art of its own shows that, where MA's own client, in its
+`get_media_item_image', always prefers the album's.  A thumb not found
+there is made up for by a landscape image, looked for the same way --
+at every level, as the client does, so that an album with only a
+landscape image still wins over its artist's thumb."
   (and (consp data)
        (or (let ((image (assoc-default "image" data)))
              (and (consp image) (equal (assoc-default "type" image) type) image))
-           (supersonic-music-assistant--image (assoc-default "album" data) type)
            (seq-find (lambda (image) (equal (assoc-default "type" image) type))
                      (assoc-default "images" (assoc-default "metadata" data)))
+           (supersonic-music-assistant--image (assoc-default "album" data) type)
            (seq-some (lambda (artist) (supersonic-music-assistant--image artist type))
                      (assoc-default "artists" data))
            (and (equal type "thumb")

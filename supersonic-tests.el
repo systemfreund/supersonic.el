@@ -6805,24 +6805,26 @@ PATH, if given, is a public URL the image can also be fetched from."
     ("remotely_accessible" . ,(and path t))
     ("proxy_id" . ,proxy-id)))
 
-(ert-deftest supersonic-tests-ma-art-falls-back-the-way-the-client-does ()
-  "An item mapping's own image comes first, then the album's, so that a
-track shows its album's cover, then the item's own images, then its
-artists'; a landscape image stands in only for a missing thumb, at each
-level, so an album's landscape image beats its artist's thumb.  An item
-with no image gets no `:art' at all."
+(ert-deftest supersonic-tests-ma-art-prefers-the-items-own-image ()
+  "An item's own image comes first, an item mapping's before those in
+its metadata, so that a track with art of its own shows that; only an
+item without one falls back to its album's image, then its artists'.
+A landscape image stands in only for a missing thumb, at each level,
+so an album's landscape image beats its artist's thumb.  An item with
+no image gets no `:art' at all."
   (let ((own `(("images" ,(supersonic-tests--ma-image "own"))))
         (artists `((("uri" . "library://artist/1")
                     ("metadata" ("images" ,(supersonic-tests--ma-image "artist")))))))
     (should (equal "/imageproxy/mapping"
                    (supersonic-music-assistant--art
                     `(("image" . ,(supersonic-tests--ma-image "mapping")) ("metadata" ,@own)))))
-    (should (equal "/imageproxy/album"
-                   (supersonic-music-assistant--art
-                    `(("album" ("image" . ,(supersonic-tests--ma-image "album"))) ("metadata" ,@own)))))
     (should (equal "/imageproxy/own"
                    (supersonic-music-assistant--art
-                    `(("album" ("image")) ("metadata" ,@own) ("artists" ,@artists)))))
+                    `(("album" ("image" . ,(supersonic-tests--ma-image "album"))) ("metadata" ,@own)))))
+    (should (equal "/imageproxy/album"
+                   (supersonic-music-assistant--art
+                    `(("album" ("image" . ,(supersonic-tests--ma-image "album")))
+                      ("metadata" ("images")) ("artists" ,@artists)))))
     (should (equal "/imageproxy/artist"
                    (supersonic-music-assistant--art `(("metadata" ("images")) ("artists" ,@artists)))))
     (should (equal "/imageproxy/wide"
