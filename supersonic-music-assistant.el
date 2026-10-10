@@ -112,18 +112,22 @@ provider's backend plays an album as its tracks anyway.
 `supersonic-music-assistant--recent-albums' derives that list from
 the tracks in `music/recently_played_items' instead.")
 
-(defconst supersonic-music-assistant--recent-lookups 10
+(defvar supersonic-music-assistant--recent-lookups 10
   "How many tracks of the play history to look up at once.
 Each lookup is a request of its own, so the recent albums are looked
 up this many at a time rather than one after the other.")
 
-(defconst supersonic-music-assistant--recent-history-factor 16
-  "The most history tracks to ask for per album wanted, before giving up.
+(defvar supersonic-music-assistant--recent-history-start 4
+  "How many history tracks to ask for per album wanted, at first.
 Tracks of the same album follow each other in the history, so it takes
-several to find each album: the history is asked for 4 per album
-first, then twice as many each time albums are still missing, up to
-this many.  It caps the lookups listing the recent albums makes when
-the history has few albums.")
+several to find each album.  While albums are still missing, the
+history is asked again for twice as many, up to
+`supersonic-music-assistant--recent-history-factor' per album.")
+
+(defvar supersonic-music-assistant--recent-history-factor 16
+  "The most history tracks to ask for per album wanted, before giving up.
+Caps the lookups listing the recent albums makes when the history has
+few albums; see `supersonic-music-assistant--recent-history-start'.")
 
 (defvar supersonic-music-assistant--clock-offset 0
   "Seconds the local clock runs ahead of the server's, as last estimated.
@@ -551,12 +555,11 @@ already looked up are skipped -- until it is exhausted, or
 `supersonic-music-assistant--recent-history-factor' tracks per album
 have been asked for."
  (let ((connection (supersonic-music-assistant--connection))
-       (limit (* 4 count))
+       (limit (* supersonic-music-assistant--recent-history-start count))
        (max-limit (* supersonic-music-assistant--recent-history-factor count))
-       (seen 0)
-       (uris nil)
+       (skip 0)
        (albums nil)
-       (resolved nil)
+       (any-resolved nil)
        (failure nil)
        (done (< count 1)))
    (while (not done)
@@ -568,7 +571,7 @@ have been asked for."
                      (lambda (item)
                        (and (equal (assoc-default "media_type" item) "track")
                             (stringp (assoc-default "uri" item))))
-                     (nthcdr seen history))))
+                     (nthcdr skip history))))
        (while (and tracks (< (length albums) count))
          (let ((lookups
                 (mapcar (lambda (track)
@@ -582,20 +585,20 @@ have been asked for."
              (pcase (aio-await lookup)
                (`(:error . ,err) (unless failure (setq failure err)))
                (`(:success . ,track)
-                (setq resolved t)
+                (setq any-resolved t)
                 (let* ((album (and (consp track) (assoc-default "album" track)))
                        (uri (and (consp album) (assoc-default "uri" album))))
                   (when (and (stringp uri)
-                             (not (member uri uris))
-                             (< (length albums) count))
-                    (push uri uris)
+                             (< (length albums) count)
+                             (not (seq-find (lambda (seen) (equal uri (assoc-default "uri" seen)))
+                                            albums)))
                     (push album albums))))))))
-       (setq seen (length history))
+       (setq skip (length history))
        (setq done (or (>= (length albums) count)
                       (< (length history) limit)
                       (>= limit max-limit)))
        (setq limit (min (* 2 limit) max-limit))))
-   (when (and failure (not resolved))
+   (when (and failure (not any-resolved))
      (signal (car failure) (cdr failure)))
    (nreverse albums)))
 

@@ -6661,11 +6661,20 @@ ALBUM-LESS.  Anything else as `supersonic-tests--ma-library'."
                             (assoc-default uri tracks)))))))
           (_ (supersonic-tests--ma-library request)))))))
 
+(defun supersonic-tests--ma-sent (command)
+  "Return the args of each COMMAND the fake server received, in order."
+  (mapcar #'cdr (seq-filter (lambda (sent) (equal command (car sent)))
+                            (supersonic-tests--ma-commands))))
+
 (defun supersonic-tests--ma-looked-up ()
   "Return the URIs the fake server was asked for by `music/item_by_uri', in order."
-  (mapcar (lambda (request) (assoc-default "uri" (supersonic-tests--ma-args request)))
-          (seq-filter (lambda (request) (equal "music/item_by_uri" (supersonic-tests--ma-command request)))
-                      (reverse supersonic-tests--ma-requests))))
+  (mapcar (lambda (args) (assoc-default "uri" args))
+          (supersonic-tests--ma-sent "music/item_by_uri")))
+
+(defun supersonic-tests--ma-recent-ids (count)
+  "Return the ids of the at most COUNT recent albums listed."
+  (mapcar (lambda (album) (plist-get album :id))
+          (aio-wait-for (supersonic-provider-album-list 'recent count))))
 
 (ert-deftest supersonic-tests-ma-recent-albums-come-from-the-track-history ()
   "The recent album list is the albums of the tracks last played, most
@@ -6678,12 +6687,8 @@ recent first, each once -- MA's own album URIs, a provider's included."
       (should (equal '("Even Angels Cast Shadows" "Omni Trio" 2001)
                      (mapcar (lambda (key) (plist-get (nth 1 albums) key)) '(:name :artist :year))))
       (should (string-prefix-p "/imageproxy/" (plist-get (nth 1 albums) :art)))
-      (let ((history (seq-filter (lambda (request)
-                                   (equal "music/recently_played_items" (supersonic-tests--ma-command request)))
-                                 supersonic-tests--ma-requests)))
-        (should (= 1 (length history)))
-        (should (equal '(("limit" . 200) ("media_types" "track"))
-                       (supersonic-tests--ma-args (car history)))))
+      (should (equal '((("limit" . 200) ("media_types" "track")))
+                     (supersonic-tests--ma-sent "music/recently_played_items")))
       (should (= 6 (length (supersonic-tests--ma-looked-up)))))))
 
 (ert-deftest supersonic-tests-ma-recent-albums-stop-at-count ()
@@ -6692,8 +6697,7 @@ once they are found than the batch they turn up in."
   (let ((supersonic-music-assistant--recent-lookups 2))
     (supersonic-tests--with-ma-server (supersonic-tests--ma-recent-history)
       (should (equal '("spotify--gXgn7uqw://album/6G3VTaCeobzyhyFrqYli0y" "library://album/537")
-                     (mapcar (lambda (album) (plist-get album :id))
-                             (aio-wait-for (supersonic-provider-album-list 'recent 2)))))
+                     (supersonic-tests--ma-recent-ids 2)))
       (should (equal '("spotify--gXgn7uqw://track/6v7hCIRoJkuYShT0wls1gD"
                        "spotify--gXgn7uqw://track/7GHav5LtQ83HBHn9f1ku9j"
                        "library://track/5523" "library://track/5524")
@@ -6707,12 +6711,12 @@ album still shows if another track of it resolves."
        '("library://track/669" "spotify--gXgn7uqw://track/6v7hCIRoJkuYShT0wls1gD")
        '("library://track/5523"))
     (should (equal '("spotify--gXgn7uqw://album/6G3VTaCeobzyhyFrqYli0y" "library://album/537" "library://album/8")
-                   (mapcar (lambda (album) (plist-get album :id))
-                           (aio-wait-for (supersonic-provider-album-list 'recent 50)))))))
+                   (supersonic-tests--ma-recent-ids 50)))))
 
 (ert-deftest supersonic-tests-ma-recent-albums-report-every-lookup-failing ()
   "When every lookup fails, the failure is reported rather than an
-empty list that passes for an empty history."
+empty list that passes for an empty history -- a deliberate departure
+from #90, which only says to skip a track whose lookup fails."
   (let ((all '("spotify--gXgn7uqw://track/6v7hCIRoJkuYShT0wls1gD"
                "spotify--gXgn7uqw://track/7GHav5LtQ83HBHn9f1ku9j"
                "library://track/5523" "library://track/5524"
@@ -6743,13 +6747,10 @@ until it comes back short, or has been asked for its maximum."
                  "library://track/5523" "library://track/5524")))
     (supersonic-tests--with-ma-server (supersonic-tests--ma-recent-history stale)
       (should (equal '("library://album/72")
-                     (mapcar (lambda (album) (plist-get album :id))
-                             (aio-wait-for (supersonic-provider-album-list 'recent 1)))))
+                     (supersonic-tests--ma-recent-ids 1)))
       (should (equal '(4 8)
-                     (mapcar (lambda (request) (assoc-default "limit" (supersonic-tests--ma-args request)))
-                             (seq-filter (lambda (request)
-                                           (equal "music/recently_played_items" (supersonic-tests--ma-command request)))
-                                         (reverse supersonic-tests--ma-requests)))))
+                     (mapcar (lambda (args) (assoc-default "limit" args))
+                             (supersonic-tests--ma-sent "music/recently_played_items"))))
       (should (equal (append stale '("library://track/669" "library://track/76"))
                      (supersonic-tests--ma-looked-up))))
     (let ((supersonic-music-assistant--recent-history-factor 4))
