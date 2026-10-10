@@ -1,0 +1,49 @@
+[
+ {
+  "item_id": "1",
+  "provider": "library",
+  "name": "Was jetzt?",
+  "version": "",
+  "sort_name": "was jetzt?",
+  "uri": "library://podcast/1",
+  "external_ids": [],
+  "is_playable": true,
+  "media_type": "podcast",
+  "provider_mappings": [
+   {
+    "item_id": "https://feeds.simplecast.com/Xtqjn37O",
+    "provider_domain": "itunes_podcasts",
+    "provider_instance": "itunes_podcasts",
+    "available": true,
+    "in_library": true,
+    "is_unique": null,
+    "audio_format": {
+     "content_type": "?",
+     "codec_type": "?",
+     "sample_rate": 44100,
+     "bit_depth": 16,
+     "channels": 2,
+     "output_format_str": "?",
+     "bit_rate": 0
+    },
+    "url": null,
+    "details": null
+   }
+  ],
+  "metadata": {
+   "images": [
+    {
+     "type": "thumb",
+     "path": "https://image.simplecastcdn.com/images/a285da86-7be8-4859-bbb0-60bbf28425fb/65048a91-94b0-4a3d-9ca2-e54897c2aae0/3000x3000/was-jetzt.jpg?aid=rss_feed",
+     "provider": "itunes_podcasts",
+     "remotely_accessible": true,
+     "proxy_id": "635f61636d60ac925d8f707609f07eb400ecda2cae80c3e297d496a3e0e65d89"
+    }
+   ]
+  },
+  "favorite": true,
+  "publisher": "DIE ZEIT",
+  "total_episodes": 2000,
+  "available": true
+ }
+]
