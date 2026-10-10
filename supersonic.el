@@ -71,12 +71,6 @@ track starting or ending."
     (when buff
       (supersonic-queue-fetch-and-render buff))))
 
-(defun supersonic-queue--resolved (value)
-  "Return a promise already resolved to VALUE."
-  (let ((promise (aio-promise)))
-    (aio-resolve promise (lambda () value))
-    promise))
-
 (aio-defun
  supersonic-queue-parse (entries)
  "Turn ENTRIES, as resolved by `supersonic-playback-queue', into
@@ -91,21 +85,19 @@ aborting the whole render."
           (lambda (entry index)
             (let ((track-id (plist-get entry :track-id)))
               (list
-               index track-id (plist-get entry :current)
-               (cond
-                ((plist-get entry :track)
-                 (supersonic-queue--resolved (cons :success (plist-get entry :track))))
-                (track-id
-                 (aio-catch (supersonic-provider-track track-id)))))))
+               index track-id (plist-get entry :current) (plist-get entry :track)
+               (and track-id
+                    (not (plist-get entry :track))
+                    (aio-catch (supersonic-provider-track track-id))))))
           entries)))
    ;; A plain `mapcar' lambda would call `aio-await' through an ordinary `funcall', outside of this function's own
    ;; generator machinery, which `generator.el' cannot transform -- so this collects results via a `dolist', which
    ;; (like `while') stays inline and awaits correctly.
    (let (rows)
      (dolist (item pending)
-       (pcase-let ((`(,index ,track-id ,current ,promise) item))
+       (pcase-let ((`(,index ,track-id ,current ,brought ,promise) item))
          (let* ((outcome (and promise (aio-await promise)))
-                (track (and outcome (eq (car outcome) :success) (cdr outcome))))
+                (track (or brought (and outcome (eq (car outcome) :success) (cdr outcome)))))
            (push (list
                   ;; A missing track id would only happen if a backend handed back an entry it could not resolve;
                   ;; fall back to the entry's position so the row still gets a usable, if display-only, id.

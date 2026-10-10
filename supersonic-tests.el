@@ -7038,7 +7038,8 @@ and its position, without a request of its own."
 
 (ert-deftest supersonic-tests-ma-player-asks-for-entries-only-when-they-may-have-changed ()
   "The queue's entries are asked for again only once the queue's count,
-current or next entry says they may have changed."
+current or next entry says they may have changed, or once they are
+`supersonic-music-assistant-player--items-max-age' seconds old."
   (supersonic-tests--with-ma-player
     (supersonic-tests--ma-set-queue "playing" '("library://track/1" "library://track/2"))
     (supersonic-tests--resolve (supersonic-music-assistant-player--poll))
@@ -7050,7 +7051,21 @@ current or next entry says they may have changed."
     (supersonic-tests--resolve (supersonic-music-assistant-player--poll))
     (should (equal '("player_queues/get" "player_queues/items") (supersonic-tests--ma-command-names)))
     (should (equal "library://track/2"
-                   (supersonic-tests--resolve (supersonic-music-assistant-player-status 'track-id))))))
+                   (supersonic-tests--resolve (supersonic-music-assistant-player-status 'track-id))))
+    ;; What the key cannot tell, an entry moved by another client, still
+    ;; shows once the entries are old enough to be asked for regardless.
+    (setq supersonic-tests--ma-requests nil)
+    (cl-incf supersonic-tests--ma-clock (1- supersonic-music-assistant-player--items-max-age))
+    (supersonic-tests--resolve (supersonic-music-assistant-player--poll))
+    (should (equal '("player_queues/get") (supersonic-tests--ma-command-names)))
+    (setq supersonic-tests--ma-queue-entries '("library://track/2" "library://track/1"))
+    (cl-incf supersonic-tests--ma-clock 1)
+    (supersonic-tests--resolve (supersonic-music-assistant-player--poll))
+    (should (equal '("player_queues/get" "player_queues/get" "player_queues/items")
+                   (supersonic-tests--ma-command-names)))
+    (should (equal '("library://track/2" "library://track/1")
+                   (mapcar (lambda (entry) (plist-get entry :track-id))
+                           (supersonic-tests--resolve (supersonic-music-assistant-player-queue)))))))
 
 (ert-deftest supersonic-tests-ma-player-position-counts-on-from-the-server-timestamp ()
   "While playing, the position counts on from when the server last
@@ -7112,11 +7127,13 @@ once for both."
 
 (ert-deftest supersonic-tests-ma-player-seek-needs-a-position ()
   "Seeking by an offset before any poll found a position is refused,
-rather than counted from the start of the entry."
+rather than counted from the start of the entry; so is seeking to a
+fraction of a duration no poll found."
   (supersonic-tests--with-ma-player
     (cl-letf (((symbol-function 'supersonic-music-assistant-player--seek-to)
                (lambda (&rest _) (ert-fail "Sought without a position"))))
-      (should-error (supersonic-music-assistant-player-seek 10) :type 'user-error))))
+      (should-error (supersonic-music-assistant-player-seek 10) :type 'user-error)
+      (should-error (supersonic-music-assistant-player-seek-fraction 0.5) :type 'user-error))))
 
 (ert-deftest supersonic-tests-ma-player-operations-send-their-commands ()
   "Each playing operation runs its queue command on the selected player:

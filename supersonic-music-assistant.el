@@ -316,8 +316,9 @@ only the one command, over a connection settled as it is called."
 (aio-defun
  supersonic-music-assistant--all-items (command &optional args connection)
  "Return a promise resolving to every item a `library_items' COMMAND lists.
-Asks with ARGS a page at a time, until a page comes back short, over
-CONNECTION, or one settled as it is called."
+Asks with ARGS a page at a time until a page comes back short.  Over
+CONNECTION if given, as `supersonic-music-assistant--connection'
+returns it, or else over a connection settled as it is called."
  (let ((connection (or connection (supersonic-music-assistant--connection)))
        (offset 0)
        (items nil)
