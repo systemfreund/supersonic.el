@@ -219,6 +219,9 @@ exactly, as for Subsonic:
 
     machine http://192.168.1.10:8095 password TOKEN
 
+To keep the token in KeePassXC instead, see
+[below](#credentials-in-keepassxc-via-secret-service).
+
 It is sent in a request header only, never in a URL. Cover art comes
 from the server's image proxy, which needs no token, so none is sent
 with it. A server older than schema 31 does not tell its clients how
