@@ -98,16 +98,23 @@ asked once per server rather than before every request.")
 ;;; Transport
 ;;;
 
+(defun supersonic-music-assistant--require-url ()
+  "Signal a `user-error' unless `supersonic-music-assistant-url' is set."
+  (when (string-empty-p (or supersonic-music-assistant-url ""))
+    (user-error "Set `supersonic-music-assistant-url' to your Music Assistant server, e.g. http://host:8095")))
+
 (defun supersonic-music-assistant--url (path)
   "Return the URL of PATH on the server at `supersonic-music-assistant-url'."
-  (when (string-empty-p (or supersonic-music-assistant-url ""))
-    (user-error "Set `supersonic-music-assistant-url' to your Music Assistant server, e.g. http://host:8095"))
+  (supersonic-music-assistant--require-url)
   (concat (string-remove-suffix "/" supersonic-music-assistant-url) path))
 
 (defun supersonic-music-assistant--token ()
   "Return the token auth-source has for `supersonic-music-assistant-url'.
 Looked up afresh on every call, as `supersonic-auth' does, so that a
-corrected entry takes effect once auth-source's cache is forgotten."
+corrected entry takes effect once auth-source's cache is forgotten.
+Never asks for a nil or empty host, which would match any entry -- a
+Subsonic password included."
+  (supersonic-music-assistant--require-url)
   (let ((secret (plist-get (car (auth-source-search :host supersonic-music-assistant-url :require '(:secret)))
                            :secret)))
     (unless secret
@@ -196,13 +203,19 @@ than `supersonic-music-assistant-min-schema'."
  "Return a promise resolving to the result of running COMMAND with ARGS.
 COMMAND is an MA API command such as \"music/search\"; ARGS is an alist
 of its arguments, keyed by strings, with t and `:json-false' for the
-booleans and vectors for the arrays."
- (aio-await (supersonic-music-assistant--check-server))
- (aio-await
-  (supersonic-music-assistant--fetch
-   (supersonic-music-assistant--url "/api")
-   (json-encode `(("command" . ,command) ("args" . ,(or args (make-hash-table)))))
-   (supersonic-music-assistant--token))))
+booleans and vectors for the arrays.
+
+The URL and the token are settled before the first `aio-await', while
+the command that asked is still running, as for Subsonic: a missing
+one is reported right away, and anything auth-source asks of the
+user -- a GnuPG passphrase, unlocking a Secret Service collection --
+is asked then rather than later from a timer."
+ (let ((url (supersonic-music-assistant--url "/api"))
+       (token (supersonic-music-assistant--token)))
+   (aio-await (supersonic-music-assistant--check-server))
+   (aio-await
+    (supersonic-music-assistant--fetch
+     url (json-encode `(("command" . ,command) ("args" . ,(or args (make-hash-table))))) token))))
 
 (defun supersonic-music-assistant--split-uri (uri)
   "Return the provider and item id of MA item URI, as (PROVIDER . ITEM-ID).

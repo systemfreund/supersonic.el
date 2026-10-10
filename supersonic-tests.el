@@ -6480,6 +6480,46 @@ the token, and only once per server."
     (dolist (request supersonic-tests--ma-requests)
       (should-not (string-match-p "secret-token" (plist-get request :url))))))
 
+(defun supersonic-tests--ma-failure (operation)
+  "Return the error OPERATION's promise rejects with, or nil if it resolves."
+  (condition-case err
+      (progn (aio-wait-for (funcall operation)) nil)
+    (error err)))
+
+(defmacro supersonic-tests--counting-auth-lookups (counter &rest body)
+  "Run BODY counting calls of `auth-source-search' in the variable COUNTER.
+Calls still go on to whatever `auth-source-search' was before."
+  (declare (indent 1))
+  (let ((original (make-symbol "original")))
+    `(let ((,original (symbol-function 'auth-source-search)))
+       (cl-letf (((symbol-function 'auth-source-search)
+                  (lambda (&rest spec)
+                    (setq ,counter (1+ ,counter))
+                    (apply ,original spec))))
+         ,@body))))
+
+(ert-deftest supersonic-tests-ma-reads-the-token-while-the-command-runs ()
+  "The token is looked up as the operation is called, not later from a
+timer, so that anything auth-source asks of the user is asked by the
+command the user just ran."
+  (supersonic-tests--with-ma-server #'supersonic-tests--ma-library
+    (let ((lookups 0))
+      (supersonic-tests--counting-auth-lookups lookups
+        (let ((promise (supersonic-provider-track "library://track/7131")))
+          (should (= 1 lookups))
+          (aio-wait-for promise))))))
+
+(ert-deftest supersonic-tests-ma-never-looks-up-a-token-without-a-url ()
+  "Without `supersonic-music-assistant-url' auth-source is not asked at
+all: a lookup for a nil host would match any entry."
+  (supersonic-tests--with-ma-server #'supersonic-tests--ma-library
+    (let ((supersonic-music-assistant-url nil)
+          (lookups 0))
+      (supersonic-tests--counting-auth-lookups lookups
+        (should (eq 'user-error (car (supersonic-tests--ma-failure #'supersonic-provider-artists))))
+        (should-error (supersonic-music-assistant--token) :type 'user-error))
+      (should (= 0 lookups)))))
+
 (ert-deftest supersonic-tests-ma-maps-items-to-provider-vocabulary ()
   "Captured MA items become facade plists keyed by their URI, with
 every artist named, and nothing for what the server does not know."
@@ -6565,12 +6605,6 @@ sent is exactly the part of the URI after its media type."
       (aio-wait-for (supersonic-provider-album-tracks uri))
       (should (equal '(("item_id" . "A: B/C") ("provider_instance_id_or_domain" . "filesystem_local--x"))
                      (supersonic-tests--ma-args (car supersonic-tests--ma-requests)))))))
-
-(defun supersonic-tests--ma-failure (operation)
-  "Return the error OPERATION's promise rejects with, or nil if it resolves."
-  (condition-case err
-      (progn (aio-wait-for (funcall operation)) nil)
-    (error err)))
 
 (ert-deftest supersonic-tests-ma-rejects-an-old-server-before-sending-the-token ()
   "A server older than schema 28 is a `user-error', and is never sent
