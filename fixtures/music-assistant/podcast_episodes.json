@@ -1,0 +1,284 @@
+[
+ {
+  "item_id": "https://feeds.simplecast.com/Xtqjn37O 1e8a293c-1bc1-4dd3-8fe8-a615a65e36a1",
+  "provider": "itunes_podcasts",
+  "name": "Vom Wunderkind zur Selbstverzwergung: Wo steht VW in 10 Jahren?",
+  "version": "",
+  "sort_name": "vom wunderkind zur selbstverzwergung: wo steht vw in 10 jahren?",
+  "uri": "itunes_podcasts://podcast_episode/https://feeds.simplecast.com/Xtqjn37O 1e8a293c-1bc1-4dd3-8fe8-a615a65e36a1",
+  "external_ids": [],
+  "is_playable": true,
+  "media_type": "podcast_episode",
+  "provider_mappings": [
+   {
+    "item_id": "https://feeds.simplecast.com/Xtqjn37O 1e8a293c-1bc1-4dd3-8fe8-a615a65e36a1",
+    "provider_domain": "itunes_podcasts",
+    "provider_instance": "itunes_podcasts",
+    "available": true,
+    "in_library": null,
+    "is_unique": null,
+    "audio_format": {
+     "content_type": "?",
+     "codec_type": "?",
+     "sample_rate": 44100,
+     "bit_depth": 16,
+     "channels": 2,
+     "output_format_str": "?",
+     "bit_rate": 0
+    },
+    "url": "https://zeitonline.simplecastaudio.com/b4b9795f-4b37-4d4f-bbfe-62b735703af8/episodes/09e1dac1-c3c3-4b50-bb11-f1cfbfe062b2/audio/128/default.mp3?aid=rss_feed&awCollectionId=b4b9795f-4b37-4d4f-bbfe-62b735703af8&awEpisodeId=09e1dac1-c3c3-4b50-bb11-f1cfbfe062b2&feed=Xtqjn37O",
+    "details": null
+   }
+  ],
+  "metadata": {
+   "description": "Der VW-Konzern steckt in der Krise. Wie wahrscheinlich ist eine Insolvenz? Und: Welche drastischen Auswirkungen die Lachszucht weltweit hat.",
+   "description_language": null,
+   "life_span": null,
+   "artist_entity_type": null,
+   "review": null,
+   "explicit": false,
+   "images": [
+    {
+     "type": "thumb",
+     "path": "https://image.simplecastcdn.com/images/192dd376-2cbe-4132-ac03-0cbe90405d13/2f836546-a5ef-47a6-a4fe-fecf9534f138/3000x3000/cropped_1791552022659.jpg?aid=rss_feed",
+     "provider": "itunes_podcasts",
+     "remotely_accessible": true,
+     "proxy_id": "c7965cc095896103fd864893969f2a4986cbe80f16308a3835d4cc22b104d73e"
+    }
+   ],
+   "grouping": null,
+   "genres": null,
+   "mood": null,
+   "style": null,
+   "copyright": null,
+   "lyrics": null,
+   "lrc_lyrics": null,
+   "transcript": null,
+   "transcript_cues": null,
+   "has_transcript": null,
+   "label": null,
+   "links": [
+    {
+     "type": "website",
+     "url": "https://www.zeit.de/was-jetzt"
+    }
+   ],
+   "performers": null,
+   "preview": null,
+   "popularity": null,
+   "release_date": "2026-10-10T03:55:00+00:00",
+   "languages": null,
+   "chapters": null,
+   "collections": null,
+   "last_refresh": null
+  },
+  "favorite": false,
+  "position": 2000,
+  "date_added": null,
+  "podcast": {
+   "item_id": "https://feeds.simplecast.com/Xtqjn37O",
+   "provider": "itunes_podcasts",
+   "name": "Was jetzt?",
+   "version": "",
+   "sort_name": "was jetzt?",
+   "uri": "itunes_podcasts://podcast/https://feeds.simplecast.com/Xtqjn37O",
+   "external_ids": [],
+   "is_playable": true,
+   "media_type": "podcast",
+   "available": true,
+   "image": null,
+   "year": null
+  },
+  "duration": 722,
+  "fully_played": null,
+  "resume_position_ms": null
+ },
+ {
+  "item_id": "https://feeds.simplecast.com/Xtqjn37O dc08c837-a3b7-4331-b6c7-172f27bb7877",
+  "provider": "itunes_podcasts",
+  "name": "CDU in Sachsen-Anhalt: Und niemand will es gewesen sein",
+  "version": "",
+  "sort_name": "cdu in sachsen-anhalt: und niemand will es gewesen sein",
+  "uri": "itunes_podcasts://podcast_episode/https://feeds.simplecast.com/Xtqjn37O dc08c837-a3b7-4331-b6c7-172f27bb7877",
+  "external_ids": [],
+  "is_playable": true,
+  "media_type": "podcast_episode",
+  "provider_mappings": [
+   {
+    "item_id": "https://feeds.simplecast.com/Xtqjn37O dc08c837-a3b7-4331-b6c7-172f27bb7877",
+    "provider_domain": "itunes_podcasts",
+    "provider_instance": "itunes_podcasts",
+    "available": true,
+    "in_library": null,
+    "is_unique": null,
+    "audio_format": {
+     "content_type": "?",
+     "codec_type": "?",
+     "sample_rate": 44100,
+     "bit_depth": 16,
+     "channels": 2,
+     "output_format_str": "?",
+     "bit_rate": 0
+    },
+    "url": "https://zeitonline.simplecastaudio.com/b4b9795f-4b37-4d4f-bbfe-62b735703af8/episodes/0dc190a4-99ca-4a85-a009-6849e040b81c/audio/128/default.mp3?aid=rss_feed&awCollectionId=b4b9795f-4b37-4d4f-bbfe-62b735703af8&awEpisodeId=0dc190a4-99ca-4a85-a009-6849e040b81c&feed=Xtqjn37O",
+    "details": null
+   }
+  ],
+  "metadata": {
+   "description": "Die Wahl von AfD-Mann Tobias Rausch sorgt f\u00fcr immer mehr Streit bei der CDU in Sachsen-Anhalt. Droht ihr die Spaltung? Und: der Friedensnobelpreis f\u00fcr Navi Pillay",
+   "description_language": null,
+   "life_span": null,
+   "artist_entity_type": null,
+   "review": null,
+   "explicit": false,
+   "images": [
+    {
+     "type": "thumb",
+     "path": "https://image.simplecastcdn.com/images/8f342496-3aef-45d9-aac3-7a8f7b8e1b7f/0bd819c0-8e3d-4c1f-8720-1904cf4dfa06/3000x3000/cropped_1791550175231.jpg?aid=rss_feed",
+     "provider": "itunes_podcasts",
+     "remotely_accessible": true,
+     "proxy_id": "c84e2567db25f6beafddbcce69bf1e83f88cf880f17aad48509d2dc3b3446a0f"
+    }
+   ],
+   "grouping": null,
+   "genres": null,
+   "mood": null,
+   "style": null,
+   "copyright": null,
+   "lyrics": null,
+   "lrc_lyrics": null,
+   "transcript": null,
+   "transcript_cues": null,
+   "has_transcript": null,
+   "label": null,
+   "links": [
+    {
+     "type": "website",
+     "url": "https://www.zeit.de/was-jetzt"
+    }
+   ],
+   "performers": null,
+   "preview": null,
+   "popularity": null,
+   "release_date": "2026-10-09T15:06:43+00:00",
+   "languages": null,
+   "chapters": null,
+   "collections": null,
+   "last_refresh": null
+  },
+  "favorite": false,
+  "position": 1999,
+  "date_added": null,
+  "podcast": {
+   "item_id": "https://feeds.simplecast.com/Xtqjn37O",
+   "provider": "itunes_podcasts",
+   "name": "Was jetzt?",
+   "version": "",
+   "sort_name": "was jetzt?",
+   "uri": "itunes_podcasts://podcast/https://feeds.simplecast.com/Xtqjn37O",
+   "external_ids": [],
+   "is_playable": true,
+   "media_type": "podcast",
+   "available": true,
+   "image": null,
+   "year": null
+  },
+  "duration": 646,
+  "fully_played": null,
+  "resume_position_ms": null
+ },
+ {
+  "item_id": "https://feeds.simplecast.com/Xtqjn37O fa6c91e4-8b48-499c-b24e-7e996572c878",
+  "provider": "itunes_podcasts",
+  "name": "Wie kontrolliert man einen Geheimdienst?",
+  "version": "",
+  "sort_name": "wie kontrolliert man einen geheimdienst?",
+  "uri": "itunes_podcasts://podcast_episode/https://feeds.simplecast.com/Xtqjn37O fa6c91e4-8b48-499c-b24e-7e996572c878",
+  "external_ids": [],
+  "is_playable": true,
+  "media_type": "podcast_episode",
+  "provider_mappings": [
+   {
+    "item_id": "https://feeds.simplecast.com/Xtqjn37O fa6c91e4-8b48-499c-b24e-7e996572c878",
+    "provider_domain": "itunes_podcasts",
+    "provider_instance": "itunes_podcasts",
+    "available": true,
+    "in_library": null,
+    "is_unique": null,
+    "audio_format": {
+     "content_type": "?",
+     "codec_type": "?",
+     "sample_rate": 44100,
+     "bit_depth": 16,
+     "channels": 2,
+     "output_format_str": "?",
+     "bit_rate": 0
+    },
+    "url": "https://zeitonline.simplecastaudio.com/b4b9795f-4b37-4d4f-bbfe-62b735703af8/episodes/ec266392-b6f3-4e70-9ec7-cc064cd52654/audio/128/default.mp3?aid=rss_feed&awCollectionId=b4b9795f-4b37-4d4f-bbfe-62b735703af8&awEpisodeId=ec266392-b6f3-4e70-9ec7-cc064cd52654&feed=Xtqjn37O",
+    "details": null
+   }
+  ],
+  "metadata": {
+   "description": "Der ehemalige BND-Chef August Hanning sitzt wegen Spionageverdachts in Haft. Welche Folgen hat der mutma\u00dfliche Skandal f\u00fcr den Geheimdienst? Und: Wie geht es den Menschen in Gaza?",
+   "description_language": null,
+   "life_span": null,
+   "artist_entity_type": null,
+   "review": null,
+   "explicit": false,
+   "images": [
+    {
+     "type": "thumb",
+     "path": "https://image.simplecastcdn.com/images/ef5ac146-2890-4e88-a1ce-1bcc838e19d3/347a2066-d65f-4709-8943-6a3ef4f6bd61/3000x3000/cropped_1791469911187.jpg?aid=rss_feed",
+     "provider": "itunes_podcasts",
+     "remotely_accessible": true,
+     "proxy_id": "dfa44003f15e72271aa162302de4ef08cb32939f05957e4126b61693f696843b"
+    }
+   ],
+   "grouping": null,
+   "genres": null,
+   "mood": null,
+   "style": null,
+   "copyright": null,
+   "lyrics": null,
+   "lrc_lyrics": null,
+   "transcript": null,
+   "transcript_cues": null,
+   "has_transcript": null,
+   "label": null,
+   "links": [
+    {
+     "type": "website",
+     "url": "https://www.zeit.de/was-jetzt"
+    }
+   ],
+   "performers": null,
+   "preview": null,
+   "popularity": null,
+   "release_date": "2026-10-09T03:55:00+00:00",
+   "languages": null,
+   "chapters": null,
+   "collections": null,
+   "last_refresh": null
+  },
+  "favorite": false,
+  "position": 1998,
+  "date_added": null,
+  "podcast": {
+   "item_id": "https://feeds.simplecast.com/Xtqjn37O",
+   "provider": "itunes_podcasts",
+   "name": "Was jetzt?",
+   "version": "",
+   "sort_name": "was jetzt?",
+   "uri": "itunes_podcasts://podcast/https://feeds.simplecast.com/Xtqjn37O",
+   "external_ids": [],
+   "is_playable": true,
+   "media_type": "podcast",
+   "available": true,
+   "image": null,
+   "year": null
+  },
+  "duration": 780,
+  "fully_played": null,
+  "resume_position_ms": null
+ }
+]

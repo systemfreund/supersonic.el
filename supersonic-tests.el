@@ -6404,7 +6404,9 @@ BODY being the parsed JSON a POST sent, nil for a GET.")
              ("music/albums/library_items" "albums")
              ("music/albums/album_tracks" "album_tracks")
              ("music/item_by_uri" "track")
-             ("music/search" "search"))))))
+             ("music/search" "search")
+             ("music/podcasts/library_items" "podcasts")
+             ("music/podcasts/podcast_episodes" "podcast_episodes"))))))
 
 (defmacro supersonic-tests--with-ma-server (handler &rest body)
   "Run BODY against a fake Music Assistant server answering with HANDLER.
@@ -6457,10 +6459,12 @@ and auth-source has the token \"secret-token\" for exactly that host."
 
 (ert-deftest supersonic-tests-ma-registers-a-browse-only-provider ()
   "The `music-assistant' provider browses but neither streams nor
-scrobbles, which is enough to keep mpv and UPnP from playing for it."
-  (dolist (operation '(artists artist-albums album-list album-tracks track search cache-namespace config-hints))
+scrobbles, which is enough to keep mpv and UPnP from playing for it.
+It lists podcasts but neither subscribes to nor downloads them."
+  (dolist (operation '(artists artist-albums album-list album-tracks track search
+                       podcasts podcast-episodes cover-art cache-namespace config-hints))
     (should (supersonic-provider-supports-p operation 'music-assistant)))
-  (dolist (operation '(stream-url scrobble))
+  (dolist (operation '(stream-url scrobble add-podcast download-podcast-episode cover-art-url))
     (should-not (supersonic-provider-supports-p operation 'music-assistant)))
   (should-not (supersonic-playback-compatible-p 'mpv 'music-assistant))
   (should-not (supersonic-playback-compatible-p 'upnp 'music-assistant))
@@ -6567,16 +6571,19 @@ reached nor match the authinfo entry."
 every artist named, and nothing for what the server does not know."
   (supersonic-tests--with-ma-server #'supersonic-tests--ma-library
     (should (equal '(:id "library://track/7131" :title "Kawmélito" :artist "Polobi & the Gwo Ka Masters"
-                     :album "Abri Cyclonique" :duration 212 :track 1)
+                     :album "Abri Cyclonique" :duration 212 :track 1
+                     :art "/imageproxy/8c51c16de65125db78e8db769a70ddc4c3881d9ef70737419488e1f27a3569d1")
                    (aio-wait-for (supersonic-provider-track "library://track/7131"))))
     (should (equal '((:id "library://artist/2073" :name "10 Ft. Ganja Plant")
                      (:id "library://artist/732" :name "4 Hero")
                      (:id "library://artist/1911" :name "Ab Digi"))
                    (aio-wait-for (supersonic-provider-artists))))
-    (should (equal '(:id "library://album/8" :name "1000 Watts" :artist "Quantic" :year 2016)
+    (should (equal '(:id "library://album/8" :name "1000 Watts" :artist "Quantic" :year 2016
+                     :art "/imageproxy/250016dabc282703a8d8f1ada1beea36e9b1451ceda2494b2643f32bdb1ea5da")
                    (car (aio-wait-for (supersonic-provider-artist-albums "library://artist/24")))))
     (should (equal '(:id "library://track/72" :title "Spring Tank Fire" :artist "Quantic, Flowering Inferno"
-                     :album "1000 Watts" :duration 231 :track 1)
+                     :album "1000 Watts" :duration 231 :track 1
+                     :art "/imageproxy/250016dabc282703a8d8f1ada1beea36e9b1451ceda2494b2643f32bdb1ea5da")
                    (car (aio-wait-for (supersonic-provider-album-tracks "library://album/8"))))))
   (should (equal '(:id "library://track/1" :title "Untagged")
                  (supersonic-music-assistant--track
@@ -6754,6 +6761,115 @@ naming the exact auth-source host to check, not in a backtrace."
       (setq supersonic-music-assistant-url "http://two:8095")
       (should-not (equal one (supersonic-provider-cache-name "library://album/8")))
       (should (string-prefix-p "music-assistant-" one)))))
+
+(ert-deftest supersonic-tests-ma-maps-podcasts-and-episodes ()
+  "Captured podcasts and episodes become facade plists keyed by their
+URI; a podcast's cover is referred to under the image proxy even though
+its feed's URL is public.  Episodes are asked of the podcast's own
+provider, not of the library alone."
+  (supersonic-tests--with-ma-server #'supersonic-tests--ma-library
+    (should (equal '((:id "library://podcast/1" :title "Was jetzt?"
+                      :art "/imageproxy/635f61636d60ac925d8f707609f07eb400ecda2cae80c3e297d496a3e0e65d89"))
+                   (aio-wait-for (supersonic-provider-podcasts))))
+    (should (equal "music/podcasts/library_items" (supersonic-tests--ma-command (car supersonic-tests--ma-requests))))
+    (let ((episodes (aio-wait-for (supersonic-provider-podcast-episodes "library://podcast/1"))))
+      (should (equal '(:id "itunes_podcasts://podcast_episode/https://feeds.simplecast.com/Xtqjn37O 1e8a293c-1bc1-4dd3-8fe8-a615a65e36a1"
+                       :title "Vom Wunderkind zur Selbstverzwergung: Wo steht VW in 10 Jahren?" :duration 722)
+                     (car episodes)))
+      (should (= 3 (length episodes))))
+    (should (equal "music/podcasts/podcast_episodes" (supersonic-tests--ma-command (car supersonic-tests--ma-requests))))
+    (should (equal '(("item_id" . "1") ("provider_instance_id_or_domain" . "library"))
+                   (supersonic-tests--ma-args (car supersonic-tests--ma-requests))))))
+
+(ert-deftest supersonic-tests-ma-episode-status-says-how-far-it-was-played ()
+  "An episode played to the end is \"played\", one with a resume point
+\"started\", and one never started, or whose provider does not say, has
+no status."
+  (pcase-dolist (`(,fully-played ,position ,status)
+                 '((t 0 "played") (nil 60000 "started") (nil 0 nil) (nil nil nil)))
+    (should (equal status
+                   (plist-get (supersonic-music-assistant--episode
+                               `(("uri" . "x://podcast_episode/1") ("fully_played" . ,fully-played)
+                                 ("resume_position_ms" . ,position)))
+                              :status)))))
+
+(defun supersonic-tests--ma-image (proxy-id &optional type path)
+  "Return an MA image alist of TYPE, \"thumb\" by default, with PROXY-ID.
+PATH, if given, is a public URL the image can also be fetched from."
+  `(("type" . ,(or type "thumb"))
+    ("path" . ,(or path "Artist - Album/cover.jpg"))
+    ("provider" . "filesystem_local--x")
+    ("remotely_accessible" . ,(and path t))
+    ("proxy_id" . ,proxy-id)))
+
+(ert-deftest supersonic-tests-ma-art-falls-back-the-way-the-client-does ()
+  "An item mapping's own image comes first, then the album's, so that a
+track shows its album's cover, then the item's own images, then its
+artists'; a landscape image stands in only for a missing thumb, and an
+item with no image gets no `:art' at all."
+  (let ((own `(("images" ,(supersonic-tests--ma-image "own"))))
+        (artists `((("uri" . "library://artist/1")
+                    ("metadata" ("images" ,(supersonic-tests--ma-image "artist")))))))
+    (should (equal "/imageproxy/mapping"
+                   (supersonic-music-assistant--art
+                    `(("image" . ,(supersonic-tests--ma-image "mapping")) ("metadata" ,@own)))))
+    (should (equal "/imageproxy/album"
+                   (supersonic-music-assistant--art
+                    `(("album" ("image" . ,(supersonic-tests--ma-image "album"))) ("metadata" ,@own)))))
+    (should (equal "/imageproxy/own"
+                   (supersonic-music-assistant--art
+                    `(("album" ("image")) ("metadata" ,@own) ("artists" ,@artists)))))
+    (should (equal "/imageproxy/artist"
+                   (supersonic-music-assistant--art `(("metadata" ("images")) ("artists" ,@artists)))))
+    (should (equal "/imageproxy/wide"
+                   (supersonic-music-assistant--art
+                    `(("metadata" ("images" ,(supersonic-tests--ma-image "wide" "landscape")))))))
+    (should (equal "/imageproxy/thumb"
+                   (supersonic-music-assistant--art
+                    `(("metadata" ("images" ,(supersonic-tests--ma-image "wide" "landscape")
+                                   ,(supersonic-tests--ma-image "thumb")))))))
+    (should-not (plist-member (supersonic-music-assistant--album '(("uri" . "library://album/1") ("metadata" ("images"))))
+                              :art))))
+
+(ert-deftest supersonic-tests-ma-art-prefers-the-proxy-to-a-public-url ()
+  "A public image goes through the proxy too, which scales it, as long
+as the server hands out a proxy id; without one it is fetched from its
+URL, and an image that is neither public nor proxied is no art."
+  (should (equal "/imageproxy/abc"
+                 (supersonic-music-assistant--art
+                  `(("metadata" ("images" ,(supersonic-tests--ma-image "abc" nil "https://cdn.test/a.jpg")))))))
+  (should (equal "https://cdn.test/a.jpg"
+                 (supersonic-music-assistant--art
+                  `(("metadata" ("images" ,(supersonic-tests--ma-image nil nil "https://cdn.test/a.jpg")))))))
+  (should-not (supersonic-music-assistant--art `(("metadata" ("images" ,(supersonic-tests--ma-image nil)))))))
+
+(ert-deftest supersonic-tests-ma-proxy-size-rounds-up-to-one-it-scales-to ()
+  "The proxy is asked for the smallest size it scales to that is not
+smaller than the one wanted, and for the image as it is past them."
+  (should (equal '(80 80 160 256 256 512 1024 0)
+                 (mapcar #'supersonic-music-assistant--proxy-size '(10 80 100 250 256 500 600 2000)))))
+
+(ert-deftest supersonic-tests-ma-cover-art-asks-the-proxy-without-a-token ()
+  "Cover art is a GET of the proxied path at a size the proxy scales to,
+resolving to the bytes; no token is looked up, sent or put in the URL.
+A public URL is fetched as it is, and a failure says which URL failed."
+  (supersonic-tests--with-ma-server (lambda (_request) (cons 200 "jpeg bytes"))
+    (let ((lookups 0))
+      (supersonic-tests--counting-auth-lookups lookups
+        (should (equal "jpeg bytes"
+                       (aio-wait-for (supersonic-provider-cover-art "/imageproxy/abc" 250))))
+        (aio-wait-for (supersonic-provider-cover-art "https://cdn.test/a.jpg" 250)))
+      (should (= 0 lookups)))
+    (should (equal '("https://cdn.test/a.jpg" "http://ma.test:8095/imageproxy/abc?size=256")
+                   (mapcar (lambda (request) (plist-get request :url)) supersonic-tests--ma-requests)))
+    (dolist (request supersonic-tests--ma-requests)
+      (should-not (plist-get request :body))
+      (should-not (assoc "Authorization" (plist-get request :headers)))))
+  (supersonic-tests--with-ma-server (lambda (_request) (cons 404 ""))
+    (should (string-match-p "cover art from http://ma.test:8095/imageproxy/abc\\?size=512"
+                            (error-message-string
+                             (supersonic-tests--ma-failure
+                              (lambda () (supersonic-provider-cover-art "/imageproxy/abc" 500))))))))
 
 (provide 'supersonic-tests)
 

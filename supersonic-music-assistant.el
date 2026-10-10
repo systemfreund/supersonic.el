@@ -53,6 +53,19 @@
 ;; URI the way MA's own `parse_uri' does: this provider reading its
 ;; own ids, which the facade leaves to it.
 ;;
+;; Images (#59).  An item's `:art' is the image's path under the
+;; server's `/imageproxy', even for an image anyone could fetch, since
+;; the proxy scales it on the server -- if only to a few fixed sizes.
+;; Only a server too old to hand out proxy ids gets a public image's
+;; URL fetched as it is.  The proxy asks for no token, so none is
+;; sent: cover art never involves auth-source.
+;;
+;; Podcasts come from whatever podcast providers the server has; their
+;; episodes are not in MA's library, so the server fetches them anew
+;; for every listing.  MA subscribes to a feed by setting up a
+;; provider for it, and has no notion of downloading an episode, so
+;; `add-podcast' and `download-podcast-episode' are left out.
+;;
 ;; MA plays on its own players and keeps its own play history, so
 ;; `stream-url' and `scrobble' are deliberately left out: there is no
 ;; URL a local player could stream a whole track from, and nothing to
@@ -63,6 +76,7 @@
 
 (require 'auth-source)
 (require 'json)
+(require 'seq)
 (require 'subr-x)
 (require 'url)
 (require 'aio)
@@ -81,6 +95,11 @@ schema 28.")
 
 (defconst supersonic-music-assistant--page-size 500
   "How many items to ask for per request when fetching a whole list.")
+
+(defconst supersonic-music-assistant--proxy-sizes '(80 160 256 512 1024)
+  "The sizes MA's image proxy scales to, smallest first.
+It answers any other size with 400; 0, the image as it is, it also
+takes.")
 
 (defconst supersonic-music-assistant--album-list-args
   '((recent ("order_by" . "last_played_desc") ("played_only" . t))
@@ -266,6 +285,27 @@ As `supersonic-music-assistant--send', for an operation that sends
 only the one command, over a connection settled as it is called."
  (aio-await (supersonic-music-assistant--send (supersonic-music-assistant--connection) command args)))
 
+(aio-defun
+ supersonic-music-assistant--all-items (command &optional args)
+ "Return a promise resolving to every item a `library_items' COMMAND lists.
+Asks with ARGS a page at a time, over a connection settled as it is
+called, until a page comes back short."
+ (let ((connection (supersonic-music-assistant--connection))
+       (offset 0)
+       (items nil)
+       (done nil))
+   (while (not done)
+     (let ((page (aio-await
+                  (supersonic-music-assistant--send
+                   connection command
+                   `(("limit" . ,supersonic-music-assistant--page-size)
+                     ("offset" . ,offset)
+                     ,@args)))))
+       (setq items (nconc items page))
+       (setq offset (+ offset (length page)))
+       (setq done (< (length page) supersonic-music-assistant--page-size))))
+   items))
+
 (defun supersonic-music-assistant--split-uri (uri)
   "Return the provider and item id of MA item URI, as (PROVIDER . ITEM-ID).
 Splits the way MA's own `parse_uri' does: the provider is what comes
@@ -314,9 +354,51 @@ MA reports an unknown year, duration or track number as null or zero."
   (let ((names (delq nil (mapcar (lambda (artist) (assoc-default "name" artist)) (assoc-default "artists" data)))))
     (and names (string-join names ", "))))
 
+(defun supersonic-music-assistant--image (data type)
+  "Return the image of TYPE, e.g. \"thumb\", that MA item DATA shows, or nil.
+Looks where MA's own client does, in its `get_media_item_image': at
+the single image an item mapping carries, then at the album's image,
+so that a track shows its album's cover rather than art of its own,
+then at the item's own images, and last at its artists' images."
+  (and (consp data)
+       (or (let ((image (assoc-default "image" data)))
+             (and (consp image) (equal (assoc-default "type" image) type) image))
+           (supersonic-music-assistant--image (assoc-default "album" data) type)
+           (seq-find (lambda (image) (equal (assoc-default "type" image) type))
+                     (assoc-default "images" (assoc-default "metadata" data)))
+           (seq-some (lambda (artist) (supersonic-music-assistant--image artist type))
+                     (assoc-default "artists" data)))))
+
+(defun supersonic-music-assistant--art (data)
+  "Return the `:art' reference of MA item DATA, or nil if it shows no image.
+The reference is the image's path on the server, under its image
+proxy, which knows an image by the `proxy_id' the server hands out
+with it from schema 31 on.  That holds for an image anyone could fetch
+too -- a podcast's cover from its feed, say -- since the proxy scales
+it, where the feed's own may be thousands of pixels wide.  Only an
+image without a proxy id, from an older server, is referred to by its
+URL, if it has one anyone can fetch, which
+`supersonic-music-assistant--cover-art' then fetches as it is; any
+other is left without art.  A landscape image stands in for a missing
+thumb, as it does in MA's client."
+  (let* ((image (or (supersonic-music-assistant--image data "thumb")
+                    (supersonic-music-assistant--image data "landscape")))
+         (path (assoc-default "path" image))
+         (proxy-id (assoc-default "proxy_id" image)))
+    (cond
+     ((and (stringp proxy-id) (not (string-empty-p proxy-id)))
+      (concat "/imageproxy/" (url-hexify-string proxy-id)))
+     ((and (assoc-default "remotely_accessible" image)
+           (stringp path)
+           (string-match-p "\\`https?://" path))
+      path))))
+
 (defun supersonic-music-assistant--artist (data)
   "Turn an MA artist alist DATA into a facade artist plist."
-  (supersonic-music-assistant--plist :id (assoc-default "uri" data) :name (assoc-default "name" data)))
+  (supersonic-music-assistant--plist
+   :id (assoc-default "uri" data)
+   :name (assoc-default "name" data)
+   :art (supersonic-music-assistant--art data)))
 
 (defun supersonic-music-assistant--album (data)
   "Turn an MA album alist DATA into a facade album plist."
@@ -324,7 +406,8 @@ MA reports an unknown year, duration or track number as null or zero."
    :id (assoc-default "uri" data)
    :name (assoc-default "name" data)
    :artist (supersonic-music-assistant--artist-names data)
-   :year (supersonic-music-assistant--positive-integer (assoc-default "year" data))))
+   :year (supersonic-music-assistant--positive-integer (assoc-default "year" data))
+   :art (supersonic-music-assistant--art data)))
 
 (defun supersonic-music-assistant--track (data)
   "Turn an MA track alist DATA into a facade track plist."
@@ -334,7 +417,35 @@ MA reports an unknown year, duration or track number as null or zero."
    :artist (supersonic-music-assistant--artist-names data)
    :album (assoc-default "name" (assoc-default "album" data))
    :duration (supersonic-music-assistant--positive-integer (assoc-default "duration" data))
-   :track (supersonic-music-assistant--positive-integer (assoc-default "track_number" data))))
+   :track (supersonic-music-assistant--positive-integer (assoc-default "track_number" data))
+   :art (supersonic-music-assistant--art data)))
+
+(defun supersonic-music-assistant--podcast (data)
+  "Turn an MA podcast alist DATA into a facade podcast plist."
+  (supersonic-music-assistant--plist
+   :id (assoc-default "uri" data)
+   :title (assoc-default "name" data)
+   :art (supersonic-music-assistant--art data)))
+
+(defun supersonic-music-assistant--episode-status (data)
+  "Return how far MA podcast episode DATA has been listened to, or nil.
+\"played\" for an episode played to the end, \"started\" for one with
+a resume point, nil for one never started -- or whose provider does
+not say."
+  (let ((position (assoc-default "resume_position_ms" data)))
+    (cond
+     ((assoc-default "fully_played" data) "played")
+     ((and (numberp position) (> position 0)) "started"))))
+
+(defun supersonic-music-assistant--episode (data)
+  "Turn an MA podcast episode alist DATA into a facade episode plist.
+Its `:id' is the episode's URI, which MA's player queues play as they
+do a track's."
+  (supersonic-music-assistant--plist
+   :id (assoc-default "uri" data)
+   :title (assoc-default "name" data)
+   :duration (supersonic-music-assistant--positive-integer (assoc-default "duration" data))
+   :status (supersonic-music-assistant--episode-status data)))
 
 ;;;
 ;;; Operations
@@ -346,23 +457,11 @@ MA reports an unknown year, duration or track number as null or zero."
 Asks `music/artists/library_items' a page at a time until a page comes
 back short.  Artists that only appear on tracks are left out, as
 Subsonic's getArtists leaves them out: they have no albums to open."
- (let ((connection (supersonic-music-assistant--connection))
-       (offset 0)
-       (artists nil)
-       (done nil))
-   (while (not done)
-     (let ((page (aio-await
-                  (supersonic-music-assistant--send
-                   connection
-                   "music/artists/library_items"
-                   `(("limit" . ,supersonic-music-assistant--page-size)
-                     ("offset" . ,offset)
-                     ("order_by" . "sort_name")
-                     ("album_artists_only" . t))))))
-       (setq artists (nconc artists (mapcar #'supersonic-music-assistant--artist page)))
-       (setq offset (+ offset (length page)))
-       (setq done (< (length page) supersonic-music-assistant--page-size))))
-   artists))
+ (mapcar #'supersonic-music-assistant--artist
+         (aio-await
+          (supersonic-music-assistant--all-items
+           "music/artists/library_items"
+           '(("order_by" . "sort_name") ("album_artists_only" . t))))))
 
 (aio-defun
  supersonic-music-assistant--artist-albums (uri)
@@ -416,6 +515,61 @@ still honour, rather than `providers', which schema 28 does not know."
     :albums (mapcar #'supersonic-music-assistant--album (assoc-default "albums" results))
     :tracks (mapcar #'supersonic-music-assistant--track (assoc-default "tracks" results)))))
 
+(aio-defun
+ supersonic-music-assistant--podcasts ()
+ "Return a promise resolving to every podcast in the library.
+Asks `music/podcasts/library_items' a page at a time."
+ (mapcar #'supersonic-music-assistant--podcast
+         (aio-await
+          (supersonic-music-assistant--all-items
+           "music/podcasts/library_items" '(("order_by" . "sort_name"))))))
+
+(aio-defun
+ supersonic-music-assistant--podcast-episodes (uri)
+ "Return a promise resolving to the episodes of the podcast with URI.
+MA keeps no episodes in its library, but fetches them from the
+podcast's provider every time, so this asks without `in_library_only'."
+ (pcase-let ((`(,provider . ,item-id) (supersonic-music-assistant--split-uri uri)))
+   (mapcar #'supersonic-music-assistant--episode
+           (aio-await
+            (supersonic-music-assistant--command
+             "music/podcasts/podcast_episodes"
+             `(("item_id" . ,item-id) ("provider_instance_id_or_domain" . ,provider)))))))
+
+(defun supersonic-music-assistant--proxy-size (size)
+  "Return the size to ask MA's image proxy for to show an image at SIZE.
+The smallest size it scales to that is not smaller than SIZE, so that
+Emacs only ever scales down; 0, the image as it is, past the largest."
+  (or (seq-find (lambda (proxy-size) (>= proxy-size size)) supersonic-music-assistant--proxy-sizes)
+      0))
+
+(defun supersonic-music-assistant--cover-art-request-url (art size)
+  "Return the URL to fetch the image with `:art' reference ART from, at SIZE.
+A path under the image proxy gets the server's address and a size the
+proxy scales to; a URL anyone can fetch is fetched as it is, unscaled,
+since only the proxy scales."
+  (if (string-prefix-p "/" art)
+      (format "%s?size=%d"
+              (supersonic-music-assistant--url (supersonic-music-assistant--server) art)
+              (supersonic-music-assistant--proxy-size size))
+    art))
+
+(aio-defun
+ supersonic-music-assistant--cover-art (art size)
+ "Return a promise resolving to the bytes of the image ART refers to, at SIZE.
+ART is an `:art' reference, as made by `supersonic-music-assistant--art'.
+No token goes with the request: MA's image proxy serves anyone, as it
+must for the players it points at images, and a public URL needs none."
+ (let ((url (supersonic-music-assistant--cover-art-request-url art size)))
+   (pcase-let ((`(,status . ,buffer) (aio-await (supersonic-url-retrieve url))))
+     (unwind-protect
+         (let ((err (plist-get status :error)))
+           (when err
+             (error "Failed to fetch cover art from %s: %s" url (supersonic-music-assistant--describe-failure err)))
+           (with-current-buffer buffer
+             (buffer-substring-no-properties (1+ url-http-end-of-headers) (point-max))))
+       (kill-buffer buffer)))))
+
 (defun supersonic-music-assistant--cache-namespace ()
   "Return the server's address, `supersonic-music-assistant-url'.
 A `library://' URI is only unique per server, so this is what keeps
@@ -440,6 +594,9 @@ one server's cached art apart from another's."
    (album-tracks . supersonic-music-assistant--album-tracks)
    (track . supersonic-music-assistant--track-by-uri)
    (search . supersonic-music-assistant--search)
+   (podcasts . supersonic-music-assistant--podcasts)
+   (podcast-episodes . supersonic-music-assistant--podcast-episodes)
+   (cover-art . supersonic-music-assistant--cover-art)
    (cache-namespace . supersonic-music-assistant--cache-namespace)
    (config-hints . supersonic-music-assistant--config-hints)))
 
