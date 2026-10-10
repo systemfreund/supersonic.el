@@ -6516,6 +6516,36 @@ command the user just ran."
           (should (= 1 lookups))
           (aio-wait-for promise))))))
 
+(ert-deftest supersonic-tests-ma-reads-the-token-once-for-every-page ()
+  "An operation sending several commands looks the token up once, as
+it is called, not again for each page from a timer."
+  (let ((page-size supersonic-music-assistant--page-size))
+    (supersonic-tests--with-ma-server
+        (lambda (request)
+          (if (not (supersonic-tests--ma-command request))
+              (cons 200 (supersonic-tests--ma-fixture "info"))
+            (let ((offset (assoc-default "offset" (supersonic-tests--ma-args request))))
+              (cons 200 (json-encode
+                         (vconcat
+                          (mapcar (lambda (n) `(("uri" . ,(format "library://artist/%d" (+ offset n)))))
+                                  (number-sequence 1 (if (zerop offset) page-size 1)))))))))
+      (let ((lookups 0))
+        (supersonic-tests--counting-auth-lookups lookups
+          (let ((promise (supersonic-provider-artists)))
+            (should (= 1 lookups))
+            (should (= (1+ page-size) (length (aio-wait-for promise))))))
+        (should (= 1 lookups))
+        (should (= 2 (length (seq-filter #'supersonic-tests--ma-command supersonic-tests--ma-requests))))))))
+
+(ert-deftest supersonic-tests-ma-reports-an-old-server-before-a-missing-token ()
+  "A server too old for tokens says so, even without a token for it in
+auth-source -- that one could not have been used anyway."
+  (supersonic-tests--with-ma-server
+      (lambda (_request) (cons 200 "{\"schema_version\": 27}"))
+    (let ((supersonic-music-assistant-url "http://old.test:8095"))
+      (should (string-match-p "too old (schema 27)"
+                              (error-message-string (supersonic-tests--ma-failure #'supersonic-provider-artists)))))))
+
 (ert-deftest supersonic-tests-ma-never-looks-up-a-token-without-a-usable-url ()
   "Without `supersonic-music-assistant-url', or with one naming no
 scheme, auth-source is not asked at all: a lookup for no host would

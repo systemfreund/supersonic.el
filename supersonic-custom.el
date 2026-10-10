@@ -549,7 +549,7 @@ file has not been loaded is reported when a list buffer is next opened."
                  (symbol :tag "Other registered provider"))
   :group 'supersonic)
 
-(defcustom supersonic-music-assistant-url nil
+(defcustom supersonic-music-assistant-url ""
   "Address of the server the `music-assistant' provider browses.
 Its scheme, host and port, e.g. \"http://192.168.1.10:8095\".  The
 token is looked up in auth-source with exactly this string as the
@@ -559,7 +559,7 @@ host, so the authinfo line for it reads
 
 where TOKEN is a long-lived token created in Music Assistant's web UI,
 under your profile."
-  :type '(choice (const :tag "Not set" nil) string)
+  :type 'string
   :group 'supersonic)
 
 (defcustom supersonic-playback-backend 'mpv
