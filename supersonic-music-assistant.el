@@ -564,9 +564,9 @@ image's host is whatever a feed points at -- makes `url.el' fail the
 request rather than prompt for a user name and password, from a timer
 in the middle of painting a list.  `url.el' still asks auth-source for
 that host first, as it does for any 401; only the prompts are gone.
-A plain function, as
-`supersonic-music-assistant--retrieve' is, so that the binding is
-certain to be in effect while `url-retrieve' reads it."
+A plain function, as `supersonic-music-assistant--retrieve' is, so
+that the binding is certain to be in effect while `url-retrieve'
+reads it."
   (let ((url-request-noninteractive t))
     (supersonic-url-retrieve url)))
 

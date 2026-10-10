@@ -268,7 +268,9 @@ exactly, as for Subsonic:
 
 It is sent in a request header only, never in a URL. Cover art comes
 from the server's image proxy, which needs no token, so none is sent
-with it.
+with it. A server older than schema 31 does not tell its clients how
+to reach images through the proxy; there, only images with a public
+URL, such as podcast covers, are shown.
 
 Podcasts are whatever podcasts are in the server's library; subscribe
 to one in Music Assistant itself, since it has no equivalent of adding
