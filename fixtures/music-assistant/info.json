@@ -1,0 +1,14 @@
+{
+ "server_id": "03517c0d76f24df4a1b601962cd1d463",
+ "server_version": "2.10.3",
+ "schema_version": 65,
+ "min_supported_schema_version": 28,
+ "base_url": "http://10.20.30.1:8095",
+ "homeassistant_addon": false,
+ "onboard_done": true,
+ "name": "Music Assistant (tower)",
+ "status": "running",
+ "internal_url": "http://10.20.30.1:8095",
+ "external_url": null,
+ "has_remote_access": false
+}

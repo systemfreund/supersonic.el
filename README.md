@@ -242,6 +242,36 @@ seeked: its length is not known until it has been transcoded.
 Navidrome, for one, serves it with seeking once it has been
 transcoded before and kept in its transcoding cache.
 
+## Music Assistant
+
+`supersonic-music-assistant.el` browses a
+[Music Assistant](https://www.music-assistant.io/) server instead of a
+Subsonic one: artists, albums, album lists and search. Like the
+jukebox, it is opt-in:
+
+```
+(use-package supersonic
+  :custom
+  (supersonic-provider 'music-assistant)
+  (supersonic-music-assistant-url "http://192.168.1.10:8095")
+  :config
+  (require 'supersonic-music-assistant))
+```
+
+It needs a long-lived token, created in Music Assistant's web UI under
+your profile, and a server with schema version 28 or later (see the
+server's `/info`). The token goes into your authinfo with the server's
+URL as the `machine`, matching `supersonic-music-assistant-url`
+exactly, as for Subsonic:
+
+    machine http://192.168.1.10:8095 password TOKEN
+
+It is sent in a request header only, never in a URL.
+
+Music Assistant plays on its own players and gives a client no URL to
+stream a whole track from, so neither mpv nor UPnP can play for it.
+Playback on Music Assistant's players is not there yet.
+
 ## Authentication
 
 Add a `~/.authinfo.gpg` or `~/.authinfo` file with the following contents

@@ -24,6 +24,7 @@
 (require 'supersonic)
 (require 'supersonic-jukebox)
 (require 'supersonic-upnp)
+(require 'supersonic-music-assistant)
 (require 'aio)
 
 (defvar supersonic-tests--track-1 "av://lavfi:sine=frequency=440:duration=2")
@@ -6363,6 +6364,396 @@ not its id, through the active provider."
         (supersonic-now-playing--stop-timer))
       (kill-buffer buff)
       (delete-directory supersonic-cache-path t))))
+
+;;;
+;;; Music Assistant provider
+;;;
+
+(defconst supersonic-tests--ma-fixtures
+  (expand-file-name "fixtures/music-assistant/" (file-name-directory (or load-file-name buffer-file-name)))
+  "Directory of responses captured from a real Music Assistant server.")
+
+(defun supersonic-tests--ma-fixture (name)
+  "Return the text of the captured Music Assistant response NAME."
+  (with-temp-buffer
+    (insert-file-contents (expand-file-name (concat name ".json") supersonic-tests--ma-fixtures))
+    (buffer-string)))
+
+(defvar supersonic-tests--ma-requests nil
+  "The requests the fake Music Assistant server received, most recent first.
+Each is a plist (:url URL :method METHOD :headers HEADERS :body BODY),
+BODY being the parsed JSON a POST sent, nil for a GET.")
+
+(defun supersonic-tests--ma-command (request)
+  "Return the command REQUEST ran, or nil for a request other than `/api'."
+  (assoc-default "command" (plist-get request :body)))
+
+(defun supersonic-tests--ma-args (request)
+  "Return the args REQUEST passed its command."
+  (assoc-default "args" (plist-get request :body)))
+
+(defun supersonic-tests--ma-library (request)
+  "Answer REQUEST the way the server the fixtures were captured from did."
+  (cons 200
+        (supersonic-tests--ma-fixture
+         (if (string-suffix-p "/info" (plist-get request :url))
+             "info"
+           (pcase (supersonic-tests--ma-command request)
+             ("music/artists/library_items" "artists")
+             ("music/artists/artist_albums" "artist_albums")
+             ("music/albums/library_items" "albums")
+             ("music/albums/album_tracks" "album_tracks")
+             ("music/item_by_uri" "track")
+             ("music/search" "search"))))))
+
+(defmacro supersonic-tests--with-ma-server (handler &rest body)
+  "Run BODY against a fake Music Assistant server answering with HANDLER.
+HANDLER is called with each request, as recorded in
+`supersonic-tests--ma-requests', and returns (CODE . TEXT), the HTTP
+status and body to answer with, or (CODE TEXT STATUS) to also hand the
+callback STATUS -- by default, an error for a CODE of 400 or more and
+nil otherwise.  The `music-assistant' provider is
+active, `supersonic-music-assistant-url' is \"http://ma.test:8095\",
+and auth-source has the token \"secret-token\" for exactly that host."
+  (declare (indent 1))
+  `(let ((supersonic-provider 'music-assistant)
+         (supersonic-music-assistant-url "http://ma.test:8095")
+         (supersonic-music-assistant--checked-url nil)
+         (supersonic-tests--ma-requests nil)
+         (handler ,handler))
+     (cl-letf (((symbol-function 'auth-source-search)
+                (lambda (&rest spec)
+                  (and (equal (plist-get spec :host) "http://ma.test:8095")
+                       (list (list :host "http://ma.test:8095" :secret (lambda () "secret-token"))))))
+               ;; A plain function, not an `aio-lambda': the
+               ;; `url-request-*' variables are read as the request is
+               ;; started, as `url-retrieve' does.
+               ((symbol-function 'supersonic-url-retrieve)
+                (lambda (url)
+                  (let* ((request (list :url url
+                                        :max-redirections url-max-redirections
+                                        :method url-request-method
+                                        :headers url-request-extra-headers
+                                        :body (and url-request-data
+                                                   (let ((json-key-type 'string)
+                                                         (json-array-type 'list))
+                                                     (json-read-from-string
+                                                      (decode-coding-string url-request-data 'utf-8))))))
+                         (answer (progn (push request supersonic-tests--ma-requests)
+                                        (funcall handler request)))
+                         (code (car answer))
+                         (text (if (consp (cdr answer)) (cadr answer) (cdr answer)))
+                         (status (if (consp (cdr answer))
+                                     (nth 2 answer)
+                                   (and (>= code 400) `(:error (error http ,code)))))
+                         (buffer (generate-new-buffer " *supersonic-tests-ma*")))
+                    (with-current-buffer buffer
+                      (insert (format "HTTP/1.1 %d\n\n" code))
+                      (setq-local url-http-response-status code)
+                      (setq-local url-http-end-of-headers (1- (point)))
+                      (insert (encode-coding-string text 'utf-8)))
+                    (funcall (supersonic-tests--resolved (cons status buffer)))))))
+       ,@body)))
+
+(ert-deftest supersonic-tests-ma-registers-a-browse-only-provider ()
+  "The `music-assistant' provider browses but neither streams nor
+scrobbles, which is enough to keep mpv and UPnP from playing for it."
+  (dolist (operation '(artists artist-albums album-list album-tracks track search cache-namespace config-hints))
+    (should (supersonic-provider-supports-p operation 'music-assistant)))
+  (dolist (operation '(stream-url scrobble))
+    (should-not (supersonic-provider-supports-p operation 'music-assistant)))
+  (should-not (supersonic-playback-compatible-p 'mpv 'music-assistant))
+  (should-not (supersonic-playback-compatible-p 'upnp 'music-assistant))
+  (should-not (supersonic-playback-compatible-p 'jukebox 'music-assistant)))
+
+(ert-deftest supersonic-tests-ma-sends-commands-with-the-token-in-a-header ()
+  "A command is a JSON POST to `/api' carrying the token as a bearer
+header and nowhere else; the server's `/info' is asked first, without
+the token, and only once per server."
+  (supersonic-tests--with-ma-server #'supersonic-tests--ma-library
+    (aio-wait-for (supersonic-provider-track "library://track/7131"))
+    (aio-wait-for (supersonic-provider-track "library://track/7131"))
+    (let ((requests (reverse supersonic-tests--ma-requests)))
+      (should (equal '("http://ma.test:8095/info" "http://ma.test:8095/api" "http://ma.test:8095/api")
+                     (mapcar (lambda (request) (plist-get request :url)) requests)))
+      (should (equal "GET" (plist-get (car requests) :method)))
+      (should-not (assoc "Authorization" (plist-get (car requests) :headers)))
+      (let ((command (cadr requests)))
+        (should (equal "POST" (plist-get command :method)))
+        (should (equal "Bearer secret-token" (assoc-default "Authorization" (plist-get command :headers))))
+        (should (equal "application/json" (assoc-default "Content-Type" (plist-get command :headers))))
+        (should (equal "music/item_by_uri" (supersonic-tests--ma-command command)))
+        (should (equal '(("uri" . "library://track/7131")) (supersonic-tests--ma-args command)))))
+    (dolist (request supersonic-tests--ma-requests)
+      (should-not (string-match-p "secret-token" (plist-get request :url))))))
+
+(defun supersonic-tests--ma-failure (operation)
+  "Return the error OPERATION's promise rejects with, or nil if it resolves."
+  (condition-case err
+      (progn (aio-wait-for (funcall operation)) nil)
+    (error err)))
+
+(defmacro supersonic-tests--counting-auth-lookups (counter &rest body)
+  "Run BODY counting calls of `auth-source-search' in the variable COUNTER.
+Calls still go on to whatever `auth-source-search' was before."
+  (declare (indent 1))
+  (let ((original (make-symbol "original")))
+    `(let ((,original (symbol-function 'auth-source-search)))
+       (cl-letf (((symbol-function 'auth-source-search)
+                  (lambda (&rest spec)
+                    (setq ,counter (1+ ,counter))
+                    (apply ,original spec))))
+         ,@body))))
+
+(ert-deftest supersonic-tests-ma-reads-the-token-while-the-command-runs ()
+  "The token is looked up as the operation is called, not later from a
+timer, so that anything auth-source asks of the user is asked by the
+command the user just ran."
+  (supersonic-tests--with-ma-server #'supersonic-tests--ma-library
+    (let ((lookups 0))
+      (supersonic-tests--counting-auth-lookups lookups
+        (let ((promise (supersonic-provider-track "library://track/7131")))
+          (should (= 1 lookups))
+          (aio-wait-for promise))))))
+
+(ert-deftest supersonic-tests-ma-reads-the-token-once-for-every-page ()
+  "An operation sending several commands looks the token up once, as
+it is called, not again for each page from a timer."
+  (let ((page-size supersonic-music-assistant--page-size))
+    (supersonic-tests--with-ma-server
+        (lambda (request)
+          (if (not (supersonic-tests--ma-command request))
+              (cons 200 (supersonic-tests--ma-fixture "info"))
+            (let ((offset (assoc-default "offset" (supersonic-tests--ma-args request))))
+              (cons 200 (json-encode
+                         (vconcat
+                          (mapcar (lambda (n) `(("uri" . ,(format "library://artist/%d" (+ offset n)))))
+                                  (number-sequence 1 (if (zerop offset) page-size 1)))))))))
+      (let ((lookups 0))
+        (supersonic-tests--counting-auth-lookups lookups
+          (let ((promise (supersonic-provider-artists)))
+            (should (= 1 lookups))
+            (should (= (1+ page-size) (length (aio-wait-for promise))))))
+        (should (= 1 lookups))
+        (should (= 2 (length (seq-filter #'supersonic-tests--ma-command supersonic-tests--ma-requests))))))))
+
+(ert-deftest supersonic-tests-ma-reports-an-old-server-before-a-missing-token ()
+  "A server too old for tokens says so, even without a token for it in
+auth-source -- that one could not have been used anyway."
+  (supersonic-tests--with-ma-server
+      (lambda (_request) (cons 200 "{\"schema_version\": 27}"))
+    (let ((supersonic-music-assistant-url "http://old.test:8095"))
+      (should (string-match-p "too old (schema 27)"
+                              (error-message-string (supersonic-tests--ma-failure #'supersonic-provider-artists)))))))
+
+(ert-deftest supersonic-tests-ma-never-looks-up-a-token-without-a-usable-url ()
+  "Without `supersonic-music-assistant-url', or with one naming no
+scheme, auth-source is not asked at all: a lookup for no host would
+match any entry, and an address without a scheme can neither be
+reached nor match the authinfo entry."
+  (supersonic-tests--with-ma-server #'supersonic-tests--ma-library
+    (dolist (url '(nil "" "ma.test:8095" "http://"))
+      (let ((supersonic-music-assistant-url url)
+            (lookups 0))
+        (supersonic-tests--counting-auth-lookups lookups
+          (let ((err (supersonic-tests--ma-failure #'supersonic-provider-artists)))
+            (should (eq 'user-error (car err)))
+            (should (string-match-p "scheme included" (error-message-string err)))))
+        (should (= 0 lookups))))
+    (should-not supersonic-tests--ma-requests)))
+
+(ert-deftest supersonic-tests-ma-maps-items-to-provider-vocabulary ()
+  "Captured MA items become facade plists keyed by their URI, with
+every artist named, and nothing for what the server does not know."
+  (supersonic-tests--with-ma-server #'supersonic-tests--ma-library
+    (should (equal '(:id "library://track/7131" :title "Kawmélito" :artist "Polobi & the Gwo Ka Masters"
+                     :album "Abri Cyclonique" :duration 212 :track 1)
+                   (aio-wait-for (supersonic-provider-track "library://track/7131"))))
+    (should (equal '((:id "library://artist/2073" :name "10 Ft. Ganja Plant")
+                     (:id "library://artist/732" :name "4 Hero")
+                     (:id "library://artist/1911" :name "Ab Digi"))
+                   (aio-wait-for (supersonic-provider-artists))))
+    (should (equal '(:id "library://album/8" :name "1000 Watts" :artist "Quantic" :year 2016)
+                   (car (aio-wait-for (supersonic-provider-artist-albums "library://artist/24")))))
+    (should (equal '(:id "library://track/72" :title "Spring Tank Fire" :artist "Quantic, Flowering Inferno"
+                     :album "1000 Watts" :duration 231 :track 1)
+                   (car (aio-wait-for (supersonic-provider-album-tracks "library://album/8"))))))
+  (should (equal '(:id "library://track/1" :title "Untagged")
+                 (supersonic-music-assistant--track
+                  '(("uri" . "library://track/1") ("name" . "Untagged") ("artists") ("album")
+                    ("duration" . 0) ("track_number" . 0))))))
+
+(ert-deftest supersonic-tests-ma-search-maps-each-kind ()
+  "Search asks for artists, albums and tracks and maps each list."
+  (supersonic-tests--with-ma-server #'supersonic-tests--ma-library
+    (let ((results (aio-wait-for (supersonic-provider-search "quantic"))))
+      (should (equal '("library://artist/24" "library://artist/454")
+                     (mapcar (lambda (item) (plist-get item :id)) (plist-get results :artists))))
+      (should (equal '("library://album/8" "library://album/351")
+                     (mapcar (lambda (item) (plist-get item :id)) (plist-get results :albums))))
+      (should (equal '("library://track/77" "library://track/3551")
+                     (mapcar (lambda (item) (plist-get item :id)) (plist-get results :tracks))))
+      (should (equal '(("search_query" . "quantic") ("media_types" "artist" "album" "track") ("library_only" . t))
+                     (supersonic-tests--ma-args (car supersonic-tests--ma-requests)))))))
+
+(ert-deftest supersonic-tests-ma-album-lists-ask-for-their-order ()
+  "Each album list type asks the library in its own order, at most
+COUNT albums; a type MA cannot produce is a `user-error'."
+  (supersonic-tests--with-ma-server #'supersonic-tests--ma-library
+    (pcase-dolist (`(,type . ,args)
+                   '((recent ("limit" . 7) ("order_by" . "last_played_desc") ("played_only" . t))
+                     (random ("limit" . 7) ("order_by" . "random"))
+                     (newest ("limit" . 7) ("order_by" . "timestamp_added_desc"))))
+      (let ((albums (aio-wait-for (supersonic-provider-album-list type 7))))
+        (should (equal "library://album/818" (plist-get (car albums) :id)))
+        (should (equal "music/albums/library_items" (supersonic-tests--ma-command (car supersonic-tests--ma-requests))))
+        (should (equal args (supersonic-tests--ma-args (car supersonic-tests--ma-requests))))))
+    (should-error (aio-wait-for (supersonic-music-assistant--album-list 'starred 7)) :type 'user-error)))
+
+(ert-deftest supersonic-tests-ma-artists-are-fetched-a-page-at-a-time ()
+  "Artists are asked for a page at a time until a page comes back short."
+  (let ((page-size supersonic-music-assistant--page-size))
+    (supersonic-tests--with-ma-server
+        (lambda (request)
+          (if (not (supersonic-tests--ma-command request))
+              (cons 200 (supersonic-tests--ma-fixture "info"))
+            (let ((offset (assoc-default "offset" (supersonic-tests--ma-args request))))
+              (cons 200 (json-encode
+                         (vconcat
+                          (mapcar (lambda (n) `(("uri" . ,(format "library://artist/%d" (+ offset n)))))
+                                  (number-sequence 1 (if (zerop offset) page-size 4)))))))))
+      (let ((artists (aio-wait-for (supersonic-provider-artists))))
+        (should (= (+ page-size 4) (length artists)))
+        (should (equal (format "library://artist/%d" (+ page-size 4)) (plist-get (car (last artists)) :id))))
+      (should (equal (list 0 page-size)
+                     (mapcar (lambda (request) (assoc-default "offset" (supersonic-tests--ma-args request)))
+                             (reverse (seq-filter #'supersonic-tests--ma-command supersonic-tests--ma-requests))))))))
+
+(ert-deftest supersonic-tests-ma-split-uri-follows-parse-uri ()
+  "A URI splits into its provider and the item id after the media type,
+slashes and colons in the item id included; anything else is refused."
+  (should (equal '("library" . "7131") (supersonic-music-assistant--split-uri "library://track/7131")))
+  (should (equal '("filesystem_local--CTr9kfcj" . "Quantic - 1000 Watts [2016]/01: Spring.ogg")
+                 (supersonic-music-assistant--split-uri
+                  "filesystem_local--CTr9kfcj://track/Quantic - 1000 Watts [2016]/01: Spring.ogg")))
+  (dolist (uri '("7131" "library://track" "library://track/" "://track/1" "library:///1"))
+    (should-error (supersonic-music-assistant--split-uri uri))))
+
+(ert-deftest supersonic-tests-ma-ids-with-slashes-and-colons-round-trip ()
+  "An id handed out is taken back verbatim: the item id a command is
+sent is exactly the part of the URI after its media type."
+  (let ((uri "filesystem_local--x://album/A: B/C"))
+    (supersonic-tests--with-ma-server #'supersonic-tests--ma-library
+      (aio-wait-for (supersonic-provider-album-tracks uri))
+      (should (equal '(("item_id" . "A: B/C") ("provider_instance_id_or_domain" . "filesystem_local--x")
+                       ("in_library_only" . t))
+                     (supersonic-tests--ma-args (car supersonic-tests--ma-requests)))))))
+
+(ert-deftest supersonic-tests-ma-rejects-an-old-server-before-sending-the-token ()
+  "A server older than schema 28 is a `user-error', and is never sent
+the token."
+  (supersonic-tests--with-ma-server
+      (lambda (_request) (cons 200 "{\"schema_version\": 27}"))
+    (let ((err (supersonic-tests--ma-failure #'supersonic-provider-artists)))
+      (should (eq 'user-error (car err)))
+      (should (string-match-p "too old (schema 27)" (error-message-string err))))
+    (should (equal '("http://ma.test:8095/info")
+                   (mapcar (lambda (request) (plist-get request :url)) supersonic-tests--ma-requests)))))
+
+(ert-deftest supersonic-tests-ma-reports-each-failure-readably ()
+  "A rejected token and a missing one or a missing URL are
+`user-error's; a failed command says what the server answered; a
+server that does not speak JSON is named as such."
+  (supersonic-tests--with-ma-server
+      (lambda (request)
+        (if (supersonic-tests--ma-command request)
+            (cons 401 "Authentication required")
+          (cons 200 (supersonic-tests--ma-fixture "info"))))
+    (let ((err (supersonic-tests--ma-failure #'supersonic-provider-artists)))
+      (should (eq 'user-error (car err)))
+      (should (string-match-p "rejected the token" (error-message-string err))))
+    (let ((supersonic-music-assistant-url "http://elsewhere:8095"))
+      (should (string-match-p "No Music Assistant token"
+                              (error-message-string (supersonic-tests--ma-failure #'supersonic-provider-artists)))))
+    (let ((supersonic-music-assistant-url nil))
+      (should (eq 'user-error (car (supersonic-tests--ma-failure #'supersonic-provider-artists))))))
+  (supersonic-tests--with-ma-server
+      (lambda (request)
+        (if (supersonic-tests--ma-command request)
+            (cons 500 "Internal server error")
+          (cons 200 (supersonic-tests--ma-fixture "info"))))
+    (should (string-match-p "answered http://ma.test:8095/api with 500: Internal server error"
+                            (error-message-string
+                             (supersonic-tests--ma-failure
+                              (lambda () (supersonic-provider-track "library://track/0")))))))
+  (supersonic-tests--with-ma-server
+      (lambda (_request) (cons 200 "<html>Navidrome</html>"))
+    (should (string-match-p "did not answer with JSON"
+                            (error-message-string (supersonic-tests--ma-failure #'supersonic-provider-artists)))))
+  (should (equal "connection failed (failed with code 111)"
+                 (supersonic-music-assistant--describe-failure
+                  '(error connection-failed "failed with code 111\n" :host "ma.test" :service 8095)))))
+
+(ert-deftest supersonic-tests-ma-reports-a-redirect-as-such ()
+  "A redirect is reported with where it leads, not as the rejected
+token it would end in: whether `url.el' refused to follow it, as asked
+to, or followed it anyway, as Emacs 28 does."
+  (pcase-dolist (`(,code . ,status)
+                 '((307 :error (error http-redirect-limit "https://ma.test/info"))
+                   (401 :redirect "https://ma.test/info")))
+    (supersonic-tests--with-ma-server
+        (lambda (_request) (list code "" status))
+      (let ((err (supersonic-tests--ma-failure #'supersonic-provider-artists)))
+        (should (eq 'user-error (car err)))
+        (should (string-match-p "redirects to https://ma.test/info" (error-message-string err))))
+      (should (equal '(0) (mapcar (lambda (request) (plist-get request :max-redirections))
+                                  supersonic-tests--ma-requests))))))
+
+(ert-deftest supersonic-tests-ma-rejects-an-info-without-a-schema ()
+  "A JSON `/info' naming no schema version is not Music Assistant, and
+is said to be so rather than too old."
+  (dolist (info '("{\"name\": \"something else\"}" "[1, 2]" "42"))
+    (supersonic-tests--with-ma-server
+        (lambda (_request) (cons 200 info))
+      (let ((err (supersonic-tests--ma-failure #'supersonic-provider-artists)))
+        (should (eq 'user-error (car err)))
+        (should (string-match-p "does not look like a Music Assistant server" (error-message-string err))))
+      (should (= 1 (length supersonic-tests--ma-requests))))))
+
+(ert-deftest supersonic-tests-ma-asks-for-library-items-only ()
+  "Artist albums and album tracks ask for what is in the library only,
+as the artists and album lists they are opened from are."
+  (supersonic-tests--with-ma-server #'supersonic-tests--ma-library
+    (aio-wait-for (supersonic-provider-artist-albums "library://artist/24"))
+    (should (equal '(("item_id" . "24") ("provider_instance_id_or_domain" . "library") ("in_library_only" . t))
+                   (supersonic-tests--ma-args (car supersonic-tests--ma-requests))))
+    (aio-wait-for (supersonic-provider-album-tracks "library://album/8"))
+    (should (equal '(("item_id" . "8") ("provider_instance_id_or_domain" . "library") ("in_library_only" . t))
+                   (supersonic-tests--ma-args (car supersonic-tests--ma-requests))))))
+
+(ert-deftest supersonic-tests-ma-failures-show-config-hints-in-the-list-buffer ()
+  "A failed refresh ends in the list buffer as an error plus hints
+naming the exact auth-source host to check, not in a backtrace."
+  (supersonic-tests--with-ma-server
+      (lambda (_request) (cons 401 "Authentication required"))
+    (let ((buffer (generate-new-buffer " *supersonic-tests-ma-artists*")))
+      (unwind-protect
+          (progn
+            (supersonic--init-list-buffer buffer #'supersonic-artist-mode "Loading artists...")
+            (aio-wait-for (supersonic-artists-refresh buffer))
+            (with-current-buffer buffer
+              (should (string-match-p "Failed to fetch artists" (buffer-string)))
+              (should (string-match-p "host http://ma.test:8095 (exactly)" (buffer-string)))))
+        (kill-buffer buffer)))))
+
+(ert-deftest supersonic-tests-ma-cache-namespace-is-the-server ()
+  "Two servers' identical `library://' URIs never share a cache name."
+  (let ((supersonic-provider 'music-assistant)
+        (supersonic-music-assistant-url "http://one:8095"))
+    (let ((one (supersonic-provider-cache-name "library://album/8")))
+      (setq supersonic-music-assistant-url "http://two:8095")
+      (should-not (equal one (supersonic-provider-cache-name "library://album/8")))
+      (should (string-prefix-p "music-assistant-" one)))))
 
 (provide 'supersonic-tests)
 

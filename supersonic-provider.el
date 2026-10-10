@@ -27,8 +27,9 @@
 ;; and the cover art and waveform caches for art and a name to file
 ;; things under.
 ;; It is the counterpart, for *where music comes from*, of what
-;; `supersonic-playback.el' is for *how it gets played*.  A provider -- currently only Subsonic, via
-;; `supersonic-subsonic.el' -- registers the functions implementing a
+;; `supersonic-playback.el' is for *how it gets played*.  A provider -- Subsonic, via
+;; `supersonic-subsonic.el', or Music Assistant, via the opt-in
+;; `supersonic-music-assistant.el' -- registers the functions implementing a
 ;; fixed set of operations under a name, and the generic
 ;; `supersonic-provider-*' functions here dispatch to whichever
 ;; provider `supersonic-provider' currently selects.

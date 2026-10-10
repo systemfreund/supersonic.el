@@ -1,0 +1,185 @@
+[
+ {
+  "item_id": "818",
+  "provider": "library",
+  "name": "French Cuisine",
+  "version": "",
+  "sort_name": "french cuisine",
+  "uri": "library://album/818",
+  "external_ids": [],
+  "is_playable": true,
+  "media_type": "album",
+  "provider_mappings": [
+   {
+    "item_id": "Alif Tree - French Cuisine [2006]",
+    "provider_domain": "filesystem_local",
+    "provider_instance": "filesystem_local--CTr9kfcj",
+    "available": true,
+    "in_library": true,
+    "is_unique": null,
+    "audio_format": {
+     "content_type": "?",
+     "codec_type": "?",
+     "sample_rate": 44100,
+     "bit_depth": 16,
+     "channels": 2,
+     "output_format_str": "?",
+     "bit_rate": 0
+    },
+    "url": "Alif Tree - French Cuisine [2006]",
+    "details": null
+   }
+  ],
+  "metadata": {
+   "images": [
+    {
+     "type": "thumb",
+     "path": "Alif Tree - French Cuisine [2006]/08-Lamor Nunca Muere.ogg",
+     "provider": "filesystem_local--CTr9kfcj",
+     "remotely_accessible": false,
+     "proxy_id": "62f4cd6916a575b5debbe40d4c479bcdb09310928789612f521e27352f065e4b"
+    }
+   ]
+  },
+  "favorite": false,
+  "year": 2006,
+  "artists": [
+   {
+    "item_id": "628",
+    "provider": "library",
+    "name": "Alif Tree",
+    "version": "",
+    "sort_name": "Alif Tree",
+    "uri": "library://artist/628",
+    "external_ids": [],
+    "is_playable": true,
+    "media_type": "artist",
+    "available": true
+   }
+  ],
+  "album_type": "unknown",
+  "available": true
+ },
+ {
+  "item_id": "184",
+  "provider": "library",
+  "name": "Hayvan Gibi",
+  "version": "",
+  "sort_name": "hayvan gibi",
+  "uri": "library://album/184",
+  "external_ids": [],
+  "is_playable": true,
+  "media_type": "album",
+  "provider_mappings": [
+   {
+    "item_id": "Baba Zula - Hayvan Gibi [2020]",
+    "provider_domain": "filesystem_local",
+    "provider_instance": "filesystem_local--CTr9kfcj",
+    "available": true,
+    "in_library": true,
+    "is_unique": null,
+    "audio_format": {
+     "content_type": "?",
+     "codec_type": "?",
+     "sample_rate": 44100,
+     "bit_depth": 16,
+     "channels": 2,
+     "output_format_str": "?",
+     "bit_rate": 0
+    },
+    "url": "Baba Zula - Hayvan Gibi [2020]",
+    "details": null
+   }
+  ],
+  "metadata": {
+   "images": [
+    {
+     "type": "thumb",
+     "path": "Baba Zula - Hayvan Gibi [2020]/04-4 Nal (4 Horse Shoes).ogg",
+     "provider": "filesystem_local--CTr9kfcj",
+     "remotely_accessible": false,
+     "proxy_id": "cd49682799eb9133273ba9fbf24dca653ac2f1e2753d282204a4e825d270a244"
+    }
+   ]
+  },
+  "favorite": false,
+  "year": 2020,
+  "artists": [
+   {
+    "item_id": "607",
+    "provider": "library",
+    "name": "Baba Zula",
+    "version": "",
+    "sort_name": "baba zula",
+    "uri": "library://artist/607",
+    "external_ids": [],
+    "is_playable": true,
+    "media_type": "artist",
+    "available": true
+   }
+  ],
+  "album_type": "unknown",
+  "available": true
+ },
+ {
+  "item_id": "295",
+  "provider": "library",
+  "name": "Drukqs",
+  "version": "",
+  "sort_name": "drukqs",
+  "uri": "library://album/295",
+  "external_ids": [],
+  "is_playable": true,
+  "media_type": "album",
+  "provider_mappings": [
+   {
+    "item_id": "Aphex Twin - Drukqs [2001]",
+    "provider_domain": "filesystem_local",
+    "provider_instance": "filesystem_local--CTr9kfcj",
+    "available": true,
+    "in_library": true,
+    "is_unique": null,
+    "audio_format": {
+     "content_type": "?",
+     "codec_type": "?",
+     "sample_rate": 44100,
+     "bit_depth": 16,
+     "channels": 2,
+     "output_format_str": "?",
+     "bit_rate": 0
+    },
+    "url": "Aphex Twin - Drukqs [2001]",
+    "details": null
+   }
+  ],
+  "metadata": {
+   "images": [
+    {
+     "type": "thumb",
+     "path": "Aphex Twin - Drukqs [2001]/08-Cock_ver10.ogg",
+     "provider": "filesystem_local--CTr9kfcj",
+     "remotely_accessible": false,
+     "proxy_id": "91fd36a59be51eb2e37280f8058b62d39579ef119c561839a2144e6ae6ebec63"
+    }
+   ]
+  },
+  "favorite": false,
+  "year": 2001,
+  "artists": [
+   {
+    "item_id": "925",
+    "provider": "library",
+    "name": "Aphex Twin",
+    "version": "",
+    "sort_name": "aphex twin",
+    "uri": "library://artist/925",
+    "external_ids": [],
+    "is_playable": true,
+    "media_type": "artist",
+    "available": true
+   }
+  ],
+  "album_type": "unknown",
+  "available": true
+ }
+]

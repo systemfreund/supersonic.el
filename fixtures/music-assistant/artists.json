@@ -1,0 +1,110 @@
+[
+ {
+  "item_id": "2073",
+  "provider": "library",
+  "name": "10 Ft. Ganja Plant",
+  "version": "",
+  "sort_name": "10 Ft. Ganja Plant",
+  "uri": "library://artist/2073",
+  "external_ids": [],
+  "is_playable": true,
+  "media_type": "artist",
+  "provider_mappings": [
+   {
+    "item_id": "10 Ft. Ganja Plant",
+    "provider_domain": "filesystem_local",
+    "provider_instance": "filesystem_local--CTr9kfcj",
+    "available": true,
+    "in_library": true,
+    "is_unique": null,
+    "audio_format": {
+     "content_type": "?",
+     "codec_type": "?",
+     "sample_rate": 44100,
+     "bit_depth": 16,
+     "channels": 2,
+     "output_format_str": "?",
+     "bit_rate": 0
+    },
+    "url": null,
+    "details": null
+   }
+  ],
+  "metadata": {},
+  "favorite": false,
+  "artist_type": "singer",
+  "available": true
+ },
+ {
+  "item_id": "732",
+  "provider": "library",
+  "name": "4 Hero",
+  "version": "",
+  "sort_name": "4 hero",
+  "uri": "library://artist/732",
+  "external_ids": [],
+  "is_playable": true,
+  "media_type": "artist",
+  "provider_mappings": [
+   {
+    "item_id": "4 Hero",
+    "provider_domain": "filesystem_local",
+    "provider_instance": "filesystem_local--CTr9kfcj",
+    "available": true,
+    "in_library": true,
+    "is_unique": null,
+    "audio_format": {
+     "content_type": "?",
+     "codec_type": "?",
+     "sample_rate": 44100,
+     "bit_depth": 16,
+     "channels": 2,
+     "output_format_str": "?",
+     "bit_rate": 0
+    },
+    "url": null,
+    "details": null
+   }
+  ],
+  "metadata": {},
+  "favorite": false,
+  "artist_type": "singer",
+  "available": true
+ },
+ {
+  "item_id": "1911",
+  "provider": "library",
+  "name": "Ab Digi",
+  "version": "",
+  "sort_name": "ab digi",
+  "uri": "library://artist/1911",
+  "external_ids": [],
+  "is_playable": true,
+  "media_type": "artist",
+  "provider_mappings": [
+   {
+    "item_id": "Ab Digi",
+    "provider_domain": "filesystem_local",
+    "provider_instance": "filesystem_local--CTr9kfcj",
+    "available": true,
+    "in_library": true,
+    "is_unique": null,
+    "audio_format": {
+     "content_type": "?",
+     "codec_type": "?",
+     "sample_rate": 44100,
+     "bit_depth": 16,
+     "channels": 2,
+     "output_format_str": "?",
+     "bit_rate": 0
+    },
+    "url": null,
+    "details": null
+   }
+  ],
+  "metadata": {},
+  "favorite": false,
+  "artist_type": "singer",
+  "available": true
+ }
+]
