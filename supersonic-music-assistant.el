@@ -87,7 +87,9 @@ schema 28.")
     (random ("order_by" . "random"))
     (newest ("order_by" . "timestamp_added_desc")))
   "Map of facade album list type to the args producing it.
-The args are for `music/albums/library_items', on top of a limit.")
+The args are for `music/albums/library_items', on top of a limit.  A
+server too old to know `played_only' ignores it, and lists the albums
+never played after the ones played.")
 
 (defvar supersonic-music-assistant--checked-url nil
   "The server address whose schema version was last found recent enough.
@@ -98,27 +100,32 @@ asked once per server rather than before every request.")
 ;;; Transport
 ;;;
 
-(defun supersonic-music-assistant--require-url ()
-  "Signal a `user-error' unless `supersonic-music-assistant-url' is set."
-  (when (string-empty-p (or supersonic-music-assistant-url ""))
-    (user-error "Set `supersonic-music-assistant-url' to your Music Assistant server, e.g. http://host:8095")))
+(defun supersonic-music-assistant--server ()
+  "Return `supersonic-music-assistant-url', signalling unless it is usable.
+It must name its scheme: it is matched verbatim against the authinfo
+host, and `url.el' cannot reach an address without one.  Read once
+per request, by `supersonic-music-assistant--command', so that the
+server checked, the token looked up and the server asked all agree."
+  (let ((server supersonic-music-assistant-url))
+    (unless (and (stringp server) (string-match-p "\\`https?://[^/]" server))
+      (user-error "Set `supersonic-music-assistant-url' to your Music Assistant server, scheme included, e.g. http://host:8095"))
+    server))
 
-(defun supersonic-music-assistant--url (path)
-  "Return the URL of PATH on the server at `supersonic-music-assistant-url'."
-  (supersonic-music-assistant--require-url)
-  (concat (string-remove-suffix "/" supersonic-music-assistant-url) path))
+(defun supersonic-music-assistant--url (server path)
+  "Return the URL of PATH on SERVER.
+SERVER is as returned by `supersonic-music-assistant--server'."
+  (concat (string-remove-suffix "/" server) path))
 
-(defun supersonic-music-assistant--token ()
-  "Return the token auth-source has for `supersonic-music-assistant-url'.
-Looked up afresh on every call, as `supersonic-auth' does, so that a
-corrected entry takes effect once auth-source's cache is forgotten.
-Never asks for a nil or empty host, which would match any entry -- a
-Subsonic password included."
-  (supersonic-music-assistant--require-url)
-  (let ((secret (plist-get (car (auth-source-search :host supersonic-music-assistant-url :require '(:secret)))
-                           :secret)))
+(defun supersonic-music-assistant--token (server)
+  "Return the token auth-source has for SERVER.
+SERVER is as returned by `supersonic-music-assistant--server', which
+also guarantees it is never nil or empty: a lookup for no host would
+match any entry, a Subsonic password included.  Looked up afresh on
+every call, as `supersonic-auth' does, so that a corrected entry takes
+effect once auth-source's cache is forgotten."
+  (let ((secret (plist-get (car (auth-source-search :host server :require '(:secret))) :secret)))
     (unless secret
-      (user-error "No Music Assistant token in auth-source for host %s" supersonic-music-assistant-url))
+      (user-error "No Music Assistant token in auth-source for host %s" server))
     (if (functionp secret)
         (funcall secret)
       secret)))
@@ -128,8 +135,16 @@ Subsonic password included."
 A POST of BODY, a JSON string, if BODY is non-nil, a GET otherwise.
 TOKEN, if non-nil, is sent as a bearer token.  A plain function rather
 than an `aio-defun', so that the `url-request-*' bindings are certain
-to be in effect while `url-retrieve' reads them."
-  (let ((url-request-method (if body "POST" "GET"))
+to be in effect while `url-retrieve' reads them.
+
+Redirects are not followed where `url.el' takes `url-max-redirections'
+per request: it drops the token from a redirected request, and turns
+a redirected POST into a GET, so following one could only fail, and
+be reported as a rejected token.  Emacs 28 reads the variable only
+once the answer is in, and follows anyway; either way,
+`supersonic-music-assistant--redirect-target' tells."
+  (let ((url-max-redirections 0)
+        (url-request-method (if body "POST" "GET"))
         (url-request-extra-headers
          (append (and body '(("Content-Type" . "application/json")))
                  (and token `(("Authorization" . ,(concat "Bearer " token))))))
@@ -146,12 +161,24 @@ error\"."
      (format "connection failed (%s)" (string-trim detail)))
     (_ (error-message-string err))))
 
+(defun supersonic-music-assistant--redirect-target (status)
+  "Return where the request behind STATUS was redirected to, or nil.
+`url.el' records a redirect it followed as `:redirect' in STATUS, and
+one it would not follow as an `http-redirect-limit' error."
+  (or (plist-get status :redirect)
+      (pcase (plist-get status :error)
+        (`(error http-redirect-limit ,target) target))))
+
 (defun supersonic-music-assistant--read-response (url status)
   "Return the parsed JSON body of the response to URL in the current buffer.
 STATUS is what `url-retrieve' handed its callback.  Signals an error
 for a request that got no answer at all, or an answer other than
-success -- a `user-error' for a rejected token, since that is the
-user's to fix."
+success -- a `user-error' for a redirect or a rejected token, since
+those are the user's to fix."
+  (let ((target (supersonic-music-assistant--redirect-target status)))
+    (when target
+      (user-error "%s redirects to %s; set `supersonic-music-assistant-url' (and its authinfo entry) to the address it redirects to"
+                  url target)))
   (unless url-http-end-of-headers
     (error "No answer from %s: %s" url (supersonic-music-assistant--describe-failure (plist-get status :error))))
   (let ((code url-http-response-status)
@@ -159,7 +186,7 @@ user's to fix."
                (decode-coding-string (buffer-substring (1+ url-http-end-of-headers) (point-max)) 'utf-8))))
     (cond
      ((eql code 401)
-      (user-error "Music Assistant rejected the token from auth-source for host %s" supersonic-music-assistant-url))
+      (user-error "Music Assistant at %s rejected the token from auth-source" url))
      ((not (and (integerp code) (< code 300)))
       (error "Music Assistant answered %s with %s: %s" url code body))
      (t
@@ -183,20 +210,21 @@ BODY and TOKEN are as for `supersonic-music-assistant--retrieve'."
      (kill-buffer buffer))))
 
 (aio-defun
- supersonic-music-assistant--check-server ()
- "Return a promise resolving once the server is known to be recent enough.
-Asks the server's `/info' unless `supersonic-music-assistant-url' was
-already found good, and rejects with a `user-error' for a server older
-than `supersonic-music-assistant-min-schema'."
- (let ((url supersonic-music-assistant-url))
-   (unless (and url (equal url supersonic-music-assistant--checked-url))
-     (let ((schema (assoc-default
-                    "schema_version"
-                    (aio-await (supersonic-music-assistant--fetch (supersonic-music-assistant--url "/info"))))))
-       (unless (and (numberp schema) (>= schema supersonic-music-assistant-min-schema))
-         (user-error "The Music Assistant server at %s is too old (schema %s); token authentication needs schema %d or later"
-                     url (or schema "unknown") supersonic-music-assistant-min-schema))
-       (setq supersonic-music-assistant--checked-url url)))))
+ supersonic-music-assistant--check-server (server)
+ "Return a promise resolving once SERVER is known to be recent enough.
+Asks SERVER's `/info' unless it was already found good, and rejects
+with a `user-error' for a server older than
+`supersonic-music-assistant-min-schema', or for one whose `/info'
+names no schema version at all, which is not Music Assistant."
+ (unless (equal server supersonic-music-assistant--checked-url)
+   (let* ((info (aio-await (supersonic-music-assistant--fetch (supersonic-music-assistant--url server "/info"))))
+          (schema (and (listp info) (assoc-default "schema_version" info))))
+     (unless (numberp schema)
+       (user-error "%s does not look like a Music Assistant server: its /info names no schema version" server))
+     (when (< schema supersonic-music-assistant-min-schema)
+       (user-error "The Music Assistant server at %s is too old (schema %s); token authentication needs schema %d or later"
+                   server schema supersonic-music-assistant-min-schema))
+     (setq supersonic-music-assistant--checked-url server))))
 
 (aio-defun
  supersonic-music-assistant--command (command &optional args)
@@ -205,17 +233,20 @@ COMMAND is an MA API command such as \"music/search\"; ARGS is an alist
 of its arguments, keyed by strings, with t and `:json-false' for the
 booleans and vectors for the arrays.
 
-The URL and the token are settled before the first `aio-await', while
-the command that asked is still running, as for Subsonic: a missing
-one is reported right away, and anything auth-source asks of the
-user -- a GnuPG passphrase, unlocking a Secret Service collection --
-is asked then rather than later from a timer."
- (let ((url (supersonic-music-assistant--url "/api"))
-       (token (supersonic-music-assistant--token)))
-   (aio-await (supersonic-music-assistant--check-server))
+The server and the token are settled before the first `aio-await',
+while the command that asked is still running, as for Subsonic: a
+missing one is reported right away, and anything auth-source asks of
+the user -- a GnuPG passphrase, unlocking a Secret Service collection
+-- is asked then rather than later from a timer.  The server is read
+once, so the token only ever goes to the server just checked."
+ (let* ((server (supersonic-music-assistant--server))
+        (token (supersonic-music-assistant--token server)))
+   (aio-await (supersonic-music-assistant--check-server server))
    (aio-await
     (supersonic-music-assistant--fetch
-     url (json-encode `(("command" . ,command) ("args" . ,(or args (make-hash-table))))) token))))
+     (supersonic-music-assistant--url server "/api")
+     (json-encode `(("command" . ,command) ("args" . ,(or args (make-hash-table)))))
+     token))))
 
 (defun supersonic-music-assistant--split-uri (uri)
   "Return the provider and item id of MA item URI, as (PROVIDER . ITEM-ID).
@@ -228,10 +259,16 @@ follows -- which may itself contain slashes, as a file path does."
       (error "Not a Music Assistant item URI: %s" uri))
     (cons (substring uri 0 separator) (substring uri (1+ slash)))))
 
-(defun supersonic-music-assistant--item-args (uri)
-  "Return the args naming the item with URI, for commands that take no URI."
+(defun supersonic-music-assistant--library-item-args (uri)
+  "Return the args naming the item with URI, for commands that take no URI.
+They also ask for what is in the library only, as everything else this
+provider lists is: without `in_library_only', MA adds what every
+linked streaming provider has for a library album, and on older
+servers -- schema 28, for one -- for a library artist too.  A server
+that does not know the argument ignores it, as MA does any argument
+it does not know."
   (pcase-let ((`(,provider . ,item-id) (supersonic-music-assistant--split-uri uri)))
-    `(("item_id" . ,item-id) ("provider_instance_id_or_domain" . ,provider))))
+    `(("item_id" . ,item-id) ("provider_instance_id_or_domain" . ,provider) ("in_library_only" . t))))
 
 ;;;
 ;;; MA JSON -> facade plists
@@ -313,7 +350,7 @@ Subsonic's getArtists leaves them out: they have no albums to open."
  (mapcar #'supersonic-music-assistant--album
          (aio-await
           (supersonic-music-assistant--command
-           "music/artists/artist_albums" (supersonic-music-assistant--item-args uri)))))
+           "music/artists/artist_albums" (supersonic-music-assistant--library-item-args uri)))))
 
 (aio-defun
  supersonic-music-assistant--album-list (type count)
@@ -334,7 +371,7 @@ Asks `music/albums/library_items' in the order
  (mapcar #'supersonic-music-assistant--track
          (aio-await
           (supersonic-music-assistant--command
-           "music/albums/album_tracks" (supersonic-music-assistant--item-args uri)))))
+           "music/albums/album_tracks" (supersonic-music-assistant--library-item-args uri)))))
 
 (aio-defun
  supersonic-music-assistant--track-by-uri (uri)
@@ -344,10 +381,16 @@ Asks `music/albums/library_items' in the order
 
 (aio-defun
  supersonic-music-assistant--search (query)
- "Return a promise resolving to the artists, albums and tracks matching QUERY."
+ "Return a promise resolving to the artists, albums and tracks matching QUERY.
+Searches the library only, as everything else this provider lists
+comes from the library.  Asks with `library_only', which newer servers
+still honour, rather than `providers', which schema 28 does not know."
  (let ((results (aio-await
                  (supersonic-music-assistant--command
-                  "music/search" `(("search_query" . ,query) ("media_types" . ["artist" "album" "track"]))))))
+                  "music/search"
+                  `(("search_query" . ,query)
+                    ("media_types" . ["artist" "album" "track"])
+                    ("library_only" . t))))))
    (list
     :artists (mapcar #'supersonic-music-assistant--artist (assoc-default "artists" results))
     :albums (mapcar #'supersonic-music-assistant--album (assoc-default "albums" results))

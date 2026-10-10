@@ -545,7 +545,7 @@ Only `subsonic' is built in; `music-assistant' needs
 `supersonic-music-assistant' loaded first.  Selecting a provider whose
 file has not been loaded is reported when a list buffer is next opened."
   :type '(choice (const :tag "Subsonic-compatible server" subsonic)
-                 (const :tag "Music Assistant server" music-assistant)
+                 (const :tag "Music Assistant server (load supersonic-music-assistant first)" music-assistant)
                  (symbol :tag "Other registered provider"))
   :group 'supersonic)
 
