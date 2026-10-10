@@ -305,11 +305,27 @@ without issuing anything."
  (when (supersonic-playback-live-p)
    (aio-await (supersonic-playback--call 'status key))))
 
+(defun supersonic-playback-offer-to-save (variable what name)
+  "Offer to save VARIABLE, just set to the WHAT called NAME, for future sessions.
+For a command selecting the player a backend plays on, such as a UPnP
+renderer: the selection is in effect already, and saving it writes to
+`custom-file', or to the init file without one, which not everyone
+wants touched -- their configuration may set it itself."
+  (if (y-or-n-p (format "Selected %s %s; save it for future sessions? " what name))
+      (progn
+        (customize-save-variable variable (symbol-value variable))
+        (message "Saved %s %s" what name))
+    (message "Selected %s %s for this session" what name)))
+
 (aio-defun
  supersonic-playback-queue ()
  "Return a promise resolving to the active backend's current play queue.
 Each entry is a plist with `:track-id', a supersonic track id, and
-`:current', non-nil for whichever entry is currently playing.  Resolves
+`:current', non-nil for whichever entry is currently playing.  A
+backend whose player hands out what it plays along with the queue may
+add `:track', the entry's track as `supersonic-provider-track' would
+resolve it, so that showing the queue need not look each entry up
+again.  Resolves
 to nil when nothing is live, the same way `supersonic-playback-status'
 does, so a caller needs no liveness guard of its own before asking --
 an empty queue and no backend to ask look the same from here."

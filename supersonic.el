@@ -75,8 +75,8 @@ track starting or ending."
  supersonic-queue-parse (entries)
  "Turn ENTRIES, as resolved by `supersonic-playback-queue', into
 tabulated-list entries.
-Looks each entry's track up through `supersonic-provider-track',
-concurrently (fired up front, below,
+Looks up each entry's track through `supersonic-provider-track', unless
+the entry brings its `:track' along, concurrently (fired up front, below,
 before anything is awaited) and tolerates individual lookup failures
 via `aio-catch', falling back to the \"?\" placeholder row instead of
 aborting the whole render."
@@ -85,8 +85,9 @@ aborting the whole render."
           (lambda (entry index)
             (let ((track-id (plist-get entry :track-id)))
               (list
-               index track-id (plist-get entry :current)
+               index track-id (plist-get entry :current) (plist-get entry :track)
                (and track-id
+                    (not (plist-get entry :track))
                     (aio-catch (supersonic-provider-track track-id))))))
           entries)))
    ;; A plain `mapcar' lambda would call `aio-await' through an ordinary `funcall', outside of this function's own
@@ -94,9 +95,9 @@ aborting the whole render."
    ;; (like `while') stays inline and awaits correctly.
    (let (rows)
      (dolist (item pending)
-       (pcase-let ((`(,index ,track-id ,current ,promise) item))
+       (pcase-let ((`(,index ,track-id ,current ,brought ,promise) item))
          (let* ((outcome (and promise (aio-await promise)))
-                (track (and outcome (eq (car outcome) :success) (cdr outcome))))
+                (track (or brought (and outcome (eq (car outcome) :success) (cdr outcome)))))
            (push (list
                   ;; A missing track id would only happen if a backend handed back an entry it could not resolve;
                   ;; fall back to the entry's position so the row still gets a usable, if display-only, id.

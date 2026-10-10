@@ -1,0 +1,139 @@
+[
+  {
+    "player_id": "FDPylNf_QruGA_LHFE28MjdygzDARSmXDlnQ6jeb7So",
+    "provider": "sendspin",
+    "type": "player",
+    "name": "Web (Firefox on Linux)",
+    "available": true,
+    "device_info": {
+      "model": "Web Player",
+      "manufacturer": "Unknown",
+      "software_version": "Mozilla/5.0 (X11; Linux x86_64; rv:157.0) Gecko/20100101 Firefox/157.0",
+      "model_id": null,
+      "manufacturer_id": null,
+      "identifiers": null,
+      "mac_address": null,
+      "ip_address": null
+    },
+    "supported_features": [
+      "set_members",
+      "play_media",
+      "volume_mute",
+      "volume_set",
+      "multi_device_dsp"
+    ],
+    "playback_state": "idle",
+    "elapsed_time": 0.0,
+    "elapsed_time_last_updated": 1791626426.472101,
+    "powered": true,
+    "volume_level": 100,
+    "volume_muted": null,
+    "group_members": null,
+    "static_group_members": null,
+    "can_group_with": null,
+    "synced_to": null,
+    "active_sound_mode": null,
+    "sound_mode_list": null,
+    "options": null,
+    "active_source": "FDPylNf_QruGA_LHFE28MjdygzDARSmXDlnQ6jeb7So",
+    "source_list": [
+      {
+        "id": "FDPylNf_QruGA_LHFE28MjdygzDARSmXDlnQ6jeb7So",
+        "name": "Music Assistant Queue",
+        "passive": null,
+        "can_play_pause": true,
+        "can_seek": true,
+        "can_next_previous": true,
+        "can_shuffle": null,
+        "can_repeat": null,
+        "shuffle_enabled": null,
+        "repeat_mode": null,
+        "account_id": null
+      }
+    ],
+    "active_group": null,
+    "current_media": {
+      "uri": "library://track/72",
+      "media_type": "track",
+      "title": "Spring Tank Fire",
+      "artist": "Quantic/Flowering Inferno",
+      "album": "1000 Watts",
+      "album_artist": "Quantic",
+      "image_url": "http://10.20.30.1:8095/imageproxy/250016dabc282703a8d8f1ada1beea36e9b1451ceda2494b2643f32bdb1ea5da?size=512&fmt=png",
+      "palette": {
+        "background_dark": [
+          94,
+          61,
+          58
+        ],
+        "background_light": [
+          216,
+          199,
+          197
+        ],
+        "primary": [
+          144,
+          94,
+          89
+        ],
+        "accent": [
+          231,
+          226,
+          212
+        ],
+        "on_dark": [
+          231,
+          226,
+          212
+        ],
+        "on_light": [
+          55,
+          57,
+          51
+        ]
+      },
+      "duration": 231,
+      "stream_duration": null,
+      "source_id": "FDPylNf_QruGA_LHFE28MjdygzDARSmXDlnQ6jeb7So",
+      "queue_item_id": "1727ac76c2984e5695bae4faaf7fd584",
+      "custom_data": null,
+      "elapsed_time": 3,
+      "elapsed_time_last_updated": 1791626426.4715338
+    },
+    "enabled": true,
+    "hide_in_ui": true,
+    "private": true,
+    "expose_to_ha": null,
+    "icon": "speaker",
+    "group_volume": 100,
+    "group_volume_muted": null,
+    "extra_attributes": null,
+    "power_control": "none",
+    "volume_control": "native",
+    "mute_control": "native",
+    "output_protocols": [
+      {
+        "output_protocol_id": "native",
+        "name": "Sendspin",
+        "protocol_domain": "sendspin",
+        "is_native": true,
+        "priority": 0,
+        "available": true,
+        "derived_from": null
+      }
+    ],
+    "active_output_protocol": null,
+    "needs_setup": null,
+    "setup_reason": null,
+    "has_setup_flow": null,
+    "sleep_timer_expires_at": null,
+    "active_source_audio": null,
+    "display_name": "Web (Firefox on Linux)",
+    "state": "idle",
+    "group_childs": null,
+    "extra_data": null,
+    "hide_player_in_ui": [
+      "always"
+    ]
+  }
+]
