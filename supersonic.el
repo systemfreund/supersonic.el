@@ -1,4 +1,4 @@
-;;; supersonic.el --- Browse and play music from subsonic servers with mpv -*- lexical-binding: t; -*-
+;;; supersonic.el --- Music client for Subsonic servers and Music Assistant -*- lexical-binding: t; -*-
 
 ;; Author: systemfreund <github@o9z.de>
 ;; Assisted-by: Claude:claude-opus-5
@@ -22,8 +22,13 @@
 
 ;;; Commentary:
 
-;; This package is meant to act as a simple subsonic frontend that
-;; uses mpv for playing the actual music.
+;; A music client for Subsonic-compatible servers (Navidrome, Gonic,
+;; ...) and Music Assistant: browse artists, albums, album lists and
+;; podcasts, search, and manage a play queue from Emacs.
+;;
+;; Playback happens locally through mpv, or remotely on the Subsonic
+;; server's jukebox, a UPnP/DLNA renderer or a Music Assistant player.
+;; Start with `M-x supersonic'; see the README for configuration.
 ;;
 ;; mpv is driven over its JSON IPC protocol through a Unix-domain
 ;; socket (`--input-ipc-server'), so this only works on platforms that
