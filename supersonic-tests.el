@@ -2618,10 +2618,14 @@ keeping whatever supersonic itself first memoized for that host."
 (ert-deftest supersonic-tests-build-url-takes-credentials-from-auth-function ()
   "`supersonic-auth-function' replaces the auth-source lookup outright,
 for a password kept somewhere auth-source cannot find it by host --
-such as a pass entry named for something else.  The url is built
-against `supersonic-host', the user and token from what it returns."
+such as a pass entry named for something else.  It is asked for
+`supersonic-host', which the url is built on, the user and token
+from what it returns."
   (let ((supersonic-host "http://music.test:4533")
-        (supersonic-auth-function (lambda () '(:user "alice" :secret "hunter2"))))
+        (supersonic-auth-function
+         (lambda (host)
+           (should (equal "http://music.test:4533" host))
+           '(:user "alice" :secret "hunter2"))))
     (cl-letf (((symbol-function 'auth-source-search)
                (lambda (&rest _) (ert-fail "Asked auth-source"))))
       (let* ((url (supersonic-build-url "/ping.view" nil))
@@ -2635,7 +2639,7 @@ against `supersonic-host', the user and token from what it returns."
   "The secret may also be a function returning it, as auth-source hands
 it out, so that it is only read when a request needs it."
   (let ((supersonic-host "music.test")
-        (supersonic-auth-function (lambda () (list :user "alice" :secret (lambda () "hunter2")))))
+        (supersonic-auth-function (lambda (_host) (list :user "alice" :secret (lambda () "hunter2")))))
     (let* ((url (supersonic-build-url "/ping.view" nil))
            (params (supersonic-tests--query-params url)))
       (should (string-prefix-p "https://music.test/rest/ping.view?" url))
@@ -2652,6 +2656,14 @@ function called in place of the secret."
                  (unless (plist-get spec :require)
                    (list (list :host (plist-get spec :host) :user "alice"))))))
       (should-error (supersonic-build-url "/ping.view" nil) :type 'user-error))))
+
+(ert-deftest supersonic-tests-build-url-reports-a-secret-function-finding-nothing ()
+  "A secret function returning nothing -- a pass entry that is not
+there -- is reported as missing credentials too, not sent as an empty
+password for the server to reject."
+  (let ((supersonic-host "http://music.test:4533")
+        (supersonic-auth-function (lambda (_host) (list :user "alice" :secret #'ignore))))
+    (should-error (supersonic-build-url "/ping.view" nil) :type 'user-error)))
 
 (ert-deftest supersonic-tests-build-url-looks-up-credentials-once ()
   "One url asks auth-source once, not once for its host and again for
@@ -6566,11 +6578,14 @@ the token, and only once per server."
 
 (ert-deftest supersonic-tests-ma-takes-the-token-from-token-function ()
   "`supersonic-music-assistant-token-function' replaces the auth-source
-lookup outright; the token it returns may be a string or a function
-returning one."
+lookup outright.  It is asked for the server the operation talks to;
+the token it returns may be a string or a function returning one."
   (supersonic-tests--with-ma-server #'supersonic-tests--ma-library
     (dolist (token (list "custom-token" (lambda () "custom-token")))
-      (let ((supersonic-music-assistant-token-function (lambda () token))
+      (let ((supersonic-music-assistant-token-function
+             (lambda (server)
+               (should (equal "http://ma.test:8095" server))
+               token))
             (supersonic-tests--ma-requests nil))
         (cl-letf (((symbol-function 'auth-source-search)
                    (lambda (&rest _) (ert-fail "Asked auth-source"))))

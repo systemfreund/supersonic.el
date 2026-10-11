@@ -34,13 +34,11 @@
 (require 'aio)
 (require 'supersonic-custom)
 
-(defun supersonic-auth-source-credentials ()
-  "Return the auth-source entry for the current `supersonic-host'.
+(defun supersonic-auth-source-credentials (host)
+  "Return the auth-source entry for HOST, a `supersonic-host'.
 The default `supersonic-auth-function': the entry is a plist with the
 user name under :user and the password under :secret, as that option
-asks for.  Only an entry with a password is returned, and none at all
-while `supersonic-host' is unset -- a lookup for no host would match
-any entry.
+asks for.  Only an entry with a password is returned.
 
 Calls `auth-source-search' fresh every time rather than memoizing the
 result ourselves -- `auth-source-search' already caches internally
@@ -50,12 +48,15 @@ to it means both a `supersonic-host' change and a corrected
 authinfo entry (after forgetting the cache) take effect on the next
 request instead of being frozen in for the rest of the Emacs
 session."
-  (unless (string-empty-p (or supersonic-host ""))
-    (car (auth-source-search :host supersonic-host :require '(:secret)))))
+  (car (auth-source-search :host host :require '(:secret))))
 
-(defun supersonic-auth ()
-  "Return the Subsonic credentials, as returned by `supersonic-auth-function'."
-  (funcall supersonic-auth-function))
+(defun supersonic-auth (&optional host)
+  "Return the credentials `supersonic-auth-function' has for HOST.
+HOST defaults to `supersonic-host'.  Returns nil without asking while
+it is unset: a lookup for no host would match any entry."
+  (let ((host (or host supersonic-host "")))
+    (unless (string-empty-p host)
+      (funcall supersonic-auth-function host))))
 
 (defun supersonic-alist->query (al)
   "Convert AL, an alist of string keys to string values, to a query string.
@@ -181,18 +182,16 @@ empty result instead of raising anything the user can see."
 12 hex characters, well above the API's 6-character minimum."
   (mapconcat (lambda (_) (format "%x" (random 16))) (make-list 12 nil) ""))
 
-(defun supersonic--auth-query (auth)
+(defun supersonic--auth-query (user password)
   "Build the \"u\"/\"t\"/\"s\" token-auth query parameters for one request.
-AUTH is as returned by `supersonic-auth'.  Uses Subsonic's token
-authentication (t = md5(password + salt), s = a fresh salt per
+USER and PASSWORD are the Subsonic credentials.  Uses Subsonic's
+token authentication (t = md5(password + salt), s = a fresh salt per
 request) instead of sending the plaintext password, so it never ends
 up in a URL -- which, depending on how that URL is used elsewhere
 \(e.g. handed to curl as an argument), could otherwise be visible to
 any local user via `ps' or in a subprocess's argv."
-  (let* ((secret (plist-get auth :secret))
-         (password (if (functionp secret) (funcall secret) secret))
-         (salt (supersonic--random-salt)))
-    `(("u" . ,(plist-get auth :user)) ("t" . ,(md5 (concat password salt))) ("s" . ,salt))))
+  (let ((salt (supersonic--random-salt)))
+    `(("u" . ,user) ("t" . ,(md5 (concat password salt))) ("s" . ,salt))))
 
 (defun supersonic-build-url (endpoint extra-query)
   "Build a valid supersonic url for a given ENDPOINT.
@@ -202,8 +201,10 @@ once per url."
   (let ((host (or supersonic-host "")))
     (when (string-empty-p host)
       (user-error "Set `supersonic-host' to your Subsonic server, e.g. https://host:4533"))
-    (let ((auth (supersonic-auth)))
-      (unless (plist-get auth :secret)
+    (let* ((auth (supersonic-auth host))
+           (secret (plist-get auth :secret))
+           (password (if (functionp secret) (funcall secret) secret)))
+      (unless password
         (user-error "No Subsonic password for %s: add an authinfo entry with it as the machine, or set `supersonic-auth-function'"
                     host))
       (concat
@@ -211,7 +212,9 @@ once per url."
          "https://")
        host "/rest" endpoint
        (supersonic-alist->query
-        (append (supersonic--auth-query auth) `(("c" . "ElSonic") ("v" . "1.16.0") ("f" . "json")) extra-query))))))
+        (append (supersonic--auth-query (plist-get auth :user) password)
+                `(("c" . "ElSonic") ("v" . "1.16.0") ("f" . "json"))
+                extra-query))))))
 
 (defun supersonic-get-id-as-string (data)
   "Return DATA's \"id\" field as a string, converting from a number if necessary."

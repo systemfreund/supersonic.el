@@ -310,17 +310,25 @@ name and password, `supersonic-music-assistant-token-function` the
 Music Assistant token:
 
 ```elisp
-(setopt supersonic-auth-function
-        (lambda ()
-          (list :user "USERNAME"
-                :secret (auth-source-pass-get 'secret "my/custom_entry"))))
+(setq supersonic-auth-function
+      (lambda (_host)
+        (list :user "USERNAME"
+              :secret (or (password-read-from-cache "supersonic")
+                          (let ((secret (auth-source-pass-get 'secret "my/custom_entry")))
+                            (password-cache-add "supersonic" secret)
+                            secret)))))
 
-(setopt supersonic-music-assistant-token-function
-        (lambda () (auth-source-pass-get 'secret "my/music_assistant")))
+(setq supersonic-music-assistant-token-function
+      (lambda (_server) (auth-source-pass-get 'secret "my/music_assistant")))
 ```
 
-Both are asked afresh each time, so a changed password is
-picked up right away. The secret may also be a function returning it.
+Each is called with the server's URL, so one function can serve
+several servers. The secret may also be a function returning it.
+
+The Subsonic one is called for every URL built -- each track queued,
+each cover shown -- and `auth-source-pass-get` decrypts the entry
+every time, hence the cache above; `password-cache-expiry` says for
+how long. The Music Assistant token is asked once per operation.
 
 ## Usage
 
