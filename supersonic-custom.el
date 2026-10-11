@@ -57,7 +57,9 @@ assumed."
   :type 'string
   :group 'supersonic)
 
-(defcustom supersonic-auth-function 'supersonic-auth-source-credentials
+(declare-function supersonic-auth-source-credentials "supersonic-api")
+
+(defcustom supersonic-auth-function #'supersonic-auth-source-credentials
   "Function returning the credentials for the Subsonic server.
 Called with the server, `supersonic-host', it returns a plist
 \(:user USER :secret SECRET), where SECRET is the password or a
@@ -596,8 +598,10 @@ look the token up some other way."
   :type 'string
   :group 'supersonic)
 
+(declare-function supersonic-music-assistant-auth-source-token "supersonic-music-assistant")
+
 (defcustom supersonic-music-assistant-token-function
-  'supersonic-music-assistant-auth-source-token
+  #'supersonic-music-assistant-auth-source-token
   "Function returning the token for the Music Assistant server.
 Called with the server, `supersonic-music-assistant-url', once as an
 operation starts, it returns the token, a function returning it, or
