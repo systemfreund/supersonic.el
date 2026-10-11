@@ -369,6 +369,7 @@ Mirrors the active backend's play queue, refreshed whenever it may have changed.
  (setq tabulated-list-format [("" 2 nil) ("Title" 40 t) ("Artist" 25 t) ("Album" 25 t)])
  (setq tabulated-list-padding 2)
  (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
+ (supersonic--add-playback-hooks)
  (tabulated-list-init-header))
 
 ;;;###autoload
@@ -989,17 +990,52 @@ whenever the active backend reports that playback was paused or resumed."
     (when buff
       (supersonic-now-playing-fetch-and-render buff))))
 
-;; Wired up from the outside rather than the backend calling these
-;; directly, so the backends stay independent of this one's buffers --
-;; see `supersonic-playback-track-change-hook'/
-;; `supersonic-playback-queue-change-hook'/
-;; `supersonic-playback-state-change-hook'.
-(add-hook 'supersonic-playback-track-change-hook #'supersonic-queue-maybe-refresh)
-(add-hook 'supersonic-playback-track-change-hook #'supersonic-now-playing-maybe-refresh)
-(add-hook 'supersonic-playback-queue-change-hook #'supersonic-queue-maybe-refresh)
-(add-hook 'supersonic-playback-queue-change-hook #'supersonic-now-playing-maybe-refresh)
-(add-hook 'supersonic-playback-state-change-hook #'supersonic-now-playing-maybe-refresh)
-(add-hook 'supersonic-playback-position-change-hook #'supersonic-now-playing-maybe-update-position)
+(defconst supersonic--playback-hooks
+  '((supersonic-playback-track-change-hook . supersonic-queue-maybe-refresh)
+    (supersonic-playback-track-change-hook . supersonic-now-playing-maybe-refresh)
+    (supersonic-playback-queue-change-hook . supersonic-queue-maybe-refresh)
+    (supersonic-playback-queue-change-hook . supersonic-now-playing-maybe-refresh)
+    (supersonic-playback-state-change-hook . supersonic-now-playing-maybe-refresh)
+    (supersonic-playback-position-change-hook . supersonic-now-playing-maybe-update-position))
+  "The `supersonic-playback.el' hook entries that keep this file's buffers current.
+Each element is (HOOK . FUNCTION).  Wired up from the outside rather
+than the backend calling these directly, so the backends stay
+independent of this one's buffers -- see
+`supersonic-playback-track-change-hook'/
+`supersonic-playback-queue-change-hook'/
+`supersonic-playback-state-change-hook'.
+
+Added by `supersonic--add-playback-hooks' once there is a play queue or
+now-playing buffer to keep current, and taken off again by
+`supersonic--maybe-remove-playback-hooks' when the last of them is
+killed, instead of at load time: loading a package should not add
+hooks.")
+
+(defun supersonic--add-playback-hooks ()
+  "Add `supersonic--playback-hooks', and remove them again with this buffer.
+Called from the play queue and now-playing modes.  Adding is
+idempotent, so every such buffer can call this; the buffer-local
+`kill-buffer-hook' entry takes them off once no such buffer is left."
+  (pcase-dolist (`(,hook . ,fn) supersonic--playback-hooks)
+    (add-hook hook fn))
+  (add-hook 'kill-buffer-hook #'supersonic--maybe-remove-playback-hooks nil t))
+
+(defun supersonic--remove-playback-hooks ()
+  "Remove every entry of `supersonic--playback-hooks'."
+  (pcase-dolist (`(,hook . ,fn) supersonic--playback-hooks)
+    (remove-hook hook fn)))
+
+(defun supersonic--maybe-remove-playback-hooks ()
+  "Remove `supersonic--playback-hooks' unless another buffer still needs them.
+Run from `kill-buffer-hook' in a play queue or now-playing buffer, which
+is still live at that point, so it is the other buffers that count."
+  (unless (seq-some
+           (lambda (buff)
+             (and (not (eq buff (current-buffer)))
+                  (with-current-buffer buff
+                    (derived-mode-p 'supersonic-queue-mode 'supersonic-now-playing-mode))))
+           (buffer-list))
+    (supersonic--remove-playback-hooks)))
 
 (defun supersonic-now-playing--insert-field (label value &optional field)
   "Insert one \"LABEL: VALUE\" metadata row, skipping it if VALUE is nil.
@@ -1549,7 +1585,8 @@ PROGRESS-CALLBACK."
  ;; Every field update replaces text whose display property is a whole
  ;; image spec; undo would keep each superseded cover art overlay and
  ;; seekbar alive, in a buffer nobody edits.
- (buffer-disable-undo))
+ (buffer-disable-undo)
+ (supersonic--add-playback-hooks))
 
 ;;;###autoload
 (defun supersonic-show-now-playing ()
@@ -2225,16 +2262,11 @@ provider is missing."
    ("P" "Switch provider" supersonic-provider-switch)]])
 
 (defun supersonic-unload-function ()
-  "Undo the `supersonic-playback.el' hook entries this file adds at load time.
+  "Undo the `supersonic-playback.el' hook entries a queue/now-playing buffer added.
 Called by `unload-feature', which would otherwise leave those hooks
 holding references to functions that no longer exist.  Returns nil so
 `unload-feature' still goes on to remove the definitions itself."
-  (remove-hook 'supersonic-playback-track-change-hook #'supersonic-queue-maybe-refresh)
-  (remove-hook 'supersonic-playback-track-change-hook #'supersonic-now-playing-maybe-refresh)
-  (remove-hook 'supersonic-playback-queue-change-hook #'supersonic-queue-maybe-refresh)
-  (remove-hook 'supersonic-playback-queue-change-hook #'supersonic-now-playing-maybe-refresh)
-  (remove-hook 'supersonic-playback-state-change-hook #'supersonic-now-playing-maybe-refresh)
-  (remove-hook 'supersonic-playback-position-change-hook #'supersonic-now-playing-maybe-update-position)
+  (supersonic--remove-playback-hooks)
   nil)
 
 (provide 'supersonic)

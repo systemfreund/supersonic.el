@@ -160,12 +160,8 @@ starts) has no process object left to kill in the first place."
     (supersonic-waveform--delete-file supersonic-waveform--outfile))
   (setq
    supersonic-waveform--process nil
-   supersonic-waveform--outfile nil))
-
-;; A transcode in flight when Emacs exits would otherwise leave its temp
-;; file behind: mpv is still writing to it, so nothing has deleted it yet.
-;; Only covers a graceful exit -- there is no hook for being killed.
-(add-hook 'kill-emacs-hook #'supersonic-waveform-cancel)
+   supersonic-waveform--outfile nil)
+  (remove-hook 'kill-emacs-hook #'supersonic-waveform-cancel))
 
 ;;;
 ;;; WAV parsing and peak/RMS analysis
@@ -432,7 +428,8 @@ stop it -- see that function's GENERATION parameter."
       (when (eq proc supersonic-waveform--process)
         (setq
          supersonic-waveform--process nil
-         supersonic-waveform--outfile nil))
+         supersonic-waveform--outfile nil)
+        (remove-hook 'kill-emacs-hook #'supersonic-waveform-cancel))
       (cl-flet
        ((finish
          (envelope)
@@ -510,6 +507,14 @@ wrote ourselves, and mpv otherwise refuses non-HTTP protocols
   ;; after it: the temp file would exist while nothing points at it,
   ;; stranded where not even `supersonic-waveform-cancel' could find it
   ;; again.  That is why URL comes in already resolved.
+  ;;
+  ;; A transcode in flight when Emacs exits would otherwise leave its
+  ;; temp file behind: mpv is still writing to it, so nothing has
+  ;; deleted it yet.  Hooked only while there is one, and taken off
+  ;; again by `supersonic-waveform-cancel' or the sentinel, rather than
+  ;; at load time.  Only covers a graceful exit -- there is no hook for
+  ;; being killed.
+  (add-hook 'kill-emacs-hook #'supersonic-waveform-cancel)
   (let ((outfile (make-temp-file "supersonic-waveform-" nil ".tmp")))
     (setq supersonic-waveform--outfile outfile)
     (setq supersonic-waveform--process
@@ -839,12 +844,11 @@ PROGRESS is as in `supersonic-waveform-image'."
   (supersonic-waveform-seekable (supersonic-waveform-image envelope progress)))
 
 (defun supersonic-waveform-unload-function ()
-  "Undo the `kill-emacs-hook' entry this file adds at load time.
+  "Cancel any waveform job, which takes its `kill-emacs-hook' entry off too.
 Called by `unload-feature', which would otherwise leave that hook
 holding a reference to a function that no longer exists.  Returns nil
 so `unload-feature' still goes on to remove the definitions itself."
   (supersonic-waveform-cancel)
-  (remove-hook 'kill-emacs-hook #'supersonic-waveform-cancel)
   nil)
 
 (provide 'supersonic-waveform)

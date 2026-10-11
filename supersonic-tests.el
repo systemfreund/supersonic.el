@@ -1310,10 +1310,13 @@ its output file, so a quick track change never leaves either behind."
            (progn
              (supersonic-waveform-ensure "long-track" #'ignore)
              (should (supersonic-tests--wait-for (lambda () (process-live-p supersonic-waveform--process))))
+             (should (memq #'supersonic-waveform-cancel kill-emacs-hook))
              (let ((outfile supersonic-waveform--outfile))
                (supersonic-waveform-cancel)
                (should-not (process-live-p supersonic-waveform--process))
-               (should-not (and outfile (file-exists-p outfile)))))
+               (should-not (and outfile (file-exists-p outfile))))
+             ;; Nothing left for `kill-emacs-hook' to clean up.
+             (should-not (memq #'supersonic-waveform-cancel kill-emacs-hook)))
          (delete-directory supersonic-cache-path t))))))
 
 (ert-deftest supersonic-tests-waveform-cancel-does-not-log-a-failure-message ()
@@ -3713,8 +3716,86 @@ every consumer re-read the queue."
   "Both buffers showing the play queue -- the queue buffer itself and
 now-playing's \"Queue: N/M\" row -- refresh on
 `supersonic-playback-queue-change-hook', not only on a track change."
-  (should (memq #'supersonic-queue-maybe-refresh supersonic-playback-queue-change-hook))
-  (should (memq #'supersonic-now-playing-maybe-refresh supersonic-playback-queue-change-hook)))
+  (let ((buff (generate-new-buffer " *supersonic-tests-queue*")))
+    (unwind-protect
+        (progn
+          (with-current-buffer buff
+            (supersonic-queue-mode))
+          (should (memq #'supersonic-queue-maybe-refresh supersonic-playback-queue-change-hook))
+          (should (memq #'supersonic-now-playing-maybe-refresh supersonic-playback-queue-change-hook)))
+      (kill-buffer buff))))
+
+(ert-deftest supersonic-tests-playback-hooks-live-only-as-long-as-their-buffers ()
+  "Loading supersonic adds no hooks (MELPA review, issue #103): the
+`supersonic--playback-hooks' entries go on when a play queue or
+now-playing buffer is set up, and come off once the last of them is
+killed -- not before."
+  (skip-unless
+   (not (seq-some
+         (lambda (b)
+           (with-current-buffer b
+             (derived-mode-p 'supersonic-queue-mode 'supersonic-now-playing-mode)))
+         (buffer-list))))
+  (cl-flet ((hooked-p
+             ()
+             (seq-every-p
+              (lambda (entry) (memq (cdr entry) (symbol-value (car entry))))
+              supersonic--playback-hooks))
+            (unhooked-p
+             ()
+             (seq-every-p
+              (lambda (entry) (not (memq (cdr entry) (symbol-value (car entry)))))
+              supersonic--playback-hooks)))
+    (supersonic--remove-playback-hooks)
+    (let ((queue (generate-new-buffer " *supersonic-tests-queue*"))
+          (now-playing (generate-new-buffer " *supersonic-tests-now-playing*")))
+      (unwind-protect
+          (progn
+            (should (unhooked-p))
+            (with-current-buffer queue
+              (supersonic-queue-mode))
+            (should (hooked-p))
+            (with-current-buffer now-playing
+              (supersonic-now-playing-mode))
+            (should (hooked-p))
+            ;; The now-playing buffer still needs them.
+            (kill-buffer queue)
+            (should (hooked-p))
+            (kill-buffer now-playing)
+            (should (unhooked-p)))
+        (when (buffer-live-p queue)
+          (kill-buffer queue))
+        (when (buffer-live-p now-playing)
+          (kill-buffer now-playing))))))
+
+(ert-deftest supersonic-tests-loading-adds-no-hooks ()
+  "Loading every supersonic file in a fresh Emacs leaves
+`kill-emacs-hook' and the `supersonic-playback.el' hooks untouched."
+  (let* ((dir (file-name-directory (locate-library "supersonic")))
+         (aio-dir (file-name-directory (locate-library "aio")))
+         (form
+          `(progn
+             (require 'supersonic)
+             (require 'supersonic-waveform)
+             (princ
+              (prin1-to-string
+               (list
+                (memq #'supersonic-waveform-cancel kill-emacs-hook)
+                supersonic-playback-track-change-hook
+                supersonic-playback-queue-change-hook
+                supersonic-playback-state-change-hook
+                supersonic-playback-position-change-hook))))))
+    (with-temp-buffer
+      (should
+       (eq 0
+           (call-process
+            (expand-file-name invocation-name invocation-directory)
+            nil
+            '(t nil)
+            nil
+            "-Q" "--batch" "-L" dir "-L" aio-dir
+            "--eval" (prin1-to-string form))))
+      (should (equal '(nil nil nil nil nil) (car (read-from-string (buffer-string))))))))
 
 (ert-deftest supersonic-tests-jukebox-poll-scrobbles-old-and-new-track-on-change ()
   "A poll that finds the current track id changed scrobbles the previous
