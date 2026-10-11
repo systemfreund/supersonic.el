@@ -7306,6 +7306,10 @@ makes `url.el' prompt from a timer."
   "What the fake server answers `player_queues/items' with, if non-nil.
 Otherwise it answers with `supersonic-tests--ma-queue-entries'.")
 
+(defvar supersonic-tests--ma-players nil
+  "What the fake server answers `players/all' with, if non-nil.
+A list of players, as alists.  Otherwise it answers with the fixture.")
+
 (defvar supersonic-tests--ma-clock 1000000.0
   "Fake wall-clock seconds `float-time' returns in a Music Assistant player test.")
 
@@ -7347,7 +7351,9 @@ values of the queue, overriding these."
               (supersonic-tests--ma-queue-items-text)
               (t
                (json-encode (vconcat (mapcar #'supersonic-tests--ma-entry supersonic-tests--ma-queue-entries))))))
-            ("players/all" (supersonic-tests--ma-fixture "players"))
+            ("players/all" (if supersonic-tests--ma-players
+                               (json-encode (vconcat supersonic-tests--ma-players))
+                             (supersonic-tests--ma-fixture "players")))
             (_ "null")))))
 
 (defmacro supersonic-tests--with-ma-player (&rest body)
@@ -7360,7 +7366,8 @@ starts out with an empty, idle queue.  `float-time' reads
          (supersonic-tests--ma-clock 1000000.0)
          (supersonic-tests--ma-queue nil)
          (supersonic-tests--ma-queue-entries nil)
-         (supersonic-tests--ma-queue-items-text nil))
+         (supersonic-tests--ma-queue-items-text nil)
+         (supersonic-tests--ma-players nil))
      (supersonic-tests--ma-set-queue "idle" nil)
      (cl-letf (((symbol-function 'float-time) (lambda (&rest _) supersonic-tests--ma-clock)))
        (supersonic-tests--with-ma-server #'supersonic-tests--ma-player-server
@@ -7648,16 +7655,20 @@ queue-change hook when only the entries do."
         (should (equal '(track) (poll "paused" '("library://track/1" "library://track/2") 1)))))))
 
 (ert-deftest supersonic-tests-ma-player-without-a-player ()
-  "With no player selected, a playing operation signals a `user-error'
-saying how to select one, and stopping does nothing, as it does with
-no server set.  A player the
+  "With no player selected, an operation controlling the queue signals
+a `user-error' saying how to select one, and stopping does nothing, as
+it does with no server set.  A player the
 server does not know fails the poll, reported once, never signalled."
   (let ((supersonic-music-assistant-player nil)
         (supersonic-music-assistant-url "http://ma.test:8095"))
     (should (string-match-p "supersonic-music-assistant-select-player"
-                            (cadr (should-error (supersonic-music-assistant-player-start '("library://track/1"))
+                            (cadr (should-error (supersonic-music-assistant-player-toggle-play)
                                                 :type 'user-error))))
-    (should-error (supersonic-music-assistant-player-toggle-play) :type 'user-error)
+    (dolist (operation (list #'supersonic-music-assistant-player-next
+                             #'supersonic-music-assistant-player-prev
+                             (lambda () (supersonic-music-assistant-player-seek 10))
+                             (lambda () (supersonic-music-assistant-player-seek-fraction 0.5))))
+      (should-error (funcall operation) :type 'user-error))
     (should-not (supersonic-music-assistant-player-stop)))
   ;; Nor is there anything to stop with a player but no server.
   (let ((supersonic-music-assistant-player '(:id "player-1"))
@@ -7700,6 +7711,125 @@ every other one -- and sets it for the session unless asked to save."
     (should (equal '(("Kitchen (a)" :id "a" :name "Kitchen") ("Kitchen (b)" :id "b" :name "Kitchen"))
                    (supersonic-music-assistant-player--choices
                     (supersonic-music-assistant-player--selectable players))))))
+
+;;;
+;;; Playing with no player selected (#93)
+;;;
+
+(defconst supersonic-tests--ma-two-players
+  '((("player_id" . "a") ("display_name" . "Kitchen") ("enabled" . t) ("available" . t))
+    (("player_id" . "b") ("display_name" . "Bath") ("enabled" . t) ("available" . t))
+    (("player_id" . "c") ("display_name" . "Gone") ("enabled" . t) ("available" . :json-false)))
+  "Two players a queue can play on, and one it cannot.")
+
+(defmacro supersonic-tests--with-ma-unselected-player (&rest body)
+  "Run BODY as `supersonic-tests--with-ma-player' does, but with no player.
+`completing-read', `y-or-n-p' and saving fail the test unless BODY
+binds them.  MESSAGES and REPORTED, bound for BODY, collect what was
+shown in the echo area and what failures were reported."
+  `(supersonic-tests--with-ma-player
+     (let ((supersonic-music-assistant-player nil)
+           (messages nil)
+           (reported nil))
+       (cl-letf (((symbol-function 'customize-set-variable) (lambda (variable value) (set variable value)))
+                 ((symbol-function 'customize-save-variable) (lambda (&rest _) (ert-fail "Saved the player")))
+                 ((symbol-function 'completing-read) (lambda (&rest _) (ert-fail "Asked for a player")))
+                 ((symbol-function 'y-or-n-p) (lambda (&rest _) (ert-fail "Offered to save the player")))
+                 ((symbol-function 'message)
+                  (lambda (format &rest args) (push (apply #'format-message format args) messages)))
+                 ((symbol-function 'supersonic--report-async-error)
+                  (lambda (_description err) (push (error-message-string err) reported))))
+         ,@body))))
+
+(defun supersonic-tests--ma-play-unselected (operation)
+  "Call OPERATION with a track, and wait until it has chosen a player and played.
+For an operation called with no player selected, which chooses one
+asynchronously."
+  (let ((choose-then (symbol-function 'supersonic-music-assistant-player--choose-then))
+        (promise nil))
+    (cl-letf (((symbol-function 'supersonic-music-assistant-player--choose-then)
+               (lambda (&rest args) (setq promise (apply choose-then args)))))
+      (funcall operation '("library://track/1")))
+    (should promise)
+    (supersonic-tests--resolve promise)))
+
+(defun supersonic-tests--ma-played-on ()
+  "Return the queues `player_queues/play_media' was sent to, in order."
+  (mapcar (lambda (command) (assoc-default "queue_id" (cdr command)))
+          (seq-filter (lambda (command) (equal "player_queues/play_media" (car command)))
+                      (supersonic-tests--ma-commands))))
+
+(ert-deftest supersonic-tests-ma-player-plays-on-the-sole-player ()
+  "Playing or enqueueing with no player selected, on a server with only
+one player available, plays on that one without asking, nor offering
+to save it, and says so."
+  (dolist (case '((supersonic-music-assistant-player-start "Playing on Web (Firefox on Linux)")
+                  (supersonic-music-assistant-player-enqueue "Enqueueing on Web (Firefox on Linux)")))
+    (supersonic-tests--with-ma-unselected-player
+      (pcase-let ((`(,operation ,said) case))
+        (supersonic-tests--ma-play-unselected operation)
+        (should (equal '("FDPylNf_QruGA_LHFE28MjdygzDARSmXDlnQ6jeb7So") (supersonic-tests--ma-played-on)))
+        (should (equal '(:id "FDPylNf_QruGA_LHFE28MjdygzDARSmXDlnQ6jeb7So" :name "Web (Firefox on Linux)")
+                       supersonic-music-assistant-player))
+        (should (member said messages))
+        (should-not reported)))))
+
+(ert-deftest supersonic-tests-ma-player-asks-which-of-several-players ()
+  "Playing or enqueueing with no player selected, on a server with
+several players available, asks which, plays on the one chosen, and
+offers to save it after."
+  (dolist (operation '(supersonic-music-assistant-player-start supersonic-music-assistant-player-enqueue))
+    (supersonic-tests--with-ma-unselected-player
+      (setq supersonic-tests--ma-players supersonic-tests--ma-two-players)
+      (let ((offered nil)
+            (offered-to-save nil))
+        (cl-letf (((symbol-function 'completing-read)
+                   (lambda (_prompt choices &rest _) (push (mapcar #'car choices) offered) "Bath"))
+                  ((symbol-function 'y-or-n-p)
+                   (lambda (prompt)
+                     (should (supersonic-tests--ma-played-on))
+                     (push prompt offered-to-save)
+                     nil)))
+          (supersonic-tests--ma-play-unselected operation))
+        (should (equal '(("Kitchen" "Bath")) offered))
+        (should (equal '("b") (supersonic-tests--ma-played-on)))
+        (should (equal '(:id "b" :name "Bath") supersonic-music-assistant-player))
+        (should (= 1 (length offered-to-save)))
+        (should (string-match-p "Bath" (car offered-to-save)))
+        (should-not reported)))))
+
+(ert-deftest supersonic-tests-ma-player-plays-nothing-without-a-choice ()
+  "Playing with no player selected plays nothing, and leaves the player
+unset, on a server with no player available -- reporting so -- or when
+the question which is left unanswered."
+  (supersonic-tests--with-ma-unselected-player
+    (setq supersonic-tests--ma-players (last supersonic-tests--ma-two-players))
+    (supersonic-tests--ma-play-unselected #'supersonic-music-assistant-player-start)
+    (should-not (supersonic-tests--ma-played-on))
+    (should-not supersonic-music-assistant-player)
+    (should (equal '("Music Assistant at http://ma.test:8095 has no player available") reported)))
+  (supersonic-tests--with-ma-unselected-player
+    (setq supersonic-tests--ma-players supersonic-tests--ma-two-players)
+    (cl-letf (((symbol-function 'completing-read) (lambda (&rest _) "")))
+      (supersonic-tests--ma-play-unselected #'supersonic-music-assistant-player-start))
+    (should-not (supersonic-tests--ma-played-on))
+    (should-not supersonic-music-assistant-player)
+    (should-not reported)))
+
+(ert-deftest supersonic-tests-ma-player-selection-asks-even-for-the-sole-player ()
+  "Selecting a player asks, and offers to save, even when the server has
+only one: it was asked for."
+  (supersonic-tests--with-ma-unselected-player
+    (let ((asked 0)
+          (offered 0))
+      (cl-letf (((symbol-function 'completing-read)
+                 (lambda (_prompt choices &rest _) (cl-incf asked) (caar choices)))
+                ((symbol-function 'y-or-n-p) (lambda (_prompt) (cl-incf offered) nil)))
+        (supersonic-tests--resolve (supersonic-music-assistant-select-player)))
+      (should (= 1 asked))
+      (should (= 1 offered))
+      (should (equal "FDPylNf_QruGA_LHFE28MjdygzDARSmXDlnQ6jeb7So"
+                     (plist-get supersonic-music-assistant-player :id))))))
 
 ;;;
 ;;; Switching providers (#61)
