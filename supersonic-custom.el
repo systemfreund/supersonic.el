@@ -64,19 +64,27 @@ Called with the server, `supersonic-host', it returns a plist
 function returning it, or nil if it has none.  The default looks the
 server up in auth-source.
 
-It is called for every url built -- each track queued, each cover
-shown -- so a slow lookup should cache what it finds.  For a password
-kept where auth-source cannot find it by host, such as a pass entry
-named for something else, cached for `password-cache-expiry':
+For a password kept where auth-source cannot find it by host, such
+as a pass entry named for something else:
 
   (setq supersonic-auth-function
         (lambda (_host)
           (list :user \"USERNAME\"
-                :secret (or (password-read-from-cache \"supersonic\")
-                            (let ((secret (auth-source-pass-get
-                                           \='secret \"my/entry\")))
-                              (password-cache-add \"supersonic\" secret)
-                              secret)))))"
+                :secret (auth-source-pass-get \='secret \"my/entry\"))))
+
+It is called for every url built -- each track queued, each cover
+shown -- so a slow lookup, as decrypting that entry is, should cache
+what it finds, e.g. for `password-cache-expiry':
+
+  (setq supersonic-auth-function
+        (lambda (host)
+          (let ((key (concat \"supersonic:\" host)))
+            (list :user \"USERNAME\"
+                  :secret (or (password-read-from-cache key)
+                              (let ((secret (auth-source-pass-get
+                                             \='secret \"my/entry\")))
+                                (password-cache-add key secret)
+                                secret))))))"
   :type '(choice (function-item supersonic-auth-source-credentials)
                  (function :tag "Other function"))
   :group 'supersonic)
@@ -599,7 +607,21 @@ For a token kept where auth-source cannot find it by host, such as a
 pass entry named for something else:
 
   (setq supersonic-music-assistant-token-function
-        (lambda (_server) (auth-source-pass-get \='secret \"my/entry\")))"
+        (lambda (_server) (auth-source-pass-get \='secret \"my/entry\")))
+
+Polling the player's state is an operation too, so while
+`music-assistant' is the backend this is called every
+`supersonic-music-assistant-poll-interval' seconds.  A slow lookup,
+as decrypting that entry is, should cache what it finds, e.g. for
+`password-cache-expiry':
+
+  (setq supersonic-music-assistant-token-function
+        (lambda (server)
+          (let ((key (concat \"supersonic:\" server)))
+            (or (password-read-from-cache key)
+                (let ((token (auth-source-pass-get \='secret \"my/entry\")))
+                  (password-cache-add key token)
+                  token)))))"
   :type '(choice (function-item supersonic-music-assistant-auth-source-token)
                  (function :tag "Other function"))
   :group 'supersonic)

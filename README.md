@@ -313,10 +313,7 @@ Music Assistant token:
 (setq supersonic-auth-function
       (lambda (_host)
         (list :user "USERNAME"
-              :secret (or (password-read-from-cache "supersonic")
-                          (let ((secret (auth-source-pass-get 'secret "my/custom_entry")))
-                            (password-cache-add "supersonic" secret)
-                            secret)))))
+              :secret (auth-source-pass-get 'secret "my/custom_entry"))))
 
 (setq supersonic-music-assistant-token-function
       (lambda (_server) (auth-source-pass-get 'secret "my/music_assistant")))
@@ -325,10 +322,39 @@ Music Assistant token:
 Each is called with the server's URL, so one function can serve
 several servers. The secret may also be a function returning it.
 
-The Subsonic one is called for every URL built -- each track queued,
-each cover shown -- and `auth-source-pass-get` decrypts the entry
-every time, hence the cache above; `password-cache-expiry` says for
-how long. The Music Assistant token is asked once per operation.
+Neither result is kept: the Subsonic function is called for every URL
+built -- each track queued, each cover shown -- and the Music
+Assistant one once per operation, and also on every poll of the
+player's state while it is the backend, every
+`supersonic-music-assistant-poll-interval` seconds. That is fine for
+something cheap, such as reading a plain file, but
+`auth-source-pass-get` decrypts the entry every time. To keep what it
+found for a while, cache it:
+
+```elisp
+(setq supersonic-auth-function
+      (lambda (host)
+        (let ((key (concat "supersonic:" host)))
+          (list :user "USERNAME"
+                :secret (or (password-read-from-cache key)
+                            (let ((secret (auth-source-pass-get 'secret "my/custom_entry")))
+                              (password-cache-add key secret)
+                              secret))))))
+
+(setq supersonic-music-assistant-token-function
+      (lambda (server)
+        (let ((key (concat "supersonic:" server)))
+          (or (password-read-from-cache key)
+              (let ((token (auth-source-pass-get 'secret "my/music_assistant")))
+                (password-cache-add key token)
+                token)))))
+```
+
+These hold the secret for `password-cache-expiry` seconds, 16 by
+default, so a playing Music Assistant player still decrypts the entry
+about every 16 seconds. Raising that variable lengthens it, but it is
+global: it also applies to everything else Emacs caches there, such
+as GnuPG passphrases.
 
 ## Usage
 
