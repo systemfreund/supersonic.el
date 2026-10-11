@@ -4505,10 +4505,13 @@ in a wider window draws it all again."
         ;; 2 padding + 2 separators + 10 for the track number leave 16: both columns stop at their minimum.
         (should (equal '("Title" 7 t) (aref tabulated-list-format 0)))
         (should (equal second (aref (cadr (car tabulated-list-entries)) 0)))
-        (goto-char (point-min))
-        (should (search-forward "tttttt…" nil t))
-        (should-not (search-forward "second" nil t))
-        (should (equal second (aref (tabulated-list-get-entry (pos-bol)) 0)))
+        ;; Before Emacs 29 `tabulated-list-print' does all the cutting itself, by hiding the rest of the cell behind
+        ;; a `display' ellipsis rather than leaving it out.
+        (when (supersonic--pixelwise-p)
+          (goto-char (point-min))
+          (should (search-forward "tttttt…" nil t))
+          (should-not (search-forward "second" nil t))
+          (should (equal second (aref (tabulated-list-get-entry (pos-bol)) 0))))
         (setq tabulated-list-sort-key '("Title" . nil))
         (tabulated-list-print)
         (should (equal '(a b) (mapcar #'car tabulated-list-entries))))
