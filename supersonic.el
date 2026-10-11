@@ -1033,14 +1033,14 @@ of the buffer each time."
               ;; `image-cache-eviction-delay' (300 seconds by default)
               ;; whether or not anything still displays them.  Unflushed,
               ;; a few minutes of playback keeps a few hundred decoded
-              ;; 500x48 pixmaps alive for one seekbar.  Errors ignored
-              ;; because `image-flush' insists on a real window-system
-              ;; frame ("Window system frame should be used" anywhere
-              ;; else), and a cache entry that outlives its display is
-              ;; worth strictly less than the render it would abort.
-              (when (eq (car-safe stale) 'image)
-                (ignore-errors
-                  (image-flush stale)))
+              ;; 500x48 pixmaps alive for one seekbar.  FRAME t flushes
+              ;; it from every window-system frame and skips the rest,
+              ;; where `image-flush' on the selected frame would signal
+              ;; "Window system frame should be used" instead -- and the
+              ;; seekbar may well be showing on some other frame anyway.
+              ;; Without image support there is no `image-flush' at all.
+              (when (and (eq (car-safe stale) 'image) (fboundp 'image-flush))
+                (image-flush stale t))
               (goto-char (prop-match-beginning match))
               (insert (propertize value 'supersonic-now-playing-field field)))))))))
 

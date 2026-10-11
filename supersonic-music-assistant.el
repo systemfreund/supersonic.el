@@ -284,7 +284,15 @@ readable `Date' leaves the estimate as it was."
                      (let ((case-fold-search t))
                        (and (re-search-forward "^Date:[ \t]*\\([^\r\n]+\\)" nil t)
                             (match-string 1))))))
-         (date (and header (ignore-errors (date-to-time header)))))
+         ;; `date-to-time' signals a plain `error' ("Invalid date") on
+         ;; a header it cannot parse, which is no reason to fail the
+         ;; request it came with.
+         (date (and header
+                    (condition-case nil
+                        (date-to-time header)
+                      (error
+                       (supersonic--log "Unreadable Date header: %s" header)
+                       nil)))))
     (when date
       (let ((offset (- (float-time) (float-time date))))
         (setq supersonic-music-assistant--clock-offset (if (> (abs offset) 2) offset 0))))))

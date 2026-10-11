@@ -334,8 +334,13 @@ for whoever looks at the cache directory.  Never signals, even for a
 provider that is not registered, since cache lookups happen during
 rendering."
   (let ((namespace (or (and (supersonic-provider-supports-p 'cache-namespace)
-                            (ignore-errors
-                              (supersonic-provider--call 'cache-namespace)))
+                            ;; A buggy provider's failure must not break
+                            ;; rendering; it only costs per-server isolation.
+                            (condition-case err
+                                (supersonic-provider--call 'cache-namespace)
+                              (error
+                               (supersonic--log "cache-namespace failed: %s" (error-message-string err))
+                               nil)))
                        "")))
     (format "%s-%s"
             (replace-regexp-in-string "[^[:alnum:]_-]" "_" (symbol-name supersonic-provider))
@@ -347,12 +352,24 @@ nil for a provider that has none to give -- or when there is no
 active provider at all, since this is asked while reporting some
 other failure and must not raise one of its own."
   (and (supersonic-provider-supports-p 'config-hints)
-       (ignore-errors
-         (supersonic-provider--call 'config-hints))))
+       (condition-case err
+           (supersonic-provider--call 'config-hints)
+         ;; Asked while reporting another failure: logging this one
+         ;; quietly keeps that report, the one that matters, on screen.
+         (error
+          (supersonic--log "config-hints failed: %s" (error-message-string err))
+          nil))))
 
 ;;;
 ;;; Reporting failed refreshes
 ;;;
+
+(defun supersonic--log (format-string &rest args)
+  "Log FORMAT-STRING with ARGS to *Messages* without showing it.
+For failures worth a trace but not worth interrupting the user over,
+e.g. a cache file that could not be deleted."
+  (let ((inhibit-message t))
+    (apply #'message (concat "[Supersonic] " format-string) args)))
 
 (defun supersonic--report-async-error (description err)
   "Tell the user that DESCRIPTION failed with ERR via the echo area.

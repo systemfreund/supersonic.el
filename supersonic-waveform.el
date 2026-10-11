@@ -127,6 +127,16 @@ the same file name."
    (format "waveform-%s-%d-%d" (supersonic-provider-cache-name id) buckets supersonic-waveform-samplerate)
    supersonic-cache-path))
 
+(defun supersonic-waveform--delete-file (file)
+  "Delete temporary or cache FILE, logging rather than signalling on failure.
+Every caller is cleaning up after the real work, which a leftover file
+must not abort: a temp file left behind is harmless, and a stale cache
+entry is deleted again on the next visit to its track."
+  (condition-case err
+      (delete-file file)
+    (file-error
+     (supersonic--log "Could not delete %s: %s" file (error-message-string err)))))
+
 (defun supersonic-waveform-cancel ()
   "Kill any in-flight waveform transcode and discard its output file.
 Invalidates any in-flight chunked sample analysis too, and forgets
@@ -147,8 +157,7 @@ starts) has no process object left to kill in the first place."
     (process-put supersonic-waveform--process 'supersonic-waveform-cancelled t)
     (delete-process supersonic-waveform--process))
   (when (and supersonic-waveform--outfile (file-exists-p supersonic-waveform--outfile))
-    (ignore-errors
-      (delete-file supersonic-waveform--outfile)))
+    (supersonic-waveform--delete-file supersonic-waveform--outfile))
   (setq
    supersonic-waveform--process nil
    supersonic-waveform--outfile nil))
@@ -353,8 +362,7 @@ doesn't have one of those extensions in the first place."
     ;; done.  A cancelled analysis never reaches its completion path at
     ;; all (see `supersonic-waveform--analyze-samples-async'), so deleting
     ;; there leaked one multi-megabyte temp file per interrupted track.
-    (ignore-errors
-      (delete-file path))
+    (supersonic-waveform--delete-file path)
     ;; Length-checked first: anything shorter than the 12-byte
     ;; "RIFF" <size> "WAVE" header isn't one, and `substring' would
     ;; signal `args-out-of-range' over it instead of the error this
@@ -430,15 +438,19 @@ stop it -- see that function's GENERATION parameter."
          (envelope)
          (let ((file-name-handler-alist nil))
            (when envelope
-             (ignore-errors
-               (supersonic-waveform--write-cache cache-file envelope)))
+             ;; A cache that cannot be written only means analyzing
+             ;; again next time; the envelope is still good to show.
+             (condition-case err
+                 (supersonic-waveform--write-cache cache-file envelope)
+               (file-error
+                (supersonic--log "Could not cache waveform to %s: %s"
+                                 cache-file (error-message-string err)))))
            ;; Analysis deletes OUTFILE itself the moment it has the bytes
            ;; in memory (see `supersonic-waveform--analyze-file-async'),
            ;; so this only ever has anything left to do on the paths
            ;; where analysis never ran at all.
            (when (file-exists-p outfile)
-             (ignore-errors
-               (delete-file outfile))))
+             (supersonic-waveform--delete-file outfile)))
          (when (eq job supersonic-waveform--job)
            (setq supersonic-waveform--job nil))
          (funcall (plist-get job :callback) envelope)))
@@ -551,16 +563,21 @@ there's nothing partial about that case."
          (cache-file (supersonic-waveform-cache-file id buckets))
          (cached
           (and (file-exists-p cache-file)
-               (or (ignore-errors
-                     (supersonic-waveform--read-cache cache-file buckets))
+               (or (condition-case err
+                       (supersonic-waveform--read-cache cache-file buckets)
+                     ;; Gone or unreadable since `file-exists-p' said
+                     ;; otherwise: a miss like any other.
+                     (file-error
+                      (supersonic--log "Could not read waveform cache %s: %s"
+                                       cache-file (error-message-string err))
+                      nil))
                    ;; There is a file but nothing usable in it (truncated,
                    ;; or written at a different bucket count).  Delete it
                    ;; and fall through to regenerating: leaving it in place
                    ;; would report failure again on every future visit to
                    ;; this track, forever.
                    (progn
-                     (ignore-errors
-                       (delete-file cache-file))
+                     (supersonic-waveform--delete-file cache-file)
                      nil)))))
     (cond
      (cached
@@ -625,8 +642,8 @@ so a pathological theme dims the waveform instead of erroring out of
 the whole now-playing buffer render."
   (mapcar
    (lambda (v) (/ v 257))
-   (or (ignore-errors
-         (color-values color))
+   (or (and (stringp color)
+            (color-values color))
        '(0 0 0))))
 
 (defun supersonic-waveform--blend (fg bg alpha)

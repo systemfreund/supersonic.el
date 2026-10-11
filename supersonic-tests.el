@@ -1289,6 +1289,16 @@ existed."
           (should-not (file-exists-p cache-file)))
       (delete-directory supersonic-cache-path t))))
 
+(ert-deftest supersonic-tests-waveform-delete-file-logs-instead-of-signalling ()
+  "A temp or cache file that cannot be deleted is logged and left,
+rather than aborting the cleanup it is part of."
+  (cl-letf (((symbol-function 'delete-file)
+             (lambda (file &rest _) (signal 'file-error (list "Removing old name" "Permission denied" file)))))
+    (let ((inhibit-message t))
+      (supersonic-waveform--delete-file "/nowhere/waveform-x")
+      (with-current-buffer (messages-buffer)
+        (should (string-match-p "Could not delete /nowhere/waveform-x" (buffer-string)))))))
+
 (ert-deftest supersonic-tests-waveform-cancel-kills-in-flight-transcode ()
   "`supersonic-waveform-cancel' kills the transcode process and forgets
 its output file, so a quick track change never leaves either behind."
@@ -4316,6 +4326,18 @@ refresh's own error handling gets to show it -- and
     (condition-case err
         (aio-wait-for (supersonic-provider-search "x"))
       (user-error (should (string-match-p "does not support .search." (error-message-string err)))))))
+
+(ert-deftest supersonic-tests-provider-failing-hooks-are-logged-not-raised ()
+  "A provider whose `cache-namespace' or `config-hints' signals still
+gets a cache name and no hints: one is asked while rendering, the other
+while reporting another failure, and neither may raise its own."
+  (let ((unnamespaced (supersonic-tests--with-provider `((cache-namespace . ,(lambda () "")))
+                        (supersonic-provider-cache-name "al-1"))))
+    (supersonic-tests--with-provider `((cache-namespace . ,(lambda () (error "Boom")))
+                                       (config-hints . ,(lambda () (error "Boom"))))
+      (let ((inhibit-message t))
+        (should (equal unnamespaced (supersonic-provider-cache-name "al-1")))
+        (should-not (supersonic-provider-config-hints))))))
 
 (ert-deftest supersonic-tests-provider-album-list-rejects-unknown-types ()
   "`supersonic-provider-album-list' only passes on the types it documents."
@@ -7756,7 +7778,9 @@ the position ahead."
                   supersonic-music-assistant--clock-offset)))
       (should (< 119 (answer (format "date: %s\r\n" (format-time-string "%a, %d %b %Y %T GMT" (- now 120) t))) 122))
       (should (< 119 (answer "") 122))
-      (should (= 0 (answer (format "Date: %s\r\n" (format-time-string "%a, %d %b %Y %T GMT" now t)))))))
+      (should (= 0 (answer (format "Date: %s\r\n" (format-time-string "%a, %d %b %Y %T GMT" now t)))))
+      (setq supersonic-music-assistant--clock-offset 42)
+      (should (= 42 (answer "Date: not a date at all\r\n")))))
   (supersonic-tests--with-ma-player
     (setq supersonic-music-assistant--clock-offset 60)
     (supersonic-tests--ma-set-queue "playing" '("library://track/1") 0
