@@ -253,7 +253,8 @@ those are the user's to fix."
                (decode-coding-string (buffer-substring (1+ url-http-end-of-headers) (point-max)) 'utf-8))))
     (cond
      ((eql code 401)
-      (user-error "Music Assistant at %s rejected the token from `supersonic-music-assistant-token-function'" url))
+      (user-error "Music Assistant at %s rejected the token from `supersonic-music-assistant-token-function'%s"
+                  url (or (supersonic--forget-rejected-credentials) "")))
      ((not (and (integerp code) (< code 300)))
       (error "Music Assistant answered %s with %s: %s" url code body))
      (t

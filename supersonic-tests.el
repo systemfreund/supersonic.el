@@ -2583,6 +2583,24 @@ error."
                 (should (string-match-p "Wrong username or password" (buffer-string)))))
           (kill-buffer buff))))))
 
+(ert-deftest supersonic-tests-subsonic-wrong-password-forgets-credentials ()
+  "A Subsonic \"wrong username or password\" drops the credentials
+`supersonic-cached' kept, so that trying again asks for them afresh,
+and says so; any other failure keeps them."
+  (supersonic-tests--with-credentials-cache
+    (let ((cached (supersonic-cached (lambda (_host) '(:user "alice" :secret "hunter2")))))
+      (funcall cached "a")
+      (supersonic-tests--with-stubbed-response
+          "{\"subsonic-response\":{\"status\":\"failed\",\"error\":{\"code\":70,\"message\":\"Not found\"}}}"
+        (should-error (aio-wait-for (supersonic-get-json "dummy://url")) :type 'user-error))
+      (should (= 1 (hash-table-count supersonic--credentials-cache)))
+      (supersonic-tests--with-stubbed-response
+          "{\"subsonic-response\":{\"status\":\"failed\",\"error\":{\"code\":40,\"message\":\"Wrong username or password\"}}}"
+        (let ((err (should-error (aio-wait-for (supersonic-get-json "dummy://url")) :type 'user-error)))
+          (should (string-match-p "Wrong username or password" (error-message-string err)))
+          (should (string-match-p "try again" (error-message-string err)))))
+      (should (= 0 (hash-table-count supersonic--credentials-cache))))))
+
 (ert-deftest supersonic-tests-auth-picks-up-host-change-at-runtime ()
   "`supersonic-auth' re-resolves against `auth-source-search' as soon as
 `supersonic-host' changes, instead of keeping whatever was looked up
@@ -7010,6 +7028,21 @@ the token."
       (should (string-match-p "too old (schema 27)" (error-message-string err))))
     (should (equal '("http://ma.test:8095/info")
                    (mapcar (lambda (request) (plist-get request :url)) supersonic-tests--ma-requests)))))
+
+(ert-deftest supersonic-tests-ma-rejected-token-forgets-credentials ()
+  "A token Music Assistant rejects drops the credentials
+`supersonic-cached' kept, so that trying again asks for them afresh;
+any other failure keeps them."
+  (dolist (case '((500 . 1) (401 . 0)))
+    (supersonic-tests--with-credentials-cache
+      (supersonic-tests--with-ma-server
+          (lambda (request)
+            (if (supersonic-tests--ma-command request)
+                (cons (car case) "Nope")
+              (cons 200 (supersonic-tests--ma-fixture "info"))))
+        (let ((supersonic-music-assistant-token-function (supersonic-cached (lambda (_server) "custom-token"))))
+          (should (supersonic-tests--ma-failure #'supersonic-provider-artists))
+          (should (= (cdr case) (hash-table-count supersonic--credentials-cache))))))))
 
 (ert-deftest supersonic-tests-ma-reports-each-failure-readably ()
   "A rejected token and a missing one or a missing URL are

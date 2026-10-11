@@ -324,9 +324,9 @@ Music Assistant token:
 Each is called with the server's URL, so one function can serve
 several servers. The secret may also be a function returning it.
 
-By default neither result is kept: the Subsonic function is called for every URL
-built -- each track queued, each cover shown -- and the Music
-Assistant one once per operation, and also on every poll of the
+By default neither result is kept: the Subsonic function is called
+for every URL built -- each track queued, each cover shown -- and the
+Music Assistant one once per operation, and also on every poll of the
 player's state while it is the backend, every
 `supersonic-music-assistant-poll-interval` seconds. That is fine for
 something cheap, such as reading a plain file, but
@@ -349,8 +349,9 @@ found for a while, wrap the function in `supersonic-cached`:
 
 What it found is kept for each server for
 `supersonic-credentials-cache-expiry` seconds, an hour by default.
-After changing a password, `M-x supersonic-forget-credentials` makes
-it ask again right away.
+A server rejecting the password or token drops what was kept, so
+trying again asks afresh; `M-x supersonic-forget-credentials` does
+the same by hand, e.g. right after changing a password.
 
 ## Usage
 

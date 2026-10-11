@@ -88,8 +88,8 @@ it decrypts a file, say -- as both are called often.  FUNCTION is
 called with the server as they are; what it returns is kept for
 `supersonic-credentials-cache-expiry' seconds, with a secret handed
 out as a function resolved first.  Finding nothing is not kept.
-`supersonic-forget-credentials' drops what was kept, e.g. after a
-password change."
+A server rejecting the credentials drops what was kept, as
+`supersonic-forget-credentials' does, e.g. after a password change."
   (let ((id (make-symbol "supersonic-cached")))
     (lambda (server)
       (let* ((key (cons id server))
@@ -110,6 +110,16 @@ They are asked for again on the next request."
   (interactive)
   (clrhash supersonic--credentials-cache)
   nil)
+
+(defun supersonic--forget-rejected-credentials ()
+  "Forget what `supersonic-cached' kept, as a server has just rejected it.
+Return a note to add to the error saying so, or nil if nothing was
+kept -- trying again then changes nothing, so it is not suggested.
+Everything kept is forgotten, not just the server's: that only costs
+one more lookup each, and a rejection is rare."
+  (unless (zerop (hash-table-count supersonic--credentials-cache))
+    (supersonic-forget-credentials)
+    "; the cached credentials were forgotten, try again"))
 
 (defun supersonic-alist->query (al)
   "Convert AL, an alist of string keys to string values, to a query string.
@@ -222,7 +232,12 @@ empty result instead of raising anything the user can see."
   (let ((response (supersonic-recursive-assoc data '("subsonic-response"))))
     (when (equal (assoc-default "status" response) "failed")
       (let ((err (assoc-default "error" response)))
-        (user-error "%s" (or (assoc-default "message" err) "Subsonic request failed"))))))
+        (user-error "%s%s"
+                    (or (assoc-default "message" err) "Subsonic request failed")
+                    ;; 40: wrong username or password.
+                    (or (and (eql (assoc-default "code" err) 40)
+                             (supersonic--forget-rejected-credentials))
+                        ""))))))
 
 (defun supersonic-recursive-assoc (data keys)
   "Recursively assoc DATA from a list of KEYS."
