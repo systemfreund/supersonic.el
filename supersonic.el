@@ -1891,8 +1891,7 @@ the list has no Art column, see `supersonic-artists-format'."
       (with-current-buffer buff
         (supersonic--print-list (supersonic-artists-rows artists))
         (when (> (length tabulated-list-format) 1)
-          (supersonic-art-fill-visible
-           tabulated-list-entries (supersonic--arts artists) 1 supersonic-artist-art-size buff)))))))
+          (supersonic-art-fill-visible artists 1 supersonic-artist-art-size buff)))))))
 
 (defun supersonic-artists-revert ()
   "Refresh the artists buffer from the active library provider."
@@ -1917,10 +1916,13 @@ the list has no Art column, see `supersonic-artists-format'."
 
 (defun supersonic-artists-format ()
   "Return the `tabulated-list-format' of the artist list.
-With an Art column only when `supersonic-artist-art-size' is set, as
-wide as an image of that size in the selected frame, which is the room
-`supersonic--fit-columns' keeps for it."
-  (if supersonic-artist-art-size
+With an Art column only when `supersonic-artist-art-size' is set and
+art can be shown at all (`supersonic-art-available-p'): an empty one
+would still take the room `supersonic--fit-columns' keeps for the last
+column from the names.  The column is as wide as an image of that size
+in the selected frame, the images being fitted into a square of it,
+whatever their proportions."
+  (if (and supersonic-artist-art-size (supersonic-art-available-p))
       `[("Artist" 30 t) ("Art" ,(max 3 (1+ (ceiling supersonic-artist-art-size (frame-char-width)))) nil)]
     [("Artist" 30 t)]))
 

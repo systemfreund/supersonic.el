@@ -6675,7 +6675,7 @@ first.  Art is drawn as \"ART:\" plus its reference."
                           (number-sequence 1 ,count))))
      (unwind-protect
          (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t))
-                   ((symbol-function 'supersonic-image-propertize) (lambda (art _size) (concat "ART:" art))))
+                   ((symbol-function 'supersonic-image-propertize) (lambda (art _size &rest _) (concat "ART:" art))))
            (supersonic-tests--with-provider
                `((cover-art . ,(supersonic-tests--cover-art (lambda (r) (push r requests))))
                  (artists . ,(lambda () (funcall (supersonic-tests--resolved artists)))))
@@ -6741,6 +6741,68 @@ column and asks for no art at all."
       (sleep-for 0.1)
       (should (string-match-p "Artist 1$" (buffer-string)))
       (should-not requests))))
+
+(ert-deftest supersonic-tests-artist-art-follows-the-rows-through-sorting ()
+  "Each artist gets its own art also when the list is sorted otherwise
+than the provider ordered it, as a refresh keeps the sort the user
+picked: rows are matched to their art by id, not by position."
+  (supersonic-tests--with-artist-list 5
+    (setq tabulated-list-sort-key '("Artist" . t))
+    (aio-wait-for (supersonic-artists-refresh buff))
+    (should (equal "ar-5" (caar tabulated-list-entries)))
+    (should (supersonic-tests--wait-for (lambda () (equal "ART:art-5" (supersonic-tests--artist-cell "ar-5")))))
+    (dolist (i '(1 3 4 5))
+      (should (equal (format "ART:art-%d" i) (supersonic-tests--artist-cell (format "ar-%d" i)))))
+    (should (equal "" (supersonic-tests--artist-cell "ar-2")))))
+
+(ert-deftest supersonic-tests-artist-list-has-no-art-column-without-art ()
+  "Where art cannot be shown, e.g. in a terminal, the artist list has no
+Art column, which would only take room from the names."
+  (supersonic-tests--with-artist-list 3
+    (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) nil)))
+      (supersonic-artist-mode)
+      (should (equal [("Artist" 30 t)] tabulated-list-format))
+      (aio-wait-for (supersonic-artists-refresh buff))
+      (sleep-for 0.1)
+      (should-not requests))))
+
+(ert-deftest supersonic-tests-artist-art-skips-rows-scrolled-away ()
+  "A row scrolled out of view before its fetch got a slot is not fetched
+-- the rows now in view are not kept waiting behind it -- and is asked
+for again once it is back in view."
+  (supersonic-tests--with-artist-list 500
+    (let ((supersonic-art-fetch-concurrency 1))
+      (setq supersonic-art--lazy-sem nil)
+      (aio-wait-for (supersonic-artists-refresh buff))
+      (goto-char (point-min))
+      (forward-line 399)
+      (set-window-start (selected-window) (point))
+      (supersonic-art--fill-windows)
+      (should (supersonic-tests--wait-for (lambda () (equal "ART:art-400" (supersonic-tests--artist-cell "ar-400")))))
+      (sleep-for 0.2)
+      (should (<= (seq-count (lambda (r) (< (string-to-number (substring (car r) 4)) 100)) requests) 1))
+      (set-window-start (selected-window) (point-min))
+      (goto-char (point-min))
+      (supersonic-art--fill-windows)
+      (should (supersonic-tests--wait-for (lambda () (equal "ART:art-5" (supersonic-tests--artist-cell "ar-5"))))))))
+
+(ert-deftest supersonic-tests-artist-art-keeps-point-on-its-row ()
+  "Redrawing a row as its art arrives leaves point where it was in it."
+  (supersonic-tests--with-artist-list 5
+    (aio-wait-for (supersonic-artists-refresh buff))
+    (should (supersonic-tests--wait-for (lambda () (equal "ART:art-5" (supersonic-tests--artist-cell "ar-5")))))
+    (setq supersonic-art--lazy nil)
+    (dolist (entry tabulated-list-entries) (aset (cadr entry) 1 ""))
+    (tabulated-list-print t)
+    (goto-char (point-min))
+    (while (not (equal "ar-3" (tabulated-list-get-id))) (forward-line 1))
+    (move-to-column 5)
+    (let ((line (line-number-at-pos)))
+      (supersonic-art-fill-visible
+       (mapcar (lambda (i) (list :id (format "ar-%d" i) :art (format "art-%d" i))) '(1 2 3 4 5)) 1 64 buff)
+      (should (equal "ART:art-3" (supersonic-tests--artist-cell "ar-3")))
+      (should (= line (line-number-at-pos)))
+      (should (= 5 (current-column))))))
 
 (ert-deftest supersonic-tests-no-cover-art-means-no-art-and-no-error ()
   "With a provider that has no `cover-art', lists and now-playing render
