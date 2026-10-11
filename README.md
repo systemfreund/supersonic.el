@@ -341,7 +341,7 @@ found for a while, cache it:
           (list :user "USERNAME"
                 :secret (or (password-read-from-cache key)
                             (let ((secret (auth-source-pass-get 'secret "my/custom_entry")))
-                              (password-cache-add key secret)
+                              (password-cache-add key (copy-sequence secret))
                               secret))))))
 
 ;; Music Assistant
@@ -350,7 +350,7 @@ found for a while, cache it:
         (let ((key (concat "supersonic:" server)))
           (or (password-read-from-cache key)
               (let ((token (auth-source-pass-get 'secret "my/music_assistant")))
-                (password-cache-add key token)
+                (password-cache-add key (copy-sequence token))
                 token)))))
 ```
 
@@ -358,7 +358,9 @@ These hold the secret for `password-cache-expiry` seconds, 16 by
 default, so a playing Music Assistant player still decrypts the entry
 about every 16 seconds. Raising that variable lengthens it, but it is
 global: it also applies to everything else Emacs caches there, such
-as GnuPG passphrases.
+as GnuPG passphrases. The cache wipes the string it holds when it
+expires, hence the copy: the string handed out may be one the source
+keeps for itself, as auth-source does for a Secret Service entry.
 
 ## Usage
 

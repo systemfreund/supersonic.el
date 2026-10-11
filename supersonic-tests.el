@@ -6593,6 +6593,19 @@ the token it returns may be a string or a function returning one."
         (should (equal "Bearer custom-token"
                        (assoc-default "Authorization" (plist-get (car supersonic-tests--ma-requests) :headers))))))))
 
+(ert-deftest supersonic-tests-ma-keeps-its-own-copy-of-the-token ()
+  "An operation sends its own copy of the token, so that a cache wiping
+the string it handed out -- as `password-cache-remove' does on expiry
+-- cannot change it while the operation still runs."
+  (supersonic-tests--with-ma-server #'supersonic-tests--ma-library
+    (let* ((token (copy-sequence "custom-token"))
+           (supersonic-music-assistant-token-function (lambda (_server) token))
+           (promise (supersonic-provider-track "library://track/7131")))
+      (clear-string token)
+      (aio-wait-for promise)
+      (should (equal "Bearer custom-token"
+                     (assoc-default "Authorization" (plist-get (car supersonic-tests--ma-requests) :headers)))))))
+
 (defun supersonic-tests--ma-failure (operation)
   "Return the error OPERATION's promise rejects with, or nil if it resolves."
   (condition-case err

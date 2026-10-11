@@ -173,11 +173,14 @@ SERVER is as returned by `supersonic-music-assistant--server', which
 also guarantees it is never nil or empty: a lookup for no host would
 match any entry, a Subsonic password included.  Looked up afresh for
 every operation, as `supersonic-auth' is for every request, so that a
-corrected entry takes effect once auth-source's cache is forgotten."
-  (let ((token (funcall supersonic-music-assistant-token-function server)))
-    (if (functionp token)
-        (funcall token)
-      token)))
+corrected entry takes effect once auth-source's cache is forgotten.
+
+A copy, as the operation holds on to it across requests: the string
+handed out may be one a cache wipes when it expires, as
+`password-cache-remove' does."
+  (let* ((token (funcall supersonic-music-assistant-token-function server))
+         (token (if (functionp token) (funcall token) token)))
+    (and token (copy-sequence token))))
 
 (defun supersonic-music-assistant--connection ()
   "Return what an operation sends its commands with, as (SERVER . TOKEN).

@@ -85,7 +85,7 @@ what it finds, e.g. for `password-cache-expiry':
                   :secret (or (password-read-from-cache key)
                               (let ((secret (auth-source-pass-get
                                              \='secret \"my/entry\")))
-                                (password-cache-add key secret)
+                                (password-cache-add key (copy-sequence secret))
                                 secret))))))"
   :type '(choice (function-item supersonic-auth-source-credentials)
                  (function :tag "Other function"))
@@ -624,7 +624,7 @@ as decrypting that entry is, should cache what it finds, e.g. for
           (let ((key (concat \"supersonic:\" server)))
             (or (password-read-from-cache key)
                 (let ((token (auth-source-pass-get \='secret \"my/entry\")))
-                  (password-cache-add key token)
+                  (password-cache-add key (copy-sequence token))
                   token)))))"
   :type '(choice (function-item supersonic-music-assistant-auth-source-token)
                  (function :tag "Other function"))
