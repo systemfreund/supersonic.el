@@ -424,7 +424,7 @@ point where what is playing may have changed runs
      (let* ((queue (supersonic-tests--resolve (supersonic-playback-queue)))
             (entries (aio-wait-for (supersonic-queue-parse queue))))
        (should (equal "▶" (aref (nth 1 (car entries)) 0)))
-       (should (equal "" (aref (nth 1 (cadr entries)) 0)))))))
+       (should (equal " " (aref (nth 1 (cadr entries)) 0)))))))
 
 (ert-deftest supersonic-tests-queue-parse-includes-song-metadata ()
   "`supersonic-queue-parse' fills in title, artist and album from the song lookup."
@@ -451,7 +451,7 @@ a lookup; one that does not is looked up as before."
                    (supersonic-queue-parse
                     '((:track-id "a" :current t :track (:id "a" :title "Brought" :artist "Ar" :album "Al"))
                       (:track-id "b" :current nil))))))
-        (should (equal '(["▶" "Brought" "Ar" "Al"] ["" "Looked up" "" ""]) (mapcar #'cadr rows)))
+        (should (equal '(["▶" "Brought" "Ar" "Al"] [" " "Looked up" "" ""]) (mapcar #'cadr rows)))
         (should (equal '("b") looked-up))))))
 
 (ert-deftest supersonic-tests-queue-buffer-follows-track-changes ()
@@ -4451,11 +4451,11 @@ never below their minimum."
   (let ((tabulated-list-padding 2)
         (format [("Albums" 30 t) ("Artists" 30 t) ("Art" 10 nil)])
         (entries `((a [,(make-string 50 ?a) ,(make-string 20 ?b) ""]))))
-    ;; 2 padding + 2 separators + 10 for art + 1 edge leave 45 of 60.
-    (should (equal [("Albums" 25 t) ("Artists" 20 t) ("Art" 10 nil)]
+    ;; 2 padding + 2 separators + 10 for art leave 46 of 60.
+    (should (equal [("Albums" 26 t) ("Artists" 20 t) ("Art" 10 nil)]
                    (supersonic--fit-column-widths format entries 60)))
-    ;; 2 + 2 + 10 + 1 leave 25: both give way, the wider first, ties leftmost.
-    (should (equal [("Albums" 12 t) ("Artists" 13 t) ("Art" 10 nil)]
+    ;; 2 + 2 + 10 leave 26: both give way, the wider first.
+    (should (equal [("Albums" 13 t) ("Artists" 13 t) ("Art" 10 nil)]
                    (supersonic--fit-column-widths format entries 40)))
     (should (equal [("Albums" 8 t) ("Artists" 9 t) ("Art" 10 nil)]
                    (supersonic--fit-column-widths format entries 10)))))
@@ -4473,6 +4473,15 @@ own format alone for the next buffer to start from."
       (should (equal '("Title" 30 t) (aref declared 0)))
       (goto-char (point-min))
       (should (search-forward "Short" nil t)))))
+
+(ert-deftest supersonic-tests-reverting-a-list-refits-its-columns ()
+  "\\[revert-buffer] in a list buffer that keeps the default
+`tabulated-list-revert' refits the columns to the entries it reprints."
+  (with-temp-buffer
+    (supersonic-search-mode)
+    (setq tabulated-list-entries '((a ["Song" "A name of twenty chars"])))
+    (revert-buffer)
+    (should (equal '("Type" 6 t) (aref tabulated-list-format 0)))))
 
 (ert-deftest supersonic-tests-provider-ids-reach-playback-untouched ()
   "Playing from the tracks and search buffers, and enqueueing an album,
@@ -4646,11 +4655,11 @@ placeholder row instead of failing the whole queue."
           `((track . ,(supersonic-tests--track-lookup
                        '((:id "ar/1/al-1/01.flac" :title "One" :artist "Alice" :album "First")))))
         (should (equal '(("ar/1/al-1/01.flac" ["▶" "One" "Alice" "First"])
-                         ("gone.flac" ["" "?" "" ""]))
+                         ("gone.flac" [" " "?" "" ""]))
                        (aio-wait-for (supersonic-queue-parse entries)))))
       (supersonic-tests--with-provider `((artists . ,(supersonic-tests--resolved nil)))
         (should (equal '(("ar/1/al-1/01.flac" ["▶" "?" "" ""])
-                         ("gone.flac" ["" "?" "" ""]))
+                         ("gone.flac" [" " "?" "" ""]))
                        (aio-wait-for (supersonic-queue-parse entries))))))))
 
 (defmacro supersonic-tests--with-playing (track-id &rest body)

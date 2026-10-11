@@ -65,20 +65,22 @@
 CELL is a column descriptor as in `tabulated-list-entries'."
   (cond
    ((stringp cell) (string-width cell))
-   ;; `tabulated-list-print-col' draws an image over a single space.
+   ;; `tabulated-list-print-col' draws an image over a single space, so the image's real width is unknown here.
+   ;; Supersonic's own art is a `display'-property string in the last column, which is never measured.
    ((eq (car cell) 'image) 1)
    (t (string-width (car cell)))))
 
 (defun supersonic--widest-shrinkable-column (widths minimums)
   "Return the index of the widest of WIDTHS still above its MINIMUMS entry.
 Nil when every column is down to its minimum.  Ties go to the leftmost."
-  (let (widest)
-    (cl-loop for width in widths
-             for minimum in minimums
-             for n from 0
-             when (and (> width minimum) (or (null widest) (> width (nth widest widths))))
-             do (setq widest n))
-    widest))
+  (cl-loop with widest = nil
+           with widest-width = 0
+           for width in widths
+           for minimum in minimums
+           for n from 0
+           when (and (> width minimum) (> width widest-width))
+           do (setq widest n widest-width width)
+           finally return widest))
 
 (defun supersonic--fit-column-widths (format entries available)
   "Return a copy of FORMAT with its widths fitted to ENTRIES.
@@ -87,8 +89,9 @@ FORMAT and ENTRIES are as in `tabulated-list-format' and
 its widest cell, though never narrower than its header plus room for
 the sort indicator.  The last column, which `tabulated-list-print'
 neither pads nor truncates, keeps its width, as the room set aside for
-it (e.g. for cover art that arrives after the first print).
-When AVAILABLE, the window's width in columns, is non-nil and the row
+it (e.g. for cover art that arrives after the first print), so art
+columns must come last.
+When AVAILABLE, the characters a window line holds, is non-nil and the row
 would not fit into it, the widest columns give way first, down to their
 minimum; `tabulated-list-print' truncates their cells with an ellipsis."
   (let* ((count (length format))
@@ -112,31 +115,38 @@ minimum; `tabulated-list-print' truncates their cells with an ellipsis."
                        (seq-reduce
                         (lambda (sum n) (+ sum (or (plist-get (nthcdr 3 (aref format n)) :pad-right) 1)))
                         (number-sequence 0 (1- fitted)) 0)
-                       (nth 1 (aref format fitted))
-                       ;; Keep clear of the window edge, where a truncated line shows its `$'.
-                       1)))
-        (let (widest)
-          (while (and (> (apply #'+ widths) budget)
+                       (nth 1 (aref format fitted))))
+            widest)
+        (let ((excess (- (apply #'+ widths) budget)))
+          (while (and (> excess 0)
                       (setq widest (supersonic--widest-shrinkable-column widths minimums)))
-            (cl-decf (nth widest widths))))))
+            (cl-decf (nth widest widths))
+            (cl-decf excess)))))
     (vconcat
      (seq-map-indexed
       (lambda (col n) (if (< n fitted) (cons (car col) (cons (nth n widths) (cddr col))) col))
       format))))
 
-(defun supersonic--print-list (entries)
-  "Show ENTRIES in the current tabulated-list buffer, columns fitted to them.
-ENTRIES is as in `tabulated-list-entries'.  The widths come from
-`supersonic--fit-column-widths', against the width of the window
-showing the buffer, or else the selected one, where the buffer is
-about to be shown."
-  (setq tabulated-list-entries entries)
+(defun supersonic--fit-columns ()
+  "Fit the current tabulated-list buffer's columns to its entries.
+The widths come from `supersonic--fit-column-widths', against the
+window showing the buffer, or else the selected one, where a freshly
+opened buffer is about to be shown.  `window-max-chars-per-line'
+already leaves out line numbers, a text-scaled font and the column the
+continuation glyph needs.  Also on `tabulated-list-revert-hook', so
+\\[revert-buffer] refits, e.g. after resizing the window."
   (when (> (length tabulated-list-format) 0)
     (setq tabulated-list-format
           (supersonic--fit-column-widths
-           tabulated-list-format entries
-           (window-body-width (or (get-buffer-window (current-buffer) t) (selected-window)))))
-    (tabulated-list-init-header))
+           tabulated-list-format tabulated-list-entries
+           (window-max-chars-per-line (or (get-buffer-window (current-buffer) t) (selected-window)))))
+    (tabulated-list-init-header)))
+
+(defun supersonic--print-list (entries)
+  "Show ENTRIES in the current tabulated-list buffer, columns fitted to them.
+ENTRIES is as in `tabulated-list-entries'; see `supersonic--fit-columns'."
+  (setq tabulated-list-entries entries)
+  (supersonic--fit-columns)
   (tabulated-list-print t))
 
 ;;;
@@ -192,9 +202,10 @@ aborting the whole render."
                   ;; fall back to the entry's position so the row still gets a usable, if display-only, id.
                   (or track-id (number-to-string index))
                   (vector
+                   ;; A blank rather than "" when not current, so the fitted marker column keeps its width.
                    (if current
                        "▶"
-                     "")
+                     " ")
                    (if track
                        (or (plist-get track :title) "")
                      "?")
@@ -232,6 +243,7 @@ aborting the whole render."
 Mirrors the active backend's play queue, refreshed whenever it may have changed."
  (setq tabulated-list-format [("" 2 nil) ("Title" 40 t) ("Artist" 25 t) ("Album" 25 t)])
  (setq tabulated-list-padding 2)
+ (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
  (tabulated-list-init-header))
 
 ;;;###autoload
@@ -1509,6 +1521,7 @@ Each row is an artist, album or song; opening one dispatches on which."
  ;;  type: artist|album|track
  (setq tabulated-list-format [("Type" 10 t) ("Name" 30 t)])
  (setq tabulated-list-padding 2)
+ (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
  (tabulated-list-init-header))
 
 
@@ -1583,6 +1596,7 @@ entry at point.  An ID that isn't in the list at all yields nil."
  "Major mode for the track list of one album, opened by `supersonic-tracks'."
  (setq tabulated-list-format [("Title" 30 t) ("Duration" 10 t) ("Track" 10 t)])
  (setq tabulated-list-padding 2)
+ (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
  (tabulated-list-init-header))
 
 ;;;
@@ -1713,6 +1727,7 @@ one as a string is accepted too."
  "Major mode for a list of albums across artists (newest, random, ...)."
  (setq tabulated-list-format [("Albums" 30 t) ("Artists" 30 t) ("Art" 30 nil)])
  (setq tabulated-list-padding 2)
+ (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
  (setq tabulated-list-use-header-line supersonic-list-use-header-line)
  (tabulated-list-init-header))
 
@@ -1723,6 +1738,7 @@ one as a string is accepted too."
  "Major mode for the album list of one artist, opened by `supersonic-albums'."
  (setq tabulated-list-format [("Year" 5 t) ("Albums" 40 t) ("Art" 30 nil)])
  (setq tabulated-list-padding 2)
+ (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
  (setq tabulated-list-use-header-line supersonic-list-use-header-line)
  (tabulated-list-init-header))
 
@@ -1775,6 +1791,7 @@ one as a string is accepted too."
  "Major mode for the artist list opened by `supersonic-artists'."
  (setq tabulated-list-format [("Artist" 30 t)])
  (setq tabulated-list-padding 2)
+ (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
  (tabulated-list-init-header))
 
 ;;;
@@ -1848,6 +1865,7 @@ has no podcasts to subscribe to, which is reported before asking."
  "Major mode for the podcast channel list opened by `supersonic-podcasts'."
  (setq tabulated-list-format [("Podcasts" 30 t) ("Art" 20 nil)])
  (setq tabulated-list-padding 2)
+ (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
  (setq tabulated-list-use-header-line supersonic-list-use-header-line)
  (tabulated-list-init-header))
 
@@ -1926,6 +1944,7 @@ EPISODES is as resolved by `supersonic-provider-podcast-episodes'."
 Opened by `supersonic-podcast-episodes'."
  (setq tabulated-list-format [("Title" 50 t) ("Duration" 10 t) ("Status" 24 t)])
  (setq tabulated-list-padding 2)
+ (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
  (setq tabulated-list-use-header-line supersonic-list-use-header-line)
  (tabulated-list-init-header))
 
