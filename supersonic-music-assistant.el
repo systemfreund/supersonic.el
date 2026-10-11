@@ -161,21 +161,28 @@ the server checked, the token looked up and the server asked agree."
 SERVER is as returned by `supersonic-music-assistant--server'."
   (concat (string-remove-suffix "/" server) path))
 
-(defun supersonic-music-assistant--token (server)
-  "Return the token auth-source has for SERVER, or nil if it has none.
-SERVER is as returned by `supersonic-music-assistant--server', which
-also guarantees it is never nil or empty: a lookup for no host would
-match any entry, a Subsonic password included.  Looked up afresh for
-every operation, as `supersonic-auth' is for every request, so that a
-corrected entry takes effect once auth-source's cache is forgotten."
-  (let ((secret (plist-get (car (auth-source-search :host server :require '(:secret))) :secret)))
-    (if (functionp secret)
-        (funcall secret)
-      secret)))
+(defun supersonic-music-assistant-auth-source-token ()
+  "Return the token auth-source has for `supersonic-music-assistant-url'.
+The default `supersonic-music-assistant-token-function'.  Returns nil
+if auth-source has none, or while the address is unset -- a lookup
+for no host would match any entry, a Subsonic password included."
+  (let ((server supersonic-music-assistant-url))
+    (unless (or (null server) (string-empty-p server))
+      (plist-get (car (auth-source-search :host server :require '(:secret))) :secret))))
+
+(defun supersonic-music-assistant--token ()
+  "Return the token `supersonic-music-assistant-token-function' returns.
+Asked afresh for every operation, as `supersonic-auth' is for every
+request, so that a corrected entry takes effect once auth-source's
+cache is forgotten."
+  (let ((token (funcall supersonic-music-assistant-token-function)))
+    (if (functionp token)
+        (funcall token)
+      token)))
 
 (defun supersonic-music-assistant--connection ()
   "Return what an operation sends its commands with, as (SERVER . TOKEN).
-TOKEN is nil when auth-source has none for SERVER; that is reported
+TOKEN is nil when there is none for SERVER; that is reported
 only once SERVER has passed `supersonic-music-assistant--check-server',
 so that a server too old to take a token at all says so first.
 
@@ -186,7 +193,7 @@ Secret Service collection -- is then asked by that command rather
 than later from a timer, and an operation sending several commands
 looks the token up only once."
   (let ((server (supersonic-music-assistant--server)))
-    (cons server (supersonic-music-assistant--token server))))
+    (cons server (supersonic-music-assistant--token))))
 
 (defun supersonic-music-assistant--retrieve (url &optional body token)
   "Start a request for URL, returning a promise of (STATUS . BUFFER).
@@ -315,7 +322,7 @@ booleans and vectors for the arrays."
  (pcase-let ((`(,server . ,token) connection))
    (aio-await (supersonic-music-assistant--check-server server))
    (unless token
-     (user-error "No Music Assistant token in auth-source for host %s" server))
+     (user-error "No Music Assistant token for %s: add an authinfo entry with it as the machine, or set `supersonic-music-assistant-token-function'" server))
    (aio-await
     (supersonic-music-assistant--fetch
      (supersonic-music-assistant--url server "/api")
@@ -713,7 +720,7 @@ one server's cached art apart from another's."
 (defun supersonic-music-assistant--config-hints ()
   "Return what to check when a request to the Music Assistant server fails."
   (list "Check that supersonic-music-assistant-url points at your server, e.g. http://host:8095"
-        (format "Verify .authinfo has an entry with host %s (exactly) and a token from Music Assistant's web UI as its password"
+        (format "Verify .authinfo has an entry with host %s (exactly) and a token from Music Assistant's web UI as its password, or what supersonic-music-assistant-token-function returns"
                 (if (string-empty-p supersonic-music-assistant-url)
                     "<supersonic-music-assistant-url>"
                   supersonic-music-assistant-url))

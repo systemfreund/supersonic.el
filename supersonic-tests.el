@@ -2611,6 +2611,60 @@ keeping whatever supersonic itself first memoized for that host."
       (setq user "right-user")
       (should (equal "right-user" (plist-get (supersonic-auth) :user))))))
 
+(defun supersonic-tests--query-params (url)
+  "Return URL's query parameters as an alist of strings."
+  (url-parse-query-string (cadr (split-string url "?"))))
+
+(ert-deftest supersonic-tests-build-url-takes-credentials-from-auth-function ()
+  "`supersonic-auth-function' replaces the auth-source lookup outright,
+for a password kept somewhere auth-source cannot find it by host --
+such as a pass entry named for something else.  The url is built
+against `supersonic-host', the user and token from what it returns."
+  (let ((supersonic-host "http://music.test:4533")
+        (supersonic-auth-function (lambda () '(:user "alice" :secret "hunter2"))))
+    (cl-letf (((symbol-function 'auth-source-search)
+               (lambda (&rest _) (ert-fail "Asked auth-source"))))
+      (let* ((url (supersonic-build-url "/ping.view" nil))
+             (params (supersonic-tests--query-params url)))
+        (should (string-prefix-p "http://music.test:4533/rest/ping.view?" url))
+        (should (equal '("alice") (assoc-default "u" params)))
+        (should (equal (list (md5 (concat "hunter2" (car (assoc-default "s" params)))))
+                       (assoc-default "t" params)))))))
+
+(ert-deftest supersonic-tests-build-url-accepts-the-secret-as-a-function ()
+  "The secret may also be a function returning it, as auth-source hands
+it out, so that it is only read when a request needs it."
+  (let ((supersonic-host "music.test")
+        (supersonic-auth-function (lambda () (list :user "alice" :secret (lambda () "hunter2")))))
+    (let* ((url (supersonic-build-url "/ping.view" nil))
+           (params (supersonic-tests--query-params url)))
+      (should (string-prefix-p "https://music.test/rest/ping.view?" url))
+      (should (equal (list (md5 (concat "hunter2" (car (assoc-default "s" params)))))
+                     (assoc-default "t" params))))))
+
+(ert-deftest supersonic-tests-build-url-reports-missing-credentials ()
+  "No credentials -- an authinfo entry without a password included, which
+auth-source is told not to return -- is a `user-error', not a void
+function called in place of the secret."
+  (let ((supersonic-host "http://music.test:4533"))
+    (cl-letf (((symbol-function 'auth-source-search)
+               (lambda (&rest spec)
+                 (unless (plist-get spec :require)
+                   (list (list :host (plist-get spec :host) :user "alice"))))))
+      (should-error (supersonic-build-url "/ping.view" nil) :type 'user-error))))
+
+(ert-deftest supersonic-tests-build-url-looks-up-credentials-once ()
+  "One url asks auth-source once, not once for its host and again for
+its token."
+  (let ((supersonic-host "http://music.test:4533")
+        (lookups 0))
+    (cl-letf (((symbol-function 'auth-source-search)
+               (lambda (&rest spec)
+                 (setq lookups (1+ lookups))
+                 (list (list :host (plist-get spec :host) :user "alice" :secret (lambda () "p"))))))
+      (supersonic-build-url "/ping.view" nil)
+      (should (= 1 lookups)))))
+
 (ert-deftest supersonic-tests-subsonic-album-tracks-follow-browse-by-tags-toggle ()
   "The Subsonic provider reads an album's tracks from whichever json path
 matches the *current* `supersonic-browse-by-tags' value, staying
@@ -6509,6 +6563,20 @@ the token, and only once per server."
         (should (equal '(("uri" . "library://track/7131")) (supersonic-tests--ma-args command)))))
     (dolist (request supersonic-tests--ma-requests)
       (should-not (string-match-p "secret-token" (plist-get request :url))))))
+
+(ert-deftest supersonic-tests-ma-takes-the-token-from-token-function ()
+  "`supersonic-music-assistant-token-function' replaces the auth-source
+lookup outright; the token it returns may be a string or a function
+returning one."
+  (supersonic-tests--with-ma-server #'supersonic-tests--ma-library
+    (dolist (token (list "custom-token" (lambda () "custom-token")))
+      (let ((supersonic-music-assistant-token-function (lambda () token))
+            (supersonic-tests--ma-requests nil))
+        (cl-letf (((symbol-function 'auth-source-search)
+                   (lambda (&rest _) (ert-fail "Asked auth-source"))))
+          (aio-wait-for (supersonic-provider-track "library://track/7131")))
+        (should (equal "Bearer custom-token"
+                       (assoc-default "Authorization" (plist-get (car supersonic-tests--ma-requests) :headers))))))))
 
 (defun supersonic-tests--ma-failure (operation)
   "Return the error OPERATION's promise rejects with, or nil if it resolves."

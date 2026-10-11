@@ -314,7 +314,7 @@ cached art and waveforms apart from another's."
   "Return what to check when a request to the Subsonic server fails."
   '("Check that supersonic-host is configured correctly"
     "Ensure the scheme (http:// or https://) matches your server"
-    "Verify .authinfo has the correct host (must match supersonic-host exactly)"))
+    "Verify .authinfo has the correct host (must match supersonic-host exactly), or what supersonic-auth-function returns"))
 
 (supersonic-provider-register
  'subsonic

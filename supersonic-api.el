@@ -27,13 +27,21 @@
 ;; `supersonic-subsonic.el'; see `supersonic-provider.el'.
 
 ;;; Code:
+(require 'auth-source)
 (require 'json)
+(require 'subr-x)
 (require 'url)
 (require 'aio)
 (require 'supersonic-custom)
 
-(defun supersonic-auth ()
+(defun supersonic-auth-source-credentials ()
   "Return the auth-source entry for the current `supersonic-host'.
+The default `supersonic-auth-function': the entry is a plist with the
+user name under :user and the password under :secret, as that option
+asks for.  Only an entry with a password is returned, and none at all
+while `supersonic-host' is unset -- a lookup for no host would match
+any entry.
+
 Calls `auth-source-search' fresh every time rather than memoizing the
 result ourselves -- `auth-source-search' already caches internally
 \(see `auth-source-do-cache'), but that cache is invalidated by
@@ -42,7 +50,12 @@ to it means both a `supersonic-host' change and a corrected
 authinfo entry (after forgetting the cache) take effect on the next
 request instead of being frozen in for the rest of the Emacs
 session."
-  (car (auth-source-search :host supersonic-host)))
+  (unless (string-empty-p (or supersonic-host ""))
+    (car (auth-source-search :host supersonic-host :require '(:secret)))))
+
+(defun supersonic-auth ()
+  "Return the Subsonic credentials, as returned by `supersonic-auth-function'."
+  (funcall supersonic-auth-function))
 
 (defun supersonic-alist->query (al)
   "Convert AL, an alist of string keys to string values, to a query string.
@@ -168,33 +181,37 @@ empty result instead of raising anything the user can see."
 12 hex characters, well above the API's 6-character minimum."
   (mapconcat (lambda (_) (format "%x" (random 16))) (make-list 12 nil) ""))
 
-(defun supersonic--auth-query ()
+(defun supersonic--auth-query (auth)
   "Build the \"u\"/\"t\"/\"s\" token-auth query parameters for one request.
-Uses Subsonic's token authentication (t = md5(password + salt), s = a
-fresh salt per request) instead of sending the plaintext password, so
-it never ends up in a URL -- which, depending on how that URL is used
-elsewhere (e.g. handed to curl as an argument), could otherwise be
-visible to any local user via `ps' or in a subprocess's argv."
-  (let* ((auth (supersonic-auth))
-         (password (funcall (plist-get auth :secret)))
+AUTH is as returned by `supersonic-auth'.  Uses Subsonic's token
+authentication (t = md5(password + salt), s = a fresh salt per
+request) instead of sending the plaintext password, so it never ends
+up in a URL -- which, depending on how that URL is used elsewhere
+\(e.g. handed to curl as an argument), could otherwise be visible to
+any local user via `ps' or in a subprocess's argv."
+  (let* ((secret (plist-get auth :secret))
+         (password (if (functionp secret) (funcall secret) secret))
          (salt (supersonic--random-salt)))
     `(("u" . ,(plist-get auth :user)) ("t" . ,(md5 (concat password salt))) ("s" . ,salt))))
 
 (defun supersonic-build-url (endpoint extra-query)
   "Build a valid supersonic url for a given ENDPOINT.
-EXTRA-QUERY is used for any extra query parameters"
-  (let ((auth (supersonic-auth)))
-    (if auth
-        (let ((host (plist-get auth :host)))
-          (concat
-           (unless (string-match-p "\\`https?://" host)
-             "https://")
-           host "/rest" endpoint
-           (supersonic-alist->query
-            (append (supersonic--auth-query) `(("c" . "ElSonic") ("v" . "1.16.0") ("f" . "json")) extra-query))))
-      (user-error
-       "Failed to load .authinfo, please provide auth configuration for
-supersonic, and ensure supersonic-host is set correctly"))))
+EXTRA-QUERY is used for any extra query parameters.  The url is on
+`supersonic-host'; the credentials come from `supersonic-auth', asked
+once per url."
+  (let ((host (or supersonic-host "")))
+    (when (string-empty-p host)
+      (user-error "Set `supersonic-host' to your Subsonic server, e.g. https://host:4533"))
+    (let ((auth (supersonic-auth)))
+      (unless (plist-get auth :secret)
+        (user-error "No Subsonic password for %s: add an authinfo entry with it as the machine, or set `supersonic-auth-function'"
+                    host))
+      (concat
+       (unless (string-match-p "\\`https?://" host)
+         "https://")
+       host "/rest" endpoint
+       (supersonic-alist->query
+        (append (supersonic--auth-query auth) `(("c" . "ElSonic") ("v" . "1.16.0") ("f" . "json")) extra-query))))))
 
 (defun supersonic-get-id-as-string (data)
   "Return DATA's \"id\" field as a string, converting from a number if necessary."

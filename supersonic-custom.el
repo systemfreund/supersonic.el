@@ -50,10 +50,29 @@
 (defcustom supersonic-host ""
   "URL of the supersonic service, e.g. \"http://host:4533\".
 Must match the \"machine\" field of the corresponding authinfo
-entry verbatim; that entry's host is what is actually used to
-build request URLs.  May be given without a scheme (\"http://\" or
-\"https://\"), in which case \"https://\" is assumed."
+entry verbatim, unless `supersonic-auth-function' finds the
+credentials some other way.  May be given without a scheme
+\(\"http://\" or \"https://\"), in which case \"https://\" is
+assumed."
   :type 'string
+  :group 'supersonic)
+
+(defcustom supersonic-auth-function 'supersonic-auth-source-credentials
+  "Function returning the credentials for the Subsonic server.
+Called with no arguments whenever a request is made, it returns a
+plist (:user USER :secret SECRET), where SECRET is the password or a
+function returning it, or nil if it has none.  The default looks the
+server up in auth-source by `supersonic-host'.
+
+For a password kept where auth-source cannot find it by host, such
+as a pass entry named for something else:
+
+  (setopt supersonic-auth-function
+          (lambda ()
+            (list :user \"USERNAME\"
+                  :secret (auth-source-pass-get \='secret \"my/entry\"))))"
+  :type '(choice (function-item supersonic-auth-source-credentials)
+                 (function :tag "Other function"))
   :group 'supersonic)
 
 (defcustom supersonic-mpv (executable-find "mpv")
@@ -558,8 +577,25 @@ host, so the authinfo line for it reads
   machine http://192.168.1.10:8095 password TOKEN
 
 where TOKEN is a long-lived token created in Music Assistant's web UI,
-under your profile."
+under your profile.  `supersonic-music-assistant-token-function' can
+look the token up some other way."
   :type 'string
+  :group 'supersonic)
+
+(defcustom supersonic-music-assistant-token-function
+  'supersonic-music-assistant-auth-source-token
+  "Function returning the token for the Music Assistant server.
+Called with no arguments as an operation starts, it returns the
+token, a function returning it, or nil if it has none.  The default
+looks the server up in auth-source by `supersonic-music-assistant-url'.
+
+For a token kept where auth-source cannot find it by host, such as a
+pass entry named for something else:
+
+  (setopt supersonic-music-assistant-token-function
+          (lambda () (auth-source-pass-get \='secret \"my/entry\")))"
+  :type '(choice (function-item supersonic-music-assistant-auth-source-token)
+                 (function :tag "Other function"))
   :group 'supersonic)
 
 (defcustom supersonic-music-assistant-player nil
