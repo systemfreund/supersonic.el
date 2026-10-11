@@ -4427,6 +4427,53 @@ any Subsonic request being made."
                              tabulated-list-entries)))
           (kill-buffer buff))))))
 
+(ert-deftest supersonic-tests-fit-column-widths-fits-every-column-but-the-last ()
+  "Each column but the last is as wide as its widest cell, never narrower
+than its header (plus the sort indicator when sortable); the last
+keeps the width set aside for it."
+  (let ((tabulated-list-padding 2))
+    (should (equal [("" 1 nil) ("Title" 25 t) ("Album" 25 t)]
+                   (supersonic--fit-column-widths
+                    [("" 2 nil) ("Title" 40 t) ("Album" 25 t)]
+                    '((a ["▶" "A rather long track title" "x"]) (b ["" "Short" "y"]))
+                    nil)))
+    (should (equal [("Year" 6 t) ("Albums" 8 t) ("Art" 30 nil)]
+                   (supersonic--fit-column-widths
+                    [("Year" 5 t) ("Albums" 40 t) ("Art" 30 nil)]
+                    '((a ["1999" "Abc" ""]))
+                    nil)))
+    (should (equal [("Artist" 30 t)]
+                   (supersonic--fit-column-widths [("Artist" 30 t)] '((a ["Somebody"])) nil)))))
+
+(ert-deftest supersonic-tests-fit-column-widths-gives-way-to-the-window ()
+  "A row too wide for the window shrinks its widest columns first, but
+never below their minimum."
+  (let ((tabulated-list-padding 2)
+        (format [("Albums" 30 t) ("Artists" 30 t) ("Art" 10 nil)])
+        (entries `((a [,(make-string 50 ?a) ,(make-string 20 ?b) ""]))))
+    ;; 2 padding + 2 separators + 10 for art + 1 edge leave 45 of 60.
+    (should (equal [("Albums" 25 t) ("Artists" 20 t) ("Art" 10 nil)]
+                   (supersonic--fit-column-widths format entries 60)))
+    ;; 2 + 2 + 10 + 1 leave 25: both give way, the wider first, ties leftmost.
+    (should (equal [("Albums" 12 t) ("Artists" 13 t) ("Art" 10 nil)]
+                   (supersonic--fit-column-widths format entries 40)))
+    (should (equal [("Albums" 8 t) ("Artists" 9 t) ("Art" 10 nil)]
+                   (supersonic--fit-column-widths format entries 10)))))
+
+(ert-deftest supersonic-tests-print-list-fits-the-columns-it-prints ()
+  "Rendering a list fits its columns afresh each time, leaving the mode's
+own format alone for the next buffer to start from."
+  (with-temp-buffer
+    (supersonic-tracks-mode)
+    (let ((declared tabulated-list-format))
+      (supersonic--print-list '((a ["A title of thirty-four characters!" "1:05" "1"])))
+      (should (equal '("Title" 34 t) (aref tabulated-list-format 0)))
+      (supersonic--print-list '((a ["Short" "1:05" "1"])))
+      (should (equal '("Title" 7 t) (aref tabulated-list-format 0)))
+      (should (equal '("Title" 30 t) (aref declared 0)))
+      (goto-char (point-min))
+      (should (search-forward "Short" nil t)))))
+
 (ert-deftest supersonic-tests-provider-ids-reach-playback-untouched ()
   "Playing from the tracks and search buffers, and enqueueing an album,
 hands the playback facade the provider's own ids verbatim."

@@ -37,6 +37,7 @@
 
 ;;; Code:
 (require 'json)
+(require 'cl-lib)
 (require 'url)
 (require 'seq)
 (require 'aio)
@@ -54,6 +55,89 @@
 (require 'supersonic-playback)
 (require 'supersonic-mpv)
 (require 'supersonic-waveform)
+
+;;;
+;;; List buffers
+;;;
+
+(defun supersonic--cell-width (cell)
+  "Return the width in columns CELL takes up in a tabulated-list row.
+CELL is a column descriptor as in `tabulated-list-entries'."
+  (cond
+   ((stringp cell) (string-width cell))
+   ;; `tabulated-list-print-col' draws an image over a single space.
+   ((eq (car cell) 'image) 1)
+   (t (string-width (car cell)))))
+
+(defun supersonic--widest-shrinkable-column (widths minimums)
+  "Return the index of the widest of WIDTHS still above its MINIMUMS entry.
+Nil when every column is down to its minimum.  Ties go to the leftmost."
+  (let (widest)
+    (cl-loop for width in widths
+             for minimum in minimums
+             for n from 0
+             when (and (> width minimum) (or (null widest) (> width (nth widest widths))))
+             do (setq widest n))
+    widest))
+
+(defun supersonic--fit-column-widths (format entries available)
+  "Return a copy of FORMAT with its widths fitted to ENTRIES.
+FORMAT and ENTRIES are as in `tabulated-list-format' and
+`tabulated-list-entries'.  Every column but the last becomes as wide as
+its widest cell, though never narrower than its header plus room for
+the sort indicator.  The last column, which `tabulated-list-print'
+neither pads nor truncates, keeps its width, as the room set aside for
+it (e.g. for cover art that arrives after the first print).
+When AVAILABLE, the window's width in columns, is non-nil and the row
+would not fit into it, the widest columns give way first, down to their
+minimum; `tabulated-list-print' truncates their cells with an ellipsis."
+  (let* ((count (length format))
+         (fitted (max 0 (1- count)))
+         (minimums
+          (mapcar
+           (lambda (n)
+             (let ((col (aref format n)))
+               (+ (string-width (nth 0 col)) (if (nth 2 col) 2 0))))
+           (number-sequence 0 (1- fitted))))
+         (widths
+          (cl-mapcar
+           (lambda (n minimum)
+             (seq-reduce
+              (lambda (widest entry) (max widest (supersonic--cell-width (aref (cadr entry) n))))
+              entries minimum))
+           (number-sequence 0 (1- fitted)) minimums)))
+    (when (and available widths)
+      (let ((budget (- available
+                       tabulated-list-padding
+                       (seq-reduce
+                        (lambda (sum n) (+ sum (or (plist-get (nthcdr 3 (aref format n)) :pad-right) 1)))
+                        (number-sequence 0 (1- fitted)) 0)
+                       (nth 1 (aref format fitted))
+                       ;; Keep clear of the window edge, where a truncated line shows its `$'.
+                       1)))
+        (let (widest)
+          (while (and (> (apply #'+ widths) budget)
+                      (setq widest (supersonic--widest-shrinkable-column widths minimums)))
+            (cl-decf (nth widest widths))))))
+    (vconcat
+     (seq-map-indexed
+      (lambda (col n) (if (< n fitted) (cons (car col) (cons (nth n widths) (cddr col))) col))
+      format))))
+
+(defun supersonic--print-list (entries)
+  "Show ENTRIES in the current tabulated-list buffer, columns fitted to them.
+ENTRIES is as in `tabulated-list-entries'.  The widths come from
+`supersonic--fit-column-widths', against the width of the window
+showing the buffer, or else the selected one, where the buffer is
+about to be shown."
+  (setq tabulated-list-entries entries)
+  (when (> (length tabulated-list-format) 0)
+    (setq tabulated-list-format
+          (supersonic--fit-column-widths
+           tabulated-list-format entries
+           (window-body-width (or (get-buffer-window (current-buffer) t) (selected-window)))))
+    (tabulated-list-init-header))
+  (tabulated-list-print t))
 
 ;;;
 ;;; Queue
@@ -127,8 +211,7 @@ aborting the whole render."
    (let ((entries (aio-await (supersonic-queue-parse (aio-await (supersonic-playback-queue))))))
      (when (buffer-live-p buff)
        (with-current-buffer buff
-         (setq tabulated-list-entries entries)
-         (tabulated-list-print t))))))
+         (supersonic--print-list entries))))))
 
 (defun supersonic-queue-refresh ()
   "Refresh the play queue buffer from the active backend's current play queue."
@@ -1384,8 +1467,7 @@ id is (ID . TYPE), TYPE being \"artist\", \"album\" or \"song\", so
   (let ((results (aio-await (supersonic-provider-search query))))
     (when (buffer-live-p buff)
       (with-current-buffer buff
-        (setq tabulated-list-entries (supersonic-search-rows results))
-        (tabulated-list-print t))))))
+        (supersonic--print-list (supersonic-search-rows results)))))))
 
 (defun supersonic-open-search-appropriate-result (result)
   "Opens the RESULT from a search in the appropriate buffer."
@@ -1466,8 +1548,7 @@ entry at point.  An ID that isn't in the list at all yields nil."
   (let ((tracks (aio-await (supersonic-provider-album-tracks id))))
     (when (buffer-live-p buff)
       (with-current-buffer buff
-        (setq tabulated-list-entries (supersonic-tracks-rows tracks))
-        (tabulated-list-print t))))))
+        (supersonic--print-list (supersonic-tracks-rows tracks)))))))
 
 (defun supersonic-play-tracks ()
   "Play all the tracks after the point in the list."
@@ -1546,8 +1627,7 @@ ALBUMS is as resolved by `supersonic-provider-album-list'."
   (let ((albums (aio-await (supersonic-provider-artist-albums id))))
     (when (buffer-live-p buff)
       (with-current-buffer buff
-        (setq tabulated-list-entries (supersonic-albums-rows albums))
-        (tabulated-list-print t)
+        (supersonic--print-list (supersonic-albums-rows albums))
         (supersonic-get-images tabulated-list-entries (supersonic--arts albums) 2 buff))))))
 
 
@@ -1559,8 +1639,7 @@ TYPE is one of `supersonic-provider-album-list-types'."
   (let ((albums (aio-await (supersonic-provider-album-list type supersonic-album-list-count))))
     (when (buffer-live-p buff)
       (with-current-buffer buff
-        (setq tabulated-list-entries (supersonic-albums-type-rows albums))
-        (tabulated-list-print t)
+        (supersonic--print-list (supersonic-albums-type-rows albums))
         (supersonic-get-images tabulated-list-entries (supersonic--arts albums) 2 buff))))))
 
 (defun supersonic-open-tracks ()
@@ -1666,8 +1745,7 @@ one as a string is accepted too."
   (let ((artists (aio-await (supersonic-provider-artists))))
     (when (buffer-live-p buff)
       (with-current-buffer buff
-        (setq tabulated-list-entries (supersonic-artists-rows artists))
-        (tabulated-list-print t))))))
+        (supersonic--print-list (supersonic-artists-rows artists)))))))
 
 (defun supersonic-artists-revert ()
   "Refresh the artists buffer from the active library provider."
@@ -1713,8 +1791,7 @@ one as a string is accepted too."
   (let ((podcasts (aio-await (supersonic-provider-podcasts))))
     (when (buffer-live-p buff)
       (with-current-buffer buff
-        (setq tabulated-list-entries (supersonic-podcasts-rows podcasts))
-        (tabulated-list-print t)
+        (supersonic--print-list (supersonic-podcasts-rows podcasts))
         (supersonic-get-images tabulated-list-entries (supersonic--arts podcasts) 1 buff))))))
 
 
@@ -1803,8 +1880,7 @@ EPISODES is as resolved by `supersonic-provider-podcast-episodes'."
   (let ((episodes (aio-await (supersonic-provider-podcast-episodes id))))
     (when (buffer-live-p buff)
       (with-current-buffer buff
-        (setq tabulated-list-entries (supersonic-podcast-episodes-rows episodes))
-        (tabulated-list-print t))))))
+        (supersonic--print-list (supersonic-podcast-episodes-rows episodes)))))))
 
 (defun supersonic-download-podcast-episode ()
   "Have the library provider download the podcast episode at point."
