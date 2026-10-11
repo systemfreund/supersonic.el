@@ -324,43 +324,33 @@ Music Assistant token:
 Each is called with the server's URL, so one function can serve
 several servers. The secret may also be a function returning it.
 
-Neither result is kept: the Subsonic function is called for every URL
+By default neither result is kept: the Subsonic function is called for every URL
 built -- each track queued, each cover shown -- and the Music
 Assistant one once per operation, and also on every poll of the
 player's state while it is the backend, every
 `supersonic-music-assistant-poll-interval` seconds. That is fine for
 something cheap, such as reading a plain file, but
 `auth-source-pass-get` decrypts the entry every time. To keep what it
-found for a while, cache it:
+found for a while, wrap the function in `supersonic-cached`:
 
 ```elisp
 ;; Subsonic
 (setq supersonic-auth-function
-      (lambda (host)
-        (let ((key (concat "supersonic:" host)))
-          (list :user "USERNAME"
-                :secret (or (password-read-from-cache key)
-                            (let ((secret (auth-source-pass-get 'secret "my/custom_entry")))
-                              (password-cache-add key (copy-sequence secret))
-                              secret))))))
+      (supersonic-cached
+       (lambda (_host)
+         (list :user "USERNAME"
+               :secret (auth-source-pass-get 'secret "my/custom_entry")))))
 
 ;; Music Assistant
 (setq supersonic-music-assistant-token-function
-      (lambda (server)
-        (let ((key (concat "supersonic:" server)))
-          (or (password-read-from-cache key)
-              (let ((token (auth-source-pass-get 'secret "my/music_assistant")))
-                (password-cache-add key (copy-sequence token))
-                token)))))
+      (supersonic-cached
+       (lambda (_server) (auth-source-pass-get 'secret "my/music_assistant"))))
 ```
 
-These hold the secret for `password-cache-expiry` seconds, 16 by
-default, so a playing Music Assistant player still decrypts the entry
-about every 16 seconds. Raising that variable lengthens it, but it is
-global: it also applies to everything else Emacs caches there, such
-as GnuPG passphrases. The cache wipes the string it holds when it
-expires, hence the copy: the string handed out may be one the source
-keeps for itself, as auth-source does for a Secret Service entry.
+What it found is kept for each server for
+`supersonic-credentials-cache-expiry` seconds, an hour by default.
+After changing a password, `M-x supersonic-forget-credentials` makes
+it ask again right away.
 
 ## Usage
 

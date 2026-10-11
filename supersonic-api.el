@@ -58,6 +58,59 @@ it is unset: a lookup for no host would match any entry."
     (unless (string-empty-p host)
       (funcall supersonic-auth-function host))))
 
+(defvar supersonic--credentials-cache (make-hash-table :test #'equal)
+  "What the functions `supersonic-cached' returned have kept.
+Keyed by (ID . SERVER), ID telling those functions apart; each value
+is (EXPIRES . RESULT), EXPIRES a `float-time'.")
+
+(defun supersonic--cached-result (result)
+  "Return RESULT with its secret resolved and copied, or nil if it has none.
+RESULT is what a `supersonic-auth-function' or a
+`supersonic-music-assistant-token-function' returns: a plist with the
+secret under :secret, of which only :user and :secret are kept, or
+the token itself.  Either may be a function returning the string.  A
+copy, as the string handed out may be one its source wipes later, as
+`password-cache-remove' does on expiry."
+  (let ((resolve (lambda (secret)
+                   (let ((secret (if (functionp secret) (funcall secret) secret)))
+                     (and secret (copy-sequence secret))))))
+    (if (consp result)
+        (let ((secret (funcall resolve (plist-get result :secret))))
+          (and secret (list :user (plist-get result :user) :secret secret)))
+      (funcall resolve result))))
+
+;;;###autoload
+(defun supersonic-cached (function)
+  "Return FUNCTION, keeping what it returns for each server for a while.
+For `supersonic-auth-function' and
+`supersonic-music-assistant-token-function', when FUNCTION is slow --
+it decrypts a file, say -- as both are called often.  FUNCTION is
+called with the server as they are; what it returns is kept for
+`supersonic-credentials-cache-expiry' seconds, with a secret handed
+out as a function resolved first.  Finding nothing is not kept.
+`supersonic-forget-credentials' drops what was kept, e.g. after a
+password change."
+  (let ((id (make-symbol "supersonic-cached")))
+    (lambda (server)
+      (let* ((key (cons id server))
+             (entry (gethash key supersonic--credentials-cache)))
+        (if (and entry (< (float-time) (car entry)))
+            (cdr entry)
+          (let ((result (supersonic--cached-result (funcall function server))))
+            (if result
+                (puthash key (cons (+ (float-time) supersonic-credentials-cache-expiry) result)
+                         supersonic--credentials-cache)
+              (remhash key supersonic--credentials-cache))
+            result))))))
+
+;;;###autoload
+(defun supersonic-forget-credentials ()
+  "Forget the credentials kept by functions made with `supersonic-cached'.
+They are asked for again on the next request."
+  (interactive)
+  (clrhash supersonic--credentials-cache)
+  nil)
+
 (defun supersonic-alist->query (al)
   "Convert AL, an alist of string keys to string values, to a query string.
 Returns \"\" for an empty AL, so `supersonic-build-url' never appends a

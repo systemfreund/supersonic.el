@@ -2611,6 +2611,113 @@ keeping whatever supersonic itself first memoized for that host."
       (setq user "right-user")
       (should (equal "right-user" (plist-get (supersonic-auth) :user))))))
 
+(defmacro supersonic-tests--with-credentials-cache (&rest body)
+  "Run BODY with a credentials cache of its own, starting out empty."
+  (declare (indent 0))
+  `(let ((supersonic--credentials-cache (make-hash-table :test #'equal))
+         (supersonic-credentials-cache-expiry 3600))
+     ,@body))
+
+(ert-deftest supersonic-tests-cached-asks-once-per-server ()
+  "`supersonic-cached' asks the function it wraps once per server, and
+answers again from what it kept."
+  (supersonic-tests--with-credentials-cache
+    (let* ((asked nil)
+           (cached (supersonic-cached (lambda (server) (push server asked) (concat "token-" server)))))
+      (should (equal "token-a" (funcall cached "a")))
+      (should (equal "token-a" (funcall cached "a")))
+      (should (equal "token-b" (funcall cached "b")))
+      (should (equal '("b" "a") asked)))))
+
+(ert-deftest supersonic-tests-cached-asks-again-once-expired ()
+  "What `supersonic-cached' keeps is asked for again after
+`supersonic-credentials-cache-expiry' seconds."
+  (supersonic-tests--with-credentials-cache
+    (let* ((now 1000.0)
+           (asked 0)
+           (cached (supersonic-cached (lambda (_server) (setq asked (1+ asked)) "token"))))
+      (cl-letf (((symbol-function 'float-time) (lambda (&optional _) now)))
+        (funcall cached "a")
+        (setq now (+ now 3599))
+        (funcall cached "a")
+        (should (= 1 asked))
+        (setq now (+ now 2))
+        (funcall cached "a")
+        (should (= 2 asked))))))
+
+(ert-deftest supersonic-tests-cached-keeps-nothing-found ()
+  "Finding nothing -- no token, or credentials without a password -- is
+not kept, so that the next request asks again."
+  (supersonic-tests--with-credentials-cache
+    (dolist (result (list nil '(:user "alice" :secret nil) (list :user "alice" :secret #'ignore)))
+      (let* ((asked 0)
+             (cached (supersonic-cached (lambda (_server) (setq asked (1+ asked)) result))))
+        (funcall cached "a")
+        (funcall cached "a")
+        (should (= 2 asked))))))
+
+(ert-deftest supersonic-tests-cached-resolves-a-secret-function-once ()
+  "A secret handed out as a function is called once and its result kept:
+keeping the function would ask its source again on every request."
+  (supersonic-tests--with-credentials-cache
+    (let* ((reads 0)
+           (secret (lambda () (setq reads (1+ reads)) "hunter2"))
+           (credentials (supersonic-cached (lambda (_host) (list :user "alice" :secret secret))))
+           (token (supersonic-cached (lambda (_server) secret))))
+      (should (equal '(:user "alice" :secret "hunter2") (funcall credentials "a")))
+      (should (equal '(:user "alice" :secret "hunter2") (funcall credentials "a")))
+      (should (equal "hunter2" (funcall token "a")))
+      (should (equal "hunter2" (funcall token "a")))
+      (should (= 2 reads)))))
+
+(ert-deftest supersonic-tests-cached-keeps-its-own-copy ()
+  "`supersonic-cached' keeps a copy of the secret, so that its source
+wiping the string it handed out -- as `password-cache-remove' does on
+expiry -- does not change what is kept."
+  (supersonic-tests--with-credentials-cache
+    (let* ((secret (copy-sequence "hunter2"))
+           (token (copy-sequence "custom-token"))
+           (credentials (supersonic-cached (lambda (_host) (list :user "alice" :secret secret))))
+           (tokens (supersonic-cached (lambda (_server) token))))
+      (funcall credentials "a")
+      (funcall tokens "a")
+      (clear-string secret)
+      (clear-string token)
+      (should (equal "hunter2" (plist-get (funcall credentials "a") :secret)))
+      (should (equal "custom-token" (funcall tokens "a"))))))
+
+(ert-deftest supersonic-tests-forget-credentials-asks-again ()
+  "`supersonic-forget-credentials' drops what every `supersonic-cached'
+function kept, for a password that has just been changed."
+  (supersonic-tests--with-credentials-cache
+    (let* ((asked 0)
+           (cached (supersonic-cached (lambda (_server) (setq asked (1+ asked)) "token"))))
+      (funcall cached "a")
+      ;; Returns nothing, so that `M-:' cannot echo what was kept.
+      (should-not (supersonic-forget-credentials))
+      (funcall cached "a")
+      (should (= 2 asked)))))
+
+(ert-deftest supersonic-tests-cached-keeps-only-user-and-secret ()
+  "Of the credentials found, only the user and the secret are kept --
+not everything else an auth-source entry carries, its notes included."
+  (supersonic-tests--with-credentials-cache
+    (let ((cached (supersonic-cached
+                   (lambda (_host) '(:host "a" :user "alice" :secret "hunter2" :Notes "private")))))
+      (should (equal '(:user "alice" :secret "hunter2") (funcall cached "a")))
+      (should (equal '(:user "alice" :secret "hunter2") (funcall cached "a"))))))
+
+(ert-deftest supersonic-tests-build-url-with-cached-credentials ()
+  "Wrapped in `supersonic-cached', the credentials are asked once for
+every url built."
+  (supersonic-tests--with-credentials-cache
+    (let* ((supersonic-host "http://music.test:4533")
+           (asked 0)
+           (supersonic-auth-function
+            (supersonic-cached (lambda (_host) (setq asked (1+ asked)) '(:user "alice" :secret "hunter2")))))
+      (dotimes (_ 5) (supersonic-build-url "/ping.view" nil))
+      (should (= 1 asked)))))
+
 (defun supersonic-tests--query-params (url)
   "Return URL's query parameters as an alist of strings."
   (url-parse-query-string (cadr (split-string url "?"))))

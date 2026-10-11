@@ -75,20 +75,23 @@ as a pass entry named for something else:
                 :secret (auth-source-pass-get \='secret \"my/entry\"))))
 
 It is called for every url built -- each track queued, each cover
-shown -- so a slow lookup, as decrypting that entry is, should cache
-what it finds, e.g. for `password-cache-expiry':
+shown -- so a slow lookup, as decrypting that entry is, should be
+wrapped in `supersonic-cached':
 
   (setq supersonic-auth-function
-        (lambda (host)
-          (let ((key (concat \"supersonic:\" host)))
-            (list :user \"USERNAME\"
-                  :secret (or (password-read-from-cache key)
-                              (let ((secret (auth-source-pass-get
-                                             \='secret \"my/entry\")))
-                                (password-cache-add key (copy-sequence secret))
-                                secret))))))"
+        (supersonic-cached
+         (lambda (_host)
+           (list :user \"USERNAME\"
+                 :secret (auth-source-pass-get \='secret \"my/entry\")))))"
   :type '(choice (function-item supersonic-auth-source-credentials)
                  (function :tag "Other function"))
+  :group 'supersonic)
+
+(defcustom supersonic-credentials-cache-expiry 3600
+  "Seconds a function made by `supersonic-cached' keeps what it found.
+Read as it keeps something.  `supersonic-forget-credentials' drops
+everything kept before that."
+  :type 'number
   :group 'supersonic)
 
 (defcustom supersonic-mpv (executable-find "mpv")
@@ -616,16 +619,11 @@ pass entry named for something else:
 Polling the player's state is an operation too, so while
 `music-assistant' is the backend this is called every
 `supersonic-music-assistant-poll-interval' seconds.  A slow lookup,
-as decrypting that entry is, should cache what it finds, e.g. for
-`password-cache-expiry':
+as decrypting that entry is, should be wrapped in `supersonic-cached':
 
   (setq supersonic-music-assistant-token-function
-        (lambda (server)
-          (let ((key (concat \"supersonic:\" server)))
-            (or (password-read-from-cache key)
-                (let ((token (auth-source-pass-get \='secret \"my/entry\")))
-                  (password-cache-add key (copy-sequence token))
-                  token)))))"
+        (supersonic-cached
+         (lambda (_server) (auth-source-pass-get \='secret \"my/entry\"))))"
   :type '(choice (function-item supersonic-music-assistant-auth-source-token)
                  (function :tag "Other function"))
   :group 'supersonic)
