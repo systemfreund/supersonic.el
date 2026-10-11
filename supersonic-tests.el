@@ -4484,30 +4484,39 @@ face of height 2.0, gets twice the columns."
                     nil (lambda (cell) (* 2 (supersonic--cell-width cell))))))))
 
 (ert-deftest supersonic-tests-truncate-to-pixels-keeps-what-fits ()
-  "A cell cut down to its pixels ends in an ellipsis in its own face and
-remembers the whole text.  A batch frame counts a column as a pixel."
+  "A cell cut down to its pixels ends in an ellipsis in its own face.
+A batch frame counts a column as a pixel."
   (let* ((truncate-string-ellipsis "…")
          (cut (supersonic--truncate-to-pixels (propertize "abcdefghij" 'face 'bold) 5)))
     (should (equal "abcd…" (substring-no-properties cut)))
-    (should (eq 'bold (get-text-property 4 'face cut)))
-    (should (equal "abcdefghij" (get-text-property 0 'supersonic--untruncated cut)))))
+    (should (eq 'bold (get-text-property 4 'face cut)))))
 
-(ert-deftest supersonic-tests-fit-columns-truncates-and-restores-cells ()
-  "Too narrow a window cuts cells down to their column; a refit in a
-wider one brings the whole text back."
+(ert-deftest supersonic-tests-fit-columns-cuts-only-what-is-drawn ()
+  "Too narrow a window draws cells cut down to their column, while the
+entries keep them whole: sorting compares the whole text, and a refit
+in a wider window draws it all again."
   (with-temp-buffer
     (supersonic-tracks-mode)
     (let ((truncate-string-ellipsis "…")
-          (title (make-string 40 ?t)))
+          (first (concat (make-string 40 ?t) " first"))
+          (second (concat (make-string 40 ?t) " second")))
       (cl-letf (((symbol-function 'supersonic--window-columns) (lambda () 30)))
-        (supersonic--print-list `((a [,title "1:05" "1"])))
+        (supersonic--print-list `((b [,second "1:05" "2"]) (a [,first "1:05" "1"])))
         ;; 2 padding + 2 separators + 10 for the track number leave 16: both columns stop at their minimum.
         (should (equal '("Title" 7 t) (aref tabulated-list-format 0)))
-        (should (equal "tttttt…" (substring-no-properties (aref (cadr (car tabulated-list-entries)) 0)))))
+        (should (equal second (aref (cadr (car tabulated-list-entries)) 0)))
+        (goto-char (point-min))
+        (should (search-forward "tttttt…" nil t))
+        (should-not (search-forward "second" nil t))
+        (should (equal second (aref (tabulated-list-get-entry (pos-bol)) 0)))
+        (setq tabulated-list-sort-key '("Title" . nil))
+        (tabulated-list-print)
+        (should (equal '(a b) (mapcar #'car tabulated-list-entries))))
       (cl-letf (((symbol-function 'supersonic--window-columns) (lambda () 200)))
         (revert-buffer)
-        (should (equal '("Title" 40 t) (aref tabulated-list-format 0)))
-        (should (equal title (aref (cadr (car tabulated-list-entries)) 0)))))))
+        (should (equal '("Title" 47 t) (aref tabulated-list-format 0)))
+        (goto-char (point-min))
+        (should (search-forward second nil t))))))
 
 (ert-deftest supersonic-tests-reverting-a-list-refits-its-columns ()
   "\\[revert-buffer] in a list buffer that keeps the default
