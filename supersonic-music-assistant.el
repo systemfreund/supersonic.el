@@ -44,7 +44,10 @@
 ;; credentials are matched on `supersonic-host' -- or from wherever
 ;; `supersonic-music-assistant-token-function' finds it -- and looked
 ;; up afresh for every operation, so it never sits in a variable, a URL
-;; or a subprocess's argv.  Token authentication needs server schema 28 or
+;; or a subprocess's argv.  Unless that function is wrapped in
+;; `supersonic-cached': that keeps the token in memory, for
+;; `supersonic-credentials-cache-expiry' seconds, though still in no
+;; URL or argv.  Token authentication needs server schema 28 or
 ;; later, so the server's unauthenticated `/info' is asked once per
 ;; server address before anything else.
 ;;
@@ -254,7 +257,7 @@ those are the user's to fix."
     (cond
      ((eql code 401)
       (user-error "Music Assistant at %s rejected the token from `supersonic-music-assistant-token-function'%s"
-                  url (or (supersonic--forget-rejected-credentials) "")))
+                  url (or (supersonic--forget-rejected-credentials supersonic-music-assistant-url) "")))
      ((not (and (integerp code) (< code 300)))
       (error "Music Assistant answered %s with %s: %s" url code body))
      (t

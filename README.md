@@ -349,9 +349,12 @@ found for a while, wrap the function in `supersonic-cached`:
 
 What it found is kept for each server for
 `supersonic-credentials-cache-expiry` seconds, an hour by default.
-A server rejecting the password or token drops what was kept, so
-trying again asks afresh; `M-x supersonic-forget-credentials` does
-the same by hand, e.g. right after changing a password.
+A server rejecting the password or token drops what was kept for it,
+so trying again asks afresh; `M-x supersonic-forget-credentials` drops
+everything by hand, e.g. right after changing a password. Only a
+rejection of a request supersonic.el reads itself counts: a Subsonic
+stream mpv fails to play, or a cover that does not load, drops
+nothing until the next list or search is rejected too.
 
 ## Usage
 

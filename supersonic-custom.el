@@ -89,8 +89,9 @@ wrapped in `supersonic-cached':
 
 (defcustom supersonic-credentials-cache-expiry 3600
   "Seconds a function made by `supersonic-cached' keeps what it found.
-Read as it keeps something.  `supersonic-forget-credentials' drops
-everything kept before that."
+Read when something is kept, so a change applies to what is kept from
+then on, not to what already is.  `supersonic-forget-credentials'
+drops everything kept before it expires."
   :type 'number
   :group 'supersonic)
 
