@@ -132,10 +132,21 @@ art it can draw -- see `supersonic-art-available-p'."
   :group 'supersonic)
 
 (defcustom supersonic-list-art-size 250
-  "Height in pixels of the art in the artist, album and podcast lists.
+  "Height in pixels of the cover art in the album and podcast lists.
 The art is also downloaded at this size, so raising it costs a
 re-download of anything already cached at the old size."
   :type 'integer
+  :group 'supersonic)
+
+(defcustom supersonic-artist-art-size 64
+  "Height in pixels of the artist images in the artist list, or nil for none.
+Smaller than `supersonic-list-art-size' because the artist list holds
+the whole library and is browsed rather than looked at: every row is
+this high.  Only the rows in view are fetched, see
+`supersonic-art-fill-visible'.  Like that setting, a new size means
+fetching the images again.  Read when the artist list is opened, so it
+takes effect for the next one."
+  :type '(choice (const :tag "No artist images" nil) integer)
   :group 'supersonic)
 
 (defcustom supersonic-list-use-header-line nil

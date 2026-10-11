@@ -31,6 +31,8 @@
 (require 'aio)
 (require 'svg)
 (require 'url-util)
+(require 'tabulated-list)
+(require 'text-property-search)
 (require 'supersonic-custom)
 (require 'supersonic-provider)
 ;; Only for `supersonic-waveform-bars'/`supersonic-waveform-svg-bars': the
@@ -431,6 +433,111 @@ so callers don't need to print again themselves."
    (with-current-buffer buff
      (when (derived-mode-p 'tabulated-list-mode)
        (tabulated-list-print t)))))
+
+;;; Art filled in as rows come into view
+
+(defvar-local supersonic-art--lazy nil
+  "What `supersonic-art-fill-visible' fills into this buffer, or nil.
+A plist: `:column' and `:size' the art goes into and is shown at,
+`:arts' a table from each entry's id to its `:art' reference, and
+`:requested' the ids whose art was asked for already.  A fresh plist
+for every fill, so a fetch can tell by `eq' whether the list it was
+started for is still the one shown.")
+
+(defvar-local supersonic-art--lazy-sem nil
+  "The semaphore this buffer's `supersonic-art-fill-visible' fetches share.
+Kept across refills, so a refresh while art is still arriving adds no
+second set of `supersonic-art-fetch-concurrency' requests.")
+
+(defun supersonic-art-fill-visible (entries arts n size buff)
+  "Fill column N of BUFF's ENTRIES with art at SIZE as their rows come into view.
+ARTS holds each entry's `:art' reference, in the same order as ENTRIES,
+as for `supersonic-get-images'.  Unlike that function, which fetches
+the art of every entry up front, only the rows a window shows are
+fetched for, at most `supersonic-art-fetch-concurrency' at a time,
+and the rest follow as they are scrolled to -- for a list such as the
+artists, which holds the whole library.  Each row is redrawn on its
+own as its art arrives.  BUFF must already be printed."
+  (when (and (buffer-live-p buff) (supersonic-art-available-p))
+    (with-current-buffer buff
+      (let ((table (make-hash-table :test #'equal)))
+        (cl-mapc (lambda (entry art) (when art (puthash (car entry) art table))) entries arts)
+        (setq supersonic-art--lazy
+              (list :column n :size size :arts table :requested (make-hash-table :test #'equal))))
+      (unless supersonic-art--lazy-sem
+        (setq supersonic-art--lazy-sem (aio-sem supersonic-art-fetch-concurrency)))
+      (add-hook 'window-scroll-functions #'supersonic-art--fill-window nil t)
+      (add-hook 'post-command-hook #'supersonic-art--fill-windows nil t)
+      (supersonic-art--fill-windows))))
+
+(defun supersonic-art--fill-windows ()
+  "Ask for the art of the rows in view in each window on the current buffer."
+  (dolist (window (get-buffer-window-list (current-buffer) nil t))
+    (supersonic-art--fill-window window (window-start window))))
+
+(defun supersonic-art--fill-window (window start)
+  "Ask for the art of the rows in view in WINDOW, from START on.
+On `window-scroll-functions', where `window-end' is not yet known, so
+it takes as many rows as WINDOW has text lines: too many when rows are
+art-high, never too few."
+  (with-current-buffer (window-buffer window)
+    (when supersonic-art--lazy
+      (let ((ids nil))
+        (save-excursion
+          (goto-char start)
+          (dotimes (_ (window-body-height window))
+            (let ((id (tabulated-list-get-id)))
+              (when id (push id ids)))
+            (forward-line 1)))
+        (dolist (id (nreverse ids))
+          (supersonic-art--request id))))))
+
+(defun supersonic-art--request (id)
+  "Start filling in the art of the row of ID, unless asked for already."
+  (let* ((lazy supersonic-art--lazy)
+         (art (gethash id (plist-get lazy :arts)))
+         (requested (plist-get lazy :requested)))
+    (when (and art (not (gethash id requested)))
+      (puthash id t requested)
+      (ignore (supersonic-art--fill-row (current-buffer) lazy id art)))))
+
+(aio-defun
+ supersonic-art--fill-row (buff lazy id art)
+ "Fetch ART for the row of ID in BUFF, then redraw that row with it.
+LAZY is the `supersonic-art--lazy' the request was made under.  Art
+already cached is shown without waiting for a slot.  A request that
+gets its slot only after BUFF was refilled is dropped unfetched: it
+belongs to a list no longer shown, and the new one asks again for
+whatever is in view.  Failures leave the row without art."
+ (let ((size (plist-get lazy :size)))
+   (unless (file-exists-p (supersonic-art-cache-file art size))
+     (let ((sem (buffer-local-value 'supersonic-art--lazy-sem buff)))
+       (aio-await (aio-sem-wait sem))
+       (when (and (buffer-live-p buff) (eq lazy (buffer-local-value 'supersonic-art--lazy buff)))
+         (aio-await (aio-catch (supersonic--fetch-art art size))))
+       (aio-sem-post sem)))
+   (when (and (buffer-live-p buff)
+              (eq lazy (buffer-local-value 'supersonic-art--lazy buff))
+              (file-exists-p (supersonic-art-cache-file art size)))
+     (with-current-buffer buff
+       (supersonic-art--redraw-row id (plist-get lazy :column) (supersonic-image-propertize art size))))))
+
+(defun supersonic-art--redraw-row (id n cell)
+  "Set column N of the entry ID to CELL and redraw just its row.
+Reprinting the whole list for every image that arrives would cost as
+much as the list is long, and `tabulated-list-set-col' cannot fill a
+cell printed empty, which leaves no text to replace."
+  (let ((entry (assoc id tabulated-list-entries)))
+    (when entry
+      (aset (cadr entry) n cell)
+      (save-excursion
+        (goto-char (point-min))
+        (let ((match (text-property-search-forward 'tabulated-list-id id t)))
+          (when match
+            (goto-char (prop-match-beginning match))
+            (let ((inhibit-read-only t))
+              (delete-region (line-beginning-position) (min (point-max) (1+ (line-end-position))))
+              (funcall tabulated-list-printer id (cadr entry)))))))))
 
 (provide 'supersonic-art)
 ;;; supersonic-art.el ends here

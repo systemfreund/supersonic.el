@@ -449,8 +449,10 @@ the camel-cased keys become keywords: `"coverArt"` is `:art`,
 Cover art is on by default (`supersonic-enable-art`) and needs a
 graphical frame to draw it in. The artist list shows the artist image
 the server has for each artist (e.g. what Navidrome or Music Assistant
-fetched for it). Its size is set per view: `supersonic-list-art-size`
-for the artist, album and podcast lists, `supersonic-now-playing-art-size` for
+fetched for it), fetching only the rows in view as you scroll. Its size
+is set per view: `supersonic-artist-art-size` for the artist list (`nil`
+turns its images off), `supersonic-list-art-size` for the album and
+podcast lists, `supersonic-now-playing-art-size` for
 the now-playing buffer.
 
 ### MPRIS
