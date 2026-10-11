@@ -38,6 +38,7 @@
 ;;; Code:
 (require 'json)
 (require 'cl-lib)
+(require 'subr-x)
 (require 'url)
 (require 'seq)
 (require 'aio)
@@ -60,15 +61,42 @@
 ;;; List buffers
 ;;;
 
-(defun supersonic--cell-width (cell)
-  "Return the width in columns CELL takes up in a tabulated-list row.
+(defun supersonic--cell-label (cell)
+  "Return the text CELL shows in a tabulated-list row, or nil for an image.
 CELL is a column descriptor as in `tabulated-list-entries'."
   (cond
-   ((stringp cell) (string-width cell))
+   ((stringp cell) cell)
    ;; `tabulated-list-print-col' draws an image over a single space, so the image's real width is unknown here.
    ;; Supersonic's own art is a `display'-property string in the last column, which is never measured.
-   ((eq (car cell) 'image) 1)
-   (t (string-width (car cell)))))
+   ((eq (car cell) 'image) nil)
+   (t (car cell))))
+
+(defun supersonic--cell-width (cell)
+  "Return the width in characters CELL takes up in a tabulated-list row.
+CELL is a column descriptor as in `tabulated-list-entries'.  Blind to
+faces; `supersonic--cell-pixel-columns' sees them."
+  (let ((label (supersonic--cell-label cell)))
+    (if label (string-width label) 1)))
+
+(defun supersonic--string-pixel-width (string)
+  "Return the width of STRING in pixels as drawn in the selected window.
+Nil before Emacs 29, which lacks `string-pixel-width'; callers check
+`supersonic--pixelwise-p' first."
+  (when (fboundp 'string-pixel-width)
+    (string-pixel-width string)))
+
+(defun supersonic--pixelwise-p ()
+  "Return non-nil if cells can be measured as drawn, from Emacs 29."
+  (fboundp 'string-pixel-width))
+
+(defun supersonic--cell-pixel-columns (cell column)
+  "Return how many columns of COLUMN pixels CELL takes up in the selected window.
+CELL is as for `supersonic--cell-width', but measured as drawn, so a
+face's height or typeface counts.  On a text terminal a pixel is a
+column and faces don't change widths, so this agrees with
+`supersonic--cell-width' there."
+  (let ((label (supersonic--cell-label cell)))
+    (if label (ceiling (supersonic--string-pixel-width label) column) 1)))
 
 (defun supersonic--widest-shrinkable-column (widths minimums)
   "Return the index of the widest of WIDTHS still above its MINIMUMS entry.
@@ -82,7 +110,7 @@ Nil when every column is down to its minimum.  Ties go to the leftmost."
            do (setq widest n widest-width width)
            finally return widest))
 
-(defun supersonic--fit-column-widths (format entries available)
+(defun supersonic--fit-column-widths (format entries available &optional measure)
   "Return a copy of FORMAT with its widths fitted to ENTRIES.
 FORMAT and ENTRIES are as in `tabulated-list-format' and
 `tabulated-list-entries'.  Every column but the last becomes as wide as
@@ -91,9 +119,11 @@ the sort indicator.  The last column, which `tabulated-list-print'
 neither pads nor truncates, keeps its width, as the room set aside for
 it (e.g. for cover art that arrives after the first print), so art
 columns must come last.
-When AVAILABLE, the characters a window line holds, is non-nil and the row
+When AVAILABLE, the columns a window line holds, is non-nil and the row
 would not fit into it, the widest columns give way first, down to their
-minimum; `tabulated-list-print' truncates their cells with an ellipsis."
+minimum; `supersonic--truncate-cells' then shortens their cells.
+MEASURE, a function of a cell returning its width in columns, defaults
+to `supersonic--cell-width'."
   (let* ((count (length format))
          (fitted (max 0 (1- count)))
          (minimums
@@ -106,7 +136,7 @@ minimum; `tabulated-list-print' truncates their cells with an ellipsis."
           (cl-mapcar
            (lambda (n minimum)
              (seq-reduce
-              (lambda (widest entry) (max widest (supersonic--cell-width (aref (cadr entry) n))))
+              (lambda (widest entry) (max widest (funcall (or measure #'supersonic--cell-width) (aref (cadr entry) n))))
               entries minimum))
            (number-sequence 0 (1- fitted)) minimums)))
     (when (and available widths)
@@ -127,20 +157,84 @@ minimum; `tabulated-list-print' truncates their cells with an ellipsis."
       (lambda (col n) (if (< n fitted) (cons (car col) (cons (nth n widths) (cddr col))) col))
       format))))
 
+(defun supersonic--truncate-to-pixels (string pixels)
+  "Return STRING shortened to fit PIXELS as drawn in the selected window.
+What it leaves out becomes an ellipsis in the face of what it keeps.
+The result carries STRING in its `supersonic--untruncated' property,
+for `supersonic--untruncate-cells' to bring back."
+  (let ((low 0) (high (1- (length string))) fitting)
+    (cl-flet ((cut (n)
+                (concat (substring string 0 n)
+                        (apply #'propertize (truncate-string-ellipsis)
+                               (and (> n 0) (text-properties-at (1- n) string))))))
+      ;; Binary search for the longest prefix that still fits with its ellipsis.
+      (setq fitting (cut 0))
+      (while (<= low high)
+        (let* ((mid (/ (+ low high 1) 2)) (candidate (cut mid)))
+          (if (<= (supersonic--string-pixel-width candidate) pixels)
+              (setq fitting candidate low (1+ mid))
+            (setq high (1- mid))))))
+    (propertize fitting 'supersonic--untruncated string)))
+
+(defun supersonic--untruncate-cells ()
+  "Bring back the cells `supersonic--truncate-cells' shortened.
+So a refit, e.g. in a window that has grown, starts from the whole text."
+  (dolist (entry tabulated-list-entries)
+    (let ((cells (cadr entry)))
+      (dotimes (n (length cells))
+        (let ((cell (aref cells n)))
+          (when (and (stringp cell) (> (length cell) 0) (get-text-property 0 'supersonic--untruncated cell))
+            (aset cells n (get-text-property 0 'supersonic--untruncated cell))))))))
+
+(defun supersonic--truncate-cells (column)
+  "Shorten the cells too wide for their column, as drawn, to fit it.
+COLUMN is the width of a column in pixels.  `tabulated-list-print'
+truncates by characters alone, which leaves a cell in a taller or wider
+face spilling into the next column; this truncates by what is drawn.
+Like `tabulated-list-print', it leaves the last column alone."
+  (let ((fitted (1- (length tabulated-list-format))))
+    (dolist (entry tabulated-list-entries)
+      (let ((cells (cadr entry)))
+        (dotimes (n fitted)
+          (let ((cell (aref cells n))
+                (pixels (* column (nth 1 (aref tabulated-list-format n)))))
+            (when (and (stringp cell) (> (supersonic--string-pixel-width cell) pixels))
+              (aset cells n (supersonic--truncate-to-pixels cell pixels)))))))))
+
+(defun supersonic--window-columns ()
+  "Return how many columns the selected window's text area holds.
+Columns of the frame's default font, the unit `:align-to' and so
+`tabulated-list-print' place columns in, rather than the buffer's
+possibly text-scaled one.  Leaves out line numbers and the column the
+continuation glyph needs."
+  (1- (/ (- (window-body-width nil t) (line-number-display-width t)) (frame-char-width))))
+
 (defun supersonic--fit-columns ()
   "Fit the current tabulated-list buffer's columns to its entries.
 The widths come from `supersonic--fit-column-widths', against the
 window showing the buffer, or else the selected one, where a freshly
-opened buffer is about to be shown.  `window-max-chars-per-line'
-already leaves out line numbers, a text-scaled font and the column the
-continuation glyph needs.  Also on `tabulated-list-revert-hook', so
+opened buffer is about to be shown.  Cells are measured as drawn there
+\(with `string-pixel-width', from Emacs 29), so faces with their own
+height or typeface fit too, and are cut down to their column by
+`supersonic--truncate-cells'.  Also on `tabulated-list-revert-hook', so
 \\[revert-buffer] refits, e.g. after resizing the window."
   (when (> (length tabulated-list-format) 0)
-    (setq tabulated-list-format
-          (supersonic--fit-column-widths
-           tabulated-list-format tabulated-list-entries
-           (window-max-chars-per-line (or (get-buffer-window (current-buffer) t) (selected-window)))))
-    (tabulated-list-init-header)))
+    (let ((buff (current-buffer)))
+      (with-selected-window (or (get-buffer-window buff t) (selected-window))
+        (with-current-buffer buff
+          (let* ((column (frame-char-width))
+                 (pixelwise (supersonic--pixelwise-p))
+                 (measure (if pixelwise
+                              (lambda (cell) (supersonic--cell-pixel-columns cell column))
+                            #'supersonic--cell-width)))
+            (supersonic--untruncate-cells)
+            (setq tabulated-list-format
+                  (supersonic--fit-column-widths
+                   tabulated-list-format tabulated-list-entries (supersonic--window-columns) measure))
+            ;; Without pixel widths, `tabulated-list-print''s own truncation by characters is all there is.
+            (when pixelwise
+              (supersonic--truncate-cells column))
+            (tabulated-list-init-header)))))))
 
 (defun supersonic--print-list (entries)
   "Show ENTRIES in the current tabulated-list buffer, columns fitted to them.
