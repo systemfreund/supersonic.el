@@ -132,19 +132,20 @@ art it can draw -- see `supersonic-art-available-p'."
   :group 'supersonic)
 
 (defcustom supersonic-list-art-size 250
-  "Height in pixels of the cover art in the album and podcast lists.
+  "Height in pixels of the art in the artist, album and podcast lists.
 The art is also downloaded at this size, so raising it costs a
 re-download of anything already cached at the old size."
   :type 'integer
   :group 'supersonic)
 
 (defcustom supersonic-list-use-header-line nil
-  "Where the column headers go in supersonic's album and podcast list buffers.
-Seeded into `tabulated-list-use-header-line' by `supersonic-album-mode',
-`supersonic-album-type-mode', `supersonic-podcast-mode' and
-`supersonic-podcast-episodes-mode', which is the whole of its reach --
-the other list buffers (tracks, artists, search results, the play
-queue) leave that variable at its own default and are unaffected.
+  "Where the column headers go in supersonic's artist, album and podcast lists.
+Seeded into `tabulated-list-use-header-line' by `supersonic-artist-mode',
+`supersonic-album-mode', `supersonic-album-type-mode',
+`supersonic-podcast-mode' and `supersonic-podcast-episodes-mode', which
+is the whole of its reach -- the other list buffers (tracks, search
+results, the play queue) leave that variable at its own default and are
+unaffected.
 
 This chooses between the two ways tabulated-list can present the column
 names, not between showing and hiding them: non-nil puts them in the

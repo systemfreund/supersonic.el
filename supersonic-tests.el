@@ -2868,14 +2868,14 @@ the endpoint that was asked."
   "The Subsonic provider flattens every letter bucket of getArtists'
 \"index\" array into a single list of artists, in bucket order, covering
 every bucket rather than just the first -- and the artists buffer turns
-those into one (id [name]) row apiece."
+those into one (id [name art]) row apiece."
   (let* ((data
           '(("subsonic-response" ("artists" ("index"
                (("artist" (("id" . "1") ("name" . "Alice")) (("id" . "2") ("name" . "Bob"))))
                (("artist" (("id" . "3") ("name" . "Carl")))))))))
          (artists (supersonic-subsonic--artists-from data)))
     (should (equal '((:id "1" :name "Alice") (:id "2" :name "Bob") (:id "3" :name "Carl")) artists))
-    (should (equal '(("1" ["Alice"]) ("2" ["Bob"]) ("3" ["Carl"])) (supersonic-artists-rows artists)))))
+    (should (equal '(("1" ["Alice" ""]) ("2" ["Bob" ""]) ("3" ["Carl" ""])) (supersonic-artists-rows artists)))))
 
 (ert-deftest supersonic-tests-albums-buffer-becomes-current ()
   "`supersonic-albums' leaves the freshly created album-list buffer as
@@ -4409,7 +4409,7 @@ any Subsonic request being made."
         (unwind-protect
             (with-current-buffer buff
               (aio-wait-for (supersonic-artists-refresh buff))
-              (should (equal '(("ar/1" ["Alice"]) ("ar/2" ["Bob"])) tabulated-list-entries))
+              (should (equal '(("ar/1" ["Alice" ""]) ("ar/2" ["Bob" ""])) tabulated-list-entries))
               (aio-wait-for (supersonic-albums-refresh "ar/1" buff))
               (should (equal '("ar/1/al-1" "ar/1/al-2") (mapcar #'car tabulated-list-entries)))
               (should (equal "1999" (aref (cadr (car tabulated-list-entries)) 0)))
@@ -6524,8 +6524,8 @@ once per art reference and size."
       (delete-directory supersonic-cache-path t))))
 
 (ert-deftest supersonic-tests-list-art-uses-the-art-reference ()
-  "Album lists and podcasts fetch art by each item's `:art' reference,
-not by its id, and an item without one simply gets no art."
+  "Artist and album lists and podcasts fetch art by each item's `:art'
+reference, not by its id, and an item without one simply gets no art."
   (let ((supersonic-cache-path (make-temp-file "supersonic-tests-cache-" t))
         (supersonic-enable-art t)
         (requests nil)
@@ -6536,12 +6536,17 @@ not by its id, and an item without one simply gets no art."
                   ((symbol-function 'supersonic-build-url) (lambda (&rest _) (error "Subsonic was asked"))))
           (supersonic-tests--with-provider
               `((cover-art . ,(supersonic-tests--cover-art (lambda (r) (push r requests))))
+                (artists . ,(supersonic-tests--resolved '((:id "ar/1" :name "Alice" :art "artist-1")
+                                                          (:id "ar/2" :name "Bob"))))
                 (artist-albums
                  . ,(supersonic-tests--resolved '((:id "ar/1/al-1" :name "First" :art "cover-1")
                                                   (:id "ar/1/al-2" :name "Second"))))
                 (album-list . ,(supersonic-tests--resolved '((:id "al-9" :name "Listed" :art "cover-9"))))
                 (podcasts . ,(supersonic-tests--resolved '((:id "pod-1" :title "Pod" :art "cover-p")))))
             (with-current-buffer buff
+              (aio-wait-for (supersonic-artists-refresh buff))
+              (should (supersonic-tests--wait-for (lambda () (equal "ART:artist-1" (supersonic-tests--first-cell 1)))))
+              (should (equal "" (aref (cadr (cadr tabulated-list-entries)) 1)))
               (aio-wait-for (supersonic-albums-refresh "ar/1" buff))
               (should (supersonic-tests--wait-for (lambda () (equal "ART:cover-1" (supersonic-tests--first-cell 2)))))
               (should (equal "" (aref (cadr (cadr tabulated-list-entries)) 2)))
@@ -6549,7 +6554,7 @@ not by its id, and an item without one simply gets no art."
               (should (supersonic-tests--wait-for (lambda () (equal "ART:cover-9" (supersonic-tests--first-cell 2)))))
               (aio-wait-for (supersonic-podcasts-refresh buff))
               (should (supersonic-tests--wait-for (lambda () (equal "ART:cover-p" (supersonic-tests--first-cell 1))))))
-            (should (equal '("cover-1" "cover-9" "cover-p") (mapcar #'car (reverse requests))))))
+            (should (equal '("artist-1" "cover-1" "cover-9" "cover-p") (mapcar #'car (reverse requests))))))
       (kill-buffer buff)
       (delete-directory supersonic-cache-path t))))
 

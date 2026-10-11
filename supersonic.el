@@ -1656,8 +1656,10 @@ one as a string is accepted too."
   (supersonic-albums (tabulated-list-get-id)))
 
 (defun supersonic-artists-rows (artists)
-  "Turn ARTISTS, as resolved by `supersonic-provider-artists', into entries."
-  (mapcar (lambda (artist) (list (plist-get artist :id) (vector (or (plist-get artist :name) "")))) artists))
+  "Turn ARTISTS, as resolved by `supersonic-provider-artists', into entries.
+Each row has the artist's name and a column for its art, which
+`supersonic-get-images' fills in."
+  (mapcar (lambda (artist) (list (plist-get artist :id) (vector (or (plist-get artist :name) "") ""))) artists))
 
 (aio-defun
  supersonic-artists-refresh (buff) "Refresh the list of artists into BUFF."
@@ -1667,7 +1669,8 @@ one as a string is accepted too."
     (when (buffer-live-p buff)
       (with-current-buffer buff
         (setq tabulated-list-entries (supersonic-artists-rows artists))
-        (tabulated-list-print t))))))
+        (tabulated-list-print t)
+        (supersonic-get-images tabulated-list-entries (supersonic--arts artists) 1 buff))))))
 
 (defun supersonic-artists-revert ()
   "Refresh the artists buffer from the active library provider."
@@ -1695,8 +1698,9 @@ one as a string is accepted too."
  tabulated-list-mode
  "Supersonic Artists"
  "Major mode for the artist list opened by `supersonic-artists'."
- (setq tabulated-list-format [("Artist" 30 t)])
+ (setq tabulated-list-format [("Artist" 30 t) ("Art" 20 nil)])
  (setq tabulated-list-padding 2)
+ (setq tabulated-list-use-header-line supersonic-list-use-header-line)
  (tabulated-list-init-header))
 
 ;;;
