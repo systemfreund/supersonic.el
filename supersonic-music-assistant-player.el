@@ -35,8 +35,14 @@
 ;; The player is `supersonic-music-assistant-player', which
 ;; `supersonic-music-assistant-select-player' picks from the players
 ;; the server has -- or, with none picked yet, playing or enqueueing
-;; offers, taking the server's only player without asking (#93).  A player's queue has the player's id, so that is
-;; what every command names.
+;; offers, taking the server's only player without asking (#93).  A
+;; player's queue has the player's id, so that is what every command
+;; names.
+;;
+;; That offer comes once the server has answered with its players, so
+;; after the command that played has returned: a second play before
+;; the first is answered asks again, rather than waiting on the first
+;; -- which a `C-g' at its prompt would leave waiting for good.
 ;;
 ;; The provider talks to MA over its plain HTTP API, which tells a
 ;; client nothing on its own, so this polls the queue through the
@@ -292,18 +298,10 @@ A failure is reported as failing to DESCRIPTION."
    (aio-await (supersonic-music-assistant-player--send target command args))
    (aio-await (supersonic-music-assistant-player--poll))))
 
-(aio-defun
- supersonic-music-assistant-player--choose-then (connection description sole-format action)
- "Choose a player on the server at CONNECTION, then call ACTION with its target.
-See `supersonic-music-assistant-player--choose', which SOLE-FORMAT is
-passed on to.  A failure is reported as failing to DESCRIPTION."
- (supersonic--with-async-error-handling nil description
-   (aio-await (supersonic-music-assistant-player--choose connection action sole-format))))
-
-(defun supersonic-music-assistant-player--play (description sole-format action)
-  "Call ACTION with what a command starting playback is sent to.
-As `supersonic-music-assistant-player--target' returns it.  With no
-player selected, offers one first, as
+(defun supersonic-music-assistant-player--with-chosen-target (description sole-format action)
+  "Call ACTION with what a command playing or enqueueing is sent to.
+That is, with what `supersonic-music-assistant-player--target'
+returns.  With no player selected, offers one first, as
 `supersonic-music-assistant-player--choose' does with SOLE-FORMAT,
 and calls ACTION once one is chosen -- so that the command need not be
 repeated.  A failure to choose is reported as failing to DESCRIPTION.
@@ -320,8 +318,8 @@ the `user-error' `supersonic-music-assistant-player--target' signals."
 (defun supersonic-music-assistant-player-start (ids)
   "Replace the player's queue with IDS and start playing.
 With no player selected, offers one first; see
-`supersonic-music-assistant-player--play'."
-  (supersonic-music-assistant-player--play
+`supersonic-music-assistant-player--with-chosen-target'."
+  (supersonic-music-assistant-player--with-chosen-target
    "play on the Music Assistant player" "Playing on %s"
    (lambda (target)
      (supersonic-music-assistant-player--run
@@ -354,8 +352,8 @@ queue has ended, and is left so."
 (defun supersonic-music-assistant-player-enqueue (ids)
   "Add IDS to the player's queue, playing them if nothing is left to play.
 With no player selected, offers one first; see
-`supersonic-music-assistant-player--play'."
-  (supersonic-music-assistant-player--play
+`supersonic-music-assistant-player--with-chosen-target'."
+  (supersonic-music-assistant-player--with-chosen-target
    "enqueue on the Music Assistant player" "Enqueueing on %s"
    (lambda (target) (supersonic-music-assistant-player--enqueue target ids))))
 
@@ -456,6 +454,56 @@ share a name."
                       (list :id id :name name))))
             players)))
 
+(aio-defun
+ supersonic-music-assistant-player--choose (connection then &optional sole-format)
+ "Choose a player on the server at CONNECTION, then call THEN with its target.
+Offers the server's selectable players by name.  The choice becomes
+`supersonic-music-assistant-player' for this session, THEN is called
+with what a command is now sent to, as
+`supersonic-music-assistant-player--target' returns it, and the
+promise it returns, if any, awaited.  Saving the choice for future
+sessions is offered after; see `supersonic-playback-offer-to-save'.
+
+With SOLE-FORMAT, a server with only one player available has that
+one taken without asking, and SOLE-FORMAT shown with its name instead
+-- nor is saving it offered, as it would be taken again next time.
+
+Resolves to the player chosen, as (:id ID :name NAME).  Resolves to
+nil, leaving the player unset and THEN uncalled, if the choice is
+left empty, and says so -- a command that enqueued may already have
+said it added the tracks.  Signals a `user-error' if the server has
+no player available."
+ (let ((choices (supersonic-music-assistant-player--choices
+                 (supersonic-music-assistant-player--selectable
+                  (aio-await (supersonic-music-assistant--send connection "players/all"))))))
+   (unless choices
+     (user-error "Music Assistant at %s has no player available" (car connection)))
+   (let* ((sole (and sole-format (null (cdr choices))))
+          (player (if sole
+                      (cdar choices)
+                    (cdr (assoc (completing-read "Music Assistant player: " choices nil t) choices))))
+          (name (plist-get player :name)))
+     (if (not player)
+         (ignore (message "No Music Assistant player chosen"))
+       (customize-set-variable 'supersonic-music-assistant-player player)
+       ;; Before THEN, so that a failure it reports is what shows last.
+       (when sole
+         (message sole-format name))
+       (aio-await (funcall then (cons (plist-get player :id) connection)))
+       (unless sole
+         (supersonic-playback-offer-to-save 'supersonic-music-assistant-player "Music Assistant player" name))
+       player))))
+
+(aio-defun
+ supersonic-music-assistant-player--choose-then (connection description sole-format action)
+ "Choose a player on the server at CONNECTION, then call ACTION with its target.
+See `supersonic-music-assistant-player--choose', which SOLE-FORMAT is
+passed on to.  A failure is reported as failing to DESCRIPTION.  For
+`supersonic-music-assistant-player--with-chosen-target', whose
+command has returned by the time anything here can fail."
+ (supersonic--with-async-error-handling nil description
+   (aio-await (supersonic-music-assistant-player--choose connection action sole-format))))
+
 ;; An explicit cookie: the autoloads generator does not know `aio-defun'
 ;; and would copy the whole definition, which fails to load without aio.
 ;;;###autoload (autoload 'supersonic-music-assistant-select-player "supersonic-music-assistant-player" nil t)
@@ -473,43 +521,6 @@ to the init file without one, which not everyone wants touched."
                (aio-lambda (_target)
                  (when (eq supersonic-playback-backend 'music-assistant)
                    (aio-await (supersonic-music-assistant-player--poll))))))))
-
-(aio-defun
- supersonic-music-assistant-player--choose (connection then &optional sole-format)
- "Choose a player on the server at CONNECTION, then call THEN with its target.
-Offers the server's selectable players by name.  The choice becomes
-`supersonic-music-assistant-player' for this session, THEN is called
-with what a command is now sent to, as
-`supersonic-music-assistant-player--target' returns it, and the
-promise it returns, if any, awaited.  Saving the choice for future
-sessions is offered after; see `supersonic-playback-offer-to-save'.
-
-With SOLE-FORMAT, a server with only one player available has that
-one taken without asking, and SOLE-FORMAT shown with its name instead
--- nor is saving it offered, as it would be taken again next time.
-
-Resolves to the player chosen, as (:id ID :name NAME).  Resolves to
-nil, leaving the player unset and THEN uncalled, if the choice is
-left empty.  Signals a `user-error' if the server has no player
-available."
- (let ((choices (supersonic-music-assistant-player--choices
-                 (supersonic-music-assistant-player--selectable
-                  (aio-await (supersonic-music-assistant--send connection "players/all"))))))
-   (unless choices
-     (user-error "Music Assistant at %s has no player available" (car connection)))
-   (let* ((sole (and sole-format (null (cdr choices))))
-          (player (if sole
-                      (cdar choices)
-                    (cdr (assoc (completing-read "Music Assistant player: " choices nil t) choices))))
-          (name (plist-get player :name)))
-     (when player
-       (customize-set-variable 'supersonic-music-assistant-player player)
-       (when sole
-         (message sole-format name))
-       (aio-await (funcall then (cons (plist-get player :id) connection)))
-       (unless sole
-         (supersonic-playback-offer-to-save 'supersonic-music-assistant-player "Music Assistant player" name))
-       player))))
 
 (supersonic-poller-register 'supersonic-music-assistant-player--poller)
 

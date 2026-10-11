@@ -7801,7 +7801,8 @@ offers to save it after."
 (ert-deftest supersonic-tests-ma-player-plays-nothing-without-a-choice ()
   "Playing with no player selected plays nothing, and leaves the player
 unset, on a server with no player available -- reporting so -- or when
-the question which is left unanswered."
+the question which is left unanswered, saying so: enqueueing may have
+said it added the tracks already."
   (supersonic-tests--with-ma-unselected-player
     (setq supersonic-tests--ma-players (last supersonic-tests--ma-two-players))
     (supersonic-tests--ma-play-unselected #'supersonic-music-assistant-player-start)
@@ -7811,9 +7812,10 @@ the question which is left unanswered."
   (supersonic-tests--with-ma-unselected-player
     (setq supersonic-tests--ma-players supersonic-tests--ma-two-players)
     (cl-letf (((symbol-function 'completing-read) (lambda (&rest _) "")))
-      (supersonic-tests--ma-play-unselected #'supersonic-music-assistant-player-start))
+      (supersonic-tests--ma-play-unselected #'supersonic-music-assistant-player-enqueue))
     (should-not (supersonic-tests--ma-played-on))
     (should-not supersonic-music-assistant-player)
+    (should (equal "No Music Assistant player chosen" (car messages)))
     (should-not reported)))
 
 (ert-deftest supersonic-tests-ma-player-selection-asks-even-for-the-sole-player ()
