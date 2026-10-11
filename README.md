@@ -310,11 +310,13 @@ name and password, `supersonic-music-assistant-token-function` the
 Music Assistant token:
 
 ```elisp
+;; Subsonic
 (setq supersonic-auth-function
       (lambda (_host)
         (list :user "USERNAME"
               :secret (auth-source-pass-get 'secret "my/custom_entry"))))
 
+;; Music Assistant
 (setq supersonic-music-assistant-token-function
       (lambda (_server) (auth-source-pass-get 'secret "my/music_assistant")))
 ```
@@ -332,6 +334,7 @@ something cheap, such as reading a plain file, but
 found for a while, cache it:
 
 ```elisp
+;; Subsonic
 (setq supersonic-auth-function
       (lambda (host)
         (let ((key (concat "supersonic:" host)))
@@ -341,6 +344,7 @@ found for a while, cache it:
                               (password-cache-add key secret)
                               secret))))))
 
+;; Music Assistant
 (setq supersonic-music-assistant-token-function
       (lambda (server)
         (let ((key (concat "supersonic:" server)))
