@@ -2760,6 +2760,48 @@ function kept, for a password that has just been changed."
       (funcall cached "a")
       (should (= 2 asked)))))
 
+(ert-deftest supersonic-tests-saved-cached-option-loads ()
+  "A value saved with `custom-set-variables' that calls the autoloaded
+`supersonic-cached' is evaluated while the file defining its option
+loads; reaching `supersonic-cached' must not require that file again
+\(\"Recursive `require'\").  In a fresh Emacs with only the autoloads."
+  (let* ((dir (make-temp-file "supersonic-package" t))
+         (aio-dir (file-name-directory (locate-library "aio")))
+         (loaddefs (expand-file-name "supersonic-autoloads.el" dir))
+         (form
+          `(progn
+             (load ,loaddefs nil t)
+             (custom-set-variables
+              '(supersonic-auth-function
+                (supersonic-cached (lambda (_host) (list :user "u" :secret "s"))))
+              '(supersonic-music-assistant-token-function
+                (supersonic-cached (lambda (_server) "token"))))
+             (require 'supersonic)
+             (require 'supersonic-music-assistant)
+             (princ
+              (prin1-to-string
+               (list (funcall supersonic-auth-function "host")
+                     (funcall supersonic-music-assistant-token-function "server")))))))
+    (unwind-protect
+        (with-temp-buffer
+          ;; A copy, as the package is installed: the autoloads land
+          ;; next to the files rather than in the source tree.
+          (dolist (file (supersonic-tests--package-files))
+            (copy-file file (file-name-as-directory dir)))
+          (loaddefs-generate dir loaddefs)
+          (should
+           (eq 0
+               (call-process
+                (expand-file-name invocation-name invocation-directory)
+                nil
+                '(t nil)
+                nil
+                "-Q" "--batch" "-L" dir "-L" aio-dir
+                "--eval" (prin1-to-string form))))
+          (should (equal '((:user "u" :secret "s") "token")
+                         (car (read-from-string (buffer-string))))))
+      (delete-directory dir t))))
+
 (ert-deftest supersonic-tests-cached-keeps-only-user-and-secret ()
   "Of the credentials found, only the user and the secret are kept --
 not everything else an auth-source entry carries, its notes included."
@@ -3457,10 +3499,13 @@ waveform transcoder that is otherwise independent of it -- so there is
 no natural owner to move them to.  Keeping them together is what lets
 every other file simply require them, instead of carrying `defvar'
 stubs that keep the byte-compiler quiet while leaving the options
-genuinely void for anyone who requires that file on its own."
+genuinely void for anyone who requires that file on its own.
+
+`supersonic-credentials.el' keeps its one option to itself, as it
+must load without `supersonic-custom.el' -- see its Commentary."
   (dolist (file (supersonic-tests--package-files))
     (let ((name (file-name-nondirectory file)))
-      (unless (equal name "supersonic-custom.el")
+      (unless (member name '("supersonic-custom.el" "supersonic-credentials.el"))
         (with-temp-buffer
           (insert-file-contents file)
           (goto-char (point-min))
@@ -3472,10 +3517,11 @@ genuinely void for anyone who requires that file on its own."
   "Each file requires `supersonic-custom' rather than assuming a load order.
 See `supersonic-tests-user-options-all-live-in-one-file' for why this
 matters -- without it, requiring e.g. just `supersonic-waveform' left
-`supersonic-waveform-buckets' void."
+`supersonic-waveform-buckets' void.  Except `supersonic-credentials',
+which must not require it -- see its Commentary."
   (dolist (file (supersonic-tests--package-files))
     (let ((name (file-name-nondirectory file)))
-      (unless (equal name "supersonic-custom.el")
+      (unless (member name '("supersonic-custom.el" "supersonic-credentials.el"))
         (with-temp-buffer
           (insert-file-contents file)
           (goto-char (point-min))

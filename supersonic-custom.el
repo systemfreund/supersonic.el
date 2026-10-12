@@ -87,14 +87,6 @@ wrapped in `supersonic-cached':
                  (function :tag "Other function"))
   :group 'supersonic)
 
-(defcustom supersonic-credentials-cache-expiry 3600
-  "Seconds a function made by `supersonic-cached' keeps what it found.
-Read when something is kept, so a change applies to what is kept from
-then on, not to what already is.  `supersonic-forget-credentials'
-drops everything kept before it expires."
-  :type 'number
-  :group 'supersonic)
-
 (defcustom supersonic-mpv (executable-find "mpv")
   "Path to the mpv executable, or nil if there is none on variable `exec-path'."
   :type '(choice (const :tag "Not available" nil) (file :tag "Path to mpv"))
