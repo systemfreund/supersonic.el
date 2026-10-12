@@ -2788,7 +2788,10 @@ loads; reaching `supersonic-cached' must not require that file again
           ;; next to the files rather than in the source tree.
           (dolist (file (supersonic-tests--package-files))
             (copy-file file (file-name-as-directory dir)))
-          (loaddefs-generate dir loaddefs)
+          (if (fboundp 'loaddefs-generate)
+              (loaddefs-generate dir loaddefs)
+            ;; Emacs 28, before `loaddefs-generate' replaced it.
+            (with-no-warnings (make-directory-autoloads dir loaddefs)))
           (should
            (eq 0
                (call-process
