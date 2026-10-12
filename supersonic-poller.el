@@ -22,9 +22,10 @@
 
 ;; What a playback backend needs when its player reports nothing on
 ;; its own and has to be asked, on a timer, what it is doing: the
-;; jukebox in `supersonic-jukebox.el' and UPnP renderers in
-;; `supersonic-upnp.el' (#79).  mpv tells `supersonic-mpv.el' about
-;; every change itself, and needs none of this.
+;; jukebox in `supersonic-jukebox.el', UPnP renderers in
+;; `supersonic-upnp.el' (#79) and Music Assistant players in
+;; `supersonic-music-assistant-player.el'.  mpv reports every change
+;; itself, and needs none of this.
 ;;
 ;; A backend describes itself with a `supersonic-poller': how to ask
 ;; its player for a fresh snapshot, how to read the current track,
@@ -139,17 +140,14 @@ A poll that gets an answer marks the backend live and runs the
 facade's hooks, see `supersonic-poller-announce'; one that does not
 marks it not live, runs POLLER's `on-failure', and the first time in
 an outage also reports the failure and runs the track-change hook, so
-that nothing goes on showing the stale snapshot as current.  Reported
-once per outage: never leaving the first failure silent, even of the
-very first poll, and never once per poll for as long as it lasts.
+that nothing goes on showing the stale snapshot as current.
 
 Never runs alongside another poll: with one in flight, this waits for
-it and then polls itself.  An action polling for its own effect cannot
-make do with the answer to a poll sent before it, and two polls in
-flight could land out of order, an older snapshot overwriting a newer
-one.  The timer polls through `supersonic-poller--tick' instead, which
-skips rather than waits.  A poll stays in flight until its request
-settles, which `supersonic-request-timeout' bounds.
+it and then polls itself, since an action polling for its own effect
+needs a fresh answer, and two polls in flight could land out of order.
+The timer polls through `supersonic-poller--tick', which skips
+instead.  A poll stays in flight until its request settles, which
+`supersonic-request-timeout' bounds.
 
 A poll that gets an answer runs POLLER's `on-landed' before the hooks,
 and whatever function that returns once it is no longer in flight.
@@ -198,10 +196,9 @@ answer arrives, see `supersonic-poller--stop'."
 
 (defun supersonic-poller--tick (poller)
   "Poll POLLER's player, unless a poll is still waiting for its answer.
-What POLLER's timer runs.  A tick used to poll regardless, so a player
-that stopped answering piled up one more open connection per tick
-until Emacs ran out of file descriptors (#70).  Skipping loses
-nothing: the poll in flight is about to report the same state."
+What POLLER's timer runs.  Skipping keeps a player that stopped
+answering from piling up open connections (#70), and loses nothing:
+the poll in flight is about to report the same state."
   (unless (supersonic-poller-in-flight poller)
     (ignore (supersonic-poller-poll poller))))
 
@@ -225,10 +222,8 @@ on between polls -- see `supersonic-poller-announce'."
 
 (defun supersonic-poller-position (snapshot playing &optional duration)
   "Return SNAPSHOT's `:position', counted on to now if PLAYING.
-A poll only lands every so many seconds, but the now-playing buffer
-expects the position to advance by the second, so while PLAYING the
-time elapsed since SNAPSHOT's `:polled-at' is added; the next poll's
-real position quietly corrects whatever that guessed.  Never past
+While PLAYING, the time since SNAPSHOT's `:polled-at' is added, so
+the position advances by the second between polls.  Never past
 DURATION, if given.  nil if SNAPSHOT has no position."
   (let ((position (plist-get snapshot :position)))
     (when position

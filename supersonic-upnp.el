@@ -22,65 +22,31 @@
 
 ;; The `upnp' playback backend (#63): plays to a UPnP MediaRenderer --
 ;; an AV receiver, a network speaker, a smart TV -- by telling its
-;; `AVTransport:1' service, over SOAP, which URL to fetch and play.
-;; Registers itself with the facade in `supersonic-playback.el' as it
-;; is loaded, the way `supersonic-jukebox.el' does, for any provider
-;; that can name a stream URL.
+;; `AVTransport:1' service, over SOAP, which URL to play.  It plays for
+;; any provider that can name a stream URL.  Opt-in, like the jukebox.
 ;;
 ;; Most renderers hold one track at a time, so the queue is kept here
-;; (#65), as provider track ids and the index of the one the renderer
-;; was given.  A renderer reports nothing on its own unless subscribed
-;; to, which would take an HTTP server in Emacs; instead, while `upnp'
-;; is the active backend, it is polled every
-;; `supersonic-upnp-poll-interval' seconds for its transport state and
-;; position, through the machinery in `supersonic-poller.el'.  The
-;; facade's hooks run, and scrobbles go out, as polls find things
-;; changed, and a poll that finds the current track played to its end
-;; loads the next one -- see `supersonic-upnp--track-ended-p'
-;; for how that is told apart from a track stopped early.  So the queue
-;; only moves on while Emacs runs.
+;; (#65).  A renderer reports nothing unless subscribed to, which would
+;; take an HTTP server in Emacs, so it is polled through
+;; `supersonic-poller.el', and a poll that finds the current track
+;; played to its end loads the next one.  So the queue only moves on
+;; while Emacs runs.
 ;;
-;; A renderer receives one plain URL and a DIDL-Lite XML fragment
-;; describing it -- title, artist, album, cover art, and a `res' element whose
-;; `protocolInfo' names the exact MIME type of what that URL serves.
-;; Getting `protocolInfo' wrong (claiming MP3 while the URL actually
-;; serves FLAC, say) is a common way for cheap renderers to simply
-;; refuse to play, or to play noise -- so it has to reflect what will
-;; really come back, not just an assumption.
+;; Along with the URL, a renderer gets a DIDL-Lite description whose
+;; `protocolInfo' must name the MIME type the URL really serves: cheap
+;; renderers refuse to play, or play noise, otherwise.  When
+;; `supersonic-upnp-stream-format' has the provider transcode, that is
+;; the requested format, not the track's own.
 ;;
-;; That is where `supersonic-provider-stream-url''s optional FORMAT
-;; hint comes in: when a caller asked the active provider to transcode
-;; to a given format, `protocolInfo' has to say so instead of trusting
-;; the track's own, pre-transcoding `:content-type'.  Which format to
-;; ask for is `supersonic-upnp-stream-format';
-;; `supersonic-upnp--item' resolves a track id to the URL and metadata
-;; for it in one go.  The renderer connection itself belongs to the
-;; backend in #65.
+;; The stream and cover art URLs carry whatever credentials the
+;; provider puts in them, and are handed to the renderer as they are;
+;; the README says what this exposes.  A URL on `localhost' sends the
+;; renderer looking for the server on itself, which is warned about.
 ;;
-;; Both the stream URL and the cover art URL carry whatever
-;; credentials the provider puts in them -- for Subsonic, the
-;; non-expiring token-auth triple -- and are handed to the renderer
-;; as they are.  That is deliberate; the README says what this exposes.
-;;
-;; What a renderer cannot do is reach a server only this machine can:
-;; a URL on `localhost' sends it looking for the server on itself, and
-;; it answers `SetAVTransportURI' with a bare "Resource not found".
-;; `supersonic-upnp--item' warns about that case instead.
-;;
-;; Which renderer to play to is `supersonic-upnp-renderer', picked with
-;; `supersonic-upnp-select-renderer' (#64).  That command finds
-;; renderers with an SSDP search: an `M-SEARCH' sent to the UPnP
-;; multicast group, answered by unicast from each device with the URL
-;; of its XML device description.  Only a device whose description
-;; names it a MediaRenderer with an `AVTransport' service is offered;
-;; anything else that happens to answer (a lighting bridge, say) is
-;; left out, as is a device whose description cannot be fetched at all.
-;; Where multicast does not get through, the description URL can be
-;; entered by hand instead.
-;;
-;; Nothing in the package requires this file: like the jukebox, the
-;; backend is opt-in.  `supersonic-upnp-select-renderer' is autoloaded,
-;; though.
+;; `supersonic-upnp-select-renderer' (#64) finds renderers with an SSDP
+;; search, and offers only MediaRenderers with an `AVTransport' service.
+;; Where multicast does not get through, a device description URL can
+;; be entered by hand.
 
 ;;; Code:
 (require 'aio)
@@ -110,25 +76,18 @@
     ("wav" . "audio/wav")
     ("raw" . "audio/octet-stream"))
   "Map of a stream FORMAT's `:format' extension to its MIME content type.
-Deliberately separate from `:content-type' in the facade's own track
-vocabulary: that key describes the track's original encoding, which a
-requested FORMAT overrides by having the provider transcode to
-something else entirely.  \"raw\" is Subsonic's own `stream.view'
-value for \"skip transcoding\", which says nothing about the actual
-encoding either -- it maps to a generic type since the real one is
-whatever the track already was.")
+Separate from a track's `:content-type', which a requested FORMAT
+overrides.  \"raw\" is Subsonic's value for no transcoding, which says
+nothing about the encoding, hence a generic type.")
 
 (defun supersonic-upnp--content-type (track &optional format)
   "Return the content type a stream of TRACK, requested with FORMAT, has.
 TRACK is a track plist as `supersonic-provider-track' resolves to.
 FORMAT is the plist `supersonic-provider-stream-url' takes, or nil.
 
-When FORMAT names a `:format', that is what the provider actually
-transcodes to -- overriding whatever TRACK's own `:content-type' says,
-since after transcoding that is no longer the truth.  Without a
-FORMAT, TRACK's `:content-type' is what was actually asked for, so it
-is used as given.  Falls back to a generic type when neither is known,
-rather than guessing wrong and asserting it with confidence."
+A FORMAT's `:format', what the provider transcodes to, overrides
+TRACK's `:content-type'.  Falls back to a generic type when neither is
+known, rather than guessing."
   (or (let ((requested (plist-get format :format)))
         (and requested (cdr (assoc requested supersonic-upnp--content-types))))
       (plist-get track :content-type)
@@ -224,20 +183,10 @@ tell, guessed from FORMAT with `supersonic-upnp--range-seekable-p'."
 (defun supersonic-upnp--didl-lite (url track &optional format art-url seekable)
   "Return a DIDL-Lite XML document describing URL, a stream of TRACK.
 ART-URL, if given, becomes the item's `albumArtURI'.
-FORMAT is as `supersonic-provider-stream-url' takes it, and decides
-`protocolInfo' via `supersonic-upnp--protocol-info', together with
-SEEKABLE -- see there for why it must reflect what was actually
-requested rather than TRACK's own encoding.
-
-This is what `SetAVTransportURI' and `SetNextAVTransportURI' pass as
-`CurrentURIMetaData'/`NextURIMetaData' (#65), so a renderer with a
-display can show the track's title, artist and album while it plays.
-Values are escaped with `xml-escape-string', since a title or artist
-containing \\='&\\=', \\='<\\=' or a quote would otherwise end the
-element early or unbalance the document; TRACK's `:id' becomes the
-DIDL item's own `id' attribute for the same reason ids elsewhere are
-opaque strings -- a renderer never has reason to parse it, only to
-hand it back verbatim in whatever it reports playing."
+FORMAT, as `supersonic-provider-stream-url' takes it, and SEEKABLE
+decide `protocolInfo', see `supersonic-upnp--protocol-info'.  Passed
+with `SetAVTransportURI' and `SetNextAVTransportURI', so a renderer
+with a display can show the track."
   (let ((title (or (plist-get track :title) (plist-get track :id) ""))
         (artist (plist-get track :artist))
         (album (plist-get track :album))
@@ -289,23 +238,12 @@ set the server address (`supersonic-host' for Subsonic) to one the renderer can 
  supersonic-upnp--item (track-id)
  "Return a promise resolving to what a renderer is told to play TRACK-ID.
 That is a plist (:url URL :metadata DIDL :duration DURATION): the
-active provider's stream URL, asked for in
-`supersonic-upnp-stream-format', and the DIDL-Lite document describing
-it, for `SetAVTransportURI' and `SetNextAVTransportURI' to pass on as
-they are, and the track's duration as the provider knows it, if it
-does, for a renderer that does not report one.
-
-The track's cover art goes along as `albumArtURI' whenever the track
-has any and the provider can name a URL for it; otherwise the
-document simply has none, since a renderer plays fine without.
-
-The server is asked whether the stream can be seeked within, see
-`supersonic-upnp--seekable-p', so that `protocolInfo' tells the
-renderer.
-
-A stream URL on a loopback address is warned about, see
-`supersonic-upnp--warn-if-loopback', but still returned: the
-renderer may run on this machine itself."
+stream URL, asked for in `supersonic-upnp-stream-format'; the
+DIDL-Lite document describing it, with cover art where the provider
+can name a URL for it; and the provider's duration, for a renderer
+that reports none.  Whether the stream is seekable is asked of the
+server.  A loopback URL is warned about but returned, as the renderer
+may run on this machine."
  (let* ((format supersonic-upnp-stream-format)
         (track (aio-await (supersonic-provider-track track-id)))
         (url (aio-await (supersonic-provider-stream-url track-id format)))
@@ -509,9 +447,7 @@ multicast does not get through to it, say.  With prefix argument
 BY-URL, no search is made and only the URL is asked for.
 
 The choice becomes `supersonic-upnp-renderer' for this session, and
-is saved for future ones only if confirmed: saving writes to
-`custom-file', or to the init file without one, which not everyone
-wants touched -- their configuration may set the renderer itself."
+is saved for future ones only if confirmed."
  (interactive "P")
  (supersonic--with-async-error-handling
   nil "select a UPnP renderer"
@@ -855,9 +791,8 @@ network hiccup as the track ends still moves on."
   "Return what the facade's hooks announce, with the renderer as SNAPSHOT found it.
 The plist `supersonic-poller-announce' compares: the track the
 renderer was given, whether it is paused, and the queue's entries.
-Only the pause state comes from SNAPSHOT.  The rest is kept here
-rather than on the renderer, so the hooks are announced from here,
-too, whenever it changes -- not only after a poll."
+Only the pause state comes from SNAPSHOT; the rest is kept here, and
+announced whenever it changes, not only after a poll."
   (list :track-id (supersonic-upnp--current-track)
         :paused (supersonic-upnp--paused-p snapshot)
         :entries (copy-sequence supersonic-upnp--queue)))
@@ -912,15 +847,11 @@ as every snapshot `supersonic-upnp--fetch' takes does."
 
 (defun supersonic-upnp--lost-p (snapshot)
   "Return non-nil if SNAPSHOT finds a gapless renderer on an unknown URL.
-That is, playing a URL other than the one it was given for the
-current track, and other than the one preloaded next -- which, if
-`supersonic-upnp--moved-on-p' did not find the renderer moved on to
-it, belongs to a queue since replaced, and is about to be loaded
-over.  Such a renderer reports URLs other than it was given, or none,
-so that moving on to the next track by itself could not be followed;
-or it played a next track left over from before.  Either way, it is
-better left to the poll-driven advance; see
-`supersonic-upnp--give-up-gapless'."
+That is, playing neither the URL it was given for the current track
+nor the one preloaded next.  Such a renderer reports URLs other than
+it was given, so its moving on could not be followed, or it played a
+next track left over from a replaced queue.  Either way, it is better
+left to the poll-driven advance; see `supersonic-upnp--give-up-gapless'."
   (and (supersonic-upnp--gapless-known-p)
        supersonic-upnp--index
        (eql (plist-get snapshot :index) supersonic-upnp--index)
@@ -1106,14 +1037,11 @@ With no entry after the current one, a next track the renderer may
 still hold from before is cleared instead, so that it does not play
 that one again.
 
-Never fails: a renderer that does not take a next track, or that
-cannot be reached just now, is left to `supersonic-upnp--advance' to
-move on from the current track, once a poll finds it ended; one known
-to take a next track has whatever it may still hold cleared, as far
-as it can be.  The error is only shown with `debug-on-error' set.  Nor
-does it record a next track for an entry that is no longer the current
-one's successor because the user moved on, or replaced the queue, in
-the meantime."
+Never fails: a renderer that does not take a next track, or cannot be
+reached, is left to `supersonic-upnp--advance'; one known to take one
+has whatever it holds cleared.  The error is only shown with
+`debug-on-error' set.  Records nothing if the user moved on, or
+replaced the queue, in the meantime."
  (let ((index supersonic-upnp--index)
        (generation supersonic-upnp--queue-generation))
    (condition-case err

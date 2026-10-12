@@ -39,30 +39,21 @@
 ;; 500 for anything else -- an id the server does not know included.
 ;;
 ;; Authentication is a long-lived token created in MA's web UI and
-;; sent as `Authorization: Bearer'.  It is read from auth-source,
-;; matched on `supersonic-music-assistant-url' exactly as Subsonic
-;; credentials are matched on `supersonic-host' -- or from wherever
-;; `supersonic-music-assistant-token-function' finds it -- and looked
-;; up afresh for every operation, so it never sits in a variable, a URL
-;; or a subprocess's argv.  Unless that function is wrapped in
-;; `supersonic-cached': that keeps the token in memory, for
-;; `supersonic-credentials-cache-expiry' seconds, though still in no
-;; URL or argv.  Token authentication needs server schema 28 or
-;; later, so the server's unauthenticated `/info' is asked once per
-;; server address before anything else.
+;; sent as `Authorization: Bearer'.  It comes from
+;; `supersonic-music-assistant-token-function', by default auth-source
+;; matched on `supersonic-music-assistant-url', and is looked up for
+;; every operation rather than kept, unless that function is wrapped in
+;; `supersonic-cached'; it never goes into a URL or argv.  Token
+;; authentication needs server schema 28 or later, so the server's
+;; `/info' is asked once per address first.
 ;;
 ;; Ids are MA's own item URIs -- `library://album/8',
 ;; `spotify://track/...' -- handed out verbatim.  Commands that want a
-;; provider and an item id instead of a URI get them by splitting the
-;; URI the way MA's own `parse_uri' does: this provider reading its
-;; own ids, which the facade leaves to it.
+;; provider and an item id get them by splitting the URI.
 ;;
-;; Images (#59).  An item's `:art' is the image's path under the
-;; server's `/imageproxy', even for an image anyone could fetch, since
-;; the proxy scales it on the server -- if only to a few fixed sizes.
-;; Only a server too old to hand out proxy ids gets a public image's
-;; URL fetched as it is.  The proxy asks for no token, so none is
-;; sent: cover art never involves auth-source.
+;; Images (#59) are fetched through the server's `/imageproxy', which
+;; scales them and asks for no token, where the server hands out proxy
+;; ids; see `supersonic-music-assistant--art'.
 ;;
 ;; Podcasts come from whatever podcast providers the server has; their
 ;; episodes are not in MA's library, so the server fetches them anew
@@ -71,10 +62,8 @@
 ;; `add-podcast' and `download-podcast-episode' are left out.
 ;;
 ;; MA plays on its own players and keeps its own play history, so
-;; `stream-url' and `scrobble' are deliberately left out: there is no
-;; URL a local player could stream a whole track from, and nothing to
-;; report.  That alone keeps mpv and the UPnP backend away from this
-;; provider.
+;; `stream-url' and `scrobble' are left out, which also keeps mpv and
+;; the UPnP backend away from this provider.
 
 ;;; Code:
 
@@ -136,10 +125,7 @@ takes.")
   "Map of facade album list type to the args producing it.
 The args are for `music/albums/library_items', on top of a limit.
 `recent' is not among them: MA keeps its play history per track, so
-library albums carry no play data to order or filter by -- and this
-provider's backend plays an album as its tracks anyway.
-`supersonic-music-assistant--recent-albums' derives that list from
-the tracks in `music/recently_played_items' instead.")
+`supersonic-music-assistant--recent-albums' derives it from that.")
 
 (defvar supersonic-music-assistant--recent-lookups 10
   "How many tracks of the play history to look up at once.
@@ -199,11 +185,7 @@ The default `supersonic-music-assistant-token-function'."
   "Return the token `supersonic-music-assistant-token-function' has for SERVER.
 SERVER is as returned by `supersonic-music-assistant--server', which
 also guarantees it is never nil or empty: a lookup for no host would
-match any entry, a Subsonic password included.  Looked up afresh for
-every operation, as `supersonic-auth' is for every request, so that a
-corrected entry takes effect once auth-source's cache is forgotten.
-
-A copy, as the operation holds on to it across requests: the string
+match any entry, a Subsonic password included.  A copy, as the string
 handed out may be one a cache wipes when it expires, as
 `password-cache-remove' does."
   (let* ((token (funcall supersonic-music-assistant-token-function server))
@@ -216,12 +198,9 @@ TOKEN is nil when there is none for SERVER; that is reported
 only once SERVER has passed `supersonic-music-assistant--check-server',
 so that a server too old to take a token at all says so first.
 
-For an operation to call before its first `aio-await', while the
-command that asked is still running, as Subsonic does: anything
-auth-source asks of the user -- a GnuPG passphrase, unlocking a
-Secret Service collection -- is then asked by that command rather
-than later from a timer, and an operation sending several commands
-looks the token up only once."
+For an operation to call before its first `aio-await', so that
+anything auth-source asks of the user, such as a GnuPG passphrase, is
+asked by the command rather than from a timer."
   (let ((server (supersonic-music-assistant--server)))
     (cons server (supersonic-music-assistant--token server))))
 
@@ -441,14 +420,10 @@ MA reports an unknown year, duration or track number as null or zero."
 
 (defun supersonic-music-assistant--image (data type)
   "Return the image of TYPE, e.g. \"thumb\", that MA item DATA shows, or nil.
-Looks at the item's own image first -- the single one an item mapping
-carries, then those in its metadata -- and only for an item without
-one at its album's image, then at its artists' images.  So a track
-with art of its own shows that, where MA's own client, in its
-`get_media_item_image', always prefers the album's.  A thumb not found
-there is made up for by a landscape image, looked for the same way --
-at every level, as the client does, so that an album with only a
-landscape image still wins over its artist's thumb."
+Looks at the item's own images first, then its album's, then its
+artists', so a track with art of its own shows that, unlike in MA's
+own client.  A missing thumb is made up for by a landscape image at
+each level, so an album's landscape image wins over its artist's thumb."
   (and (consp data)
        (or (let ((image (assoc-default "image" data)))
              (and (consp image) (equal (assoc-default "type" image) type) image))
@@ -462,15 +437,10 @@ landscape image still wins over its artist's thumb."
 
 (defun supersonic-music-assistant--art (data)
   "Return the `:art' reference of MA item DATA, or nil if it shows no image.
-The reference is the image's path on the server, under its image
-proxy, which knows an image by the `proxy_id' the server hands out
-with it from schema 31 on.  That holds for an image anyone could fetch
-too -- a podcast's cover from its feed, say -- since the proxy scales
-it, where the feed's own may be thousands of pixels wide.  Only an
-image without a proxy id, from an older server, is referred to by its
-URL, if it has one anyone can fetch, which
-`supersonic-music-assistant--cover-art' then fetches as it is; any
-other is left without art."
+The reference is the image's path under the server's image proxy, by
+the `proxy_id' servers hand out from schema 31 on -- for a public
+image too, since the proxy scales it.  Without a proxy id, a public
+image is referred to by its URL; any other is left out."
   (let* ((image (supersonic-music-assistant--image data "thumb"))
          (path (assoc-default "path" image))
          (proxy-id (assoc-default "proxy_id" image)))
@@ -543,9 +513,8 @@ do a track's."
 (aio-defun
  supersonic-music-assistant--artists ()
  "Return a promise resolving to every album artist in the library.
-Asks `music/artists/library_items' a page at a time until a page comes
-back short.  Artists that only appear on tracks are left out, as
-Subsonic's getArtists leaves them out: they have no albums to open."
+Artists that only appear on tracks are left out, as Subsonic's
+getArtists leaves them out: they have no albums to open."
  (mapcar #'supersonic-music-assistant--artist
          (aio-await
           (supersonic-music-assistant--all-items
@@ -586,20 +555,14 @@ order `supersonic-music-assistant--album-list-args' maps TYPE to."
  supersonic-music-assistant--recent-albums (count)
  "Return a promise resolving to the albums of the tracks last played.
 At most COUNT MA album alists, most recently played first, each once.
-The history, `music/recently_played_items', lists slim track mappings
-without their album, so each track is looked up with
-`music/item_by_uri', `supersonic-music-assistant--recent-lookups' at
-a time; a full track carries an album mapping with all the album list
-shows.  A track whose lookup fails, or which has no album, is skipped
--- unless every lookup fails, which signals the first failure rather
-than pass for an empty history.  A track of a streaming provider is
-looked up there unless the server has it cached; MA throttles those
-calls itself, so a cold cache makes the list slow rather than fail.
-The history has no offset, so when it runs out of tracks before COUNT
-albums are found, it is asked again for twice as many and the tracks
-already looked up are skipped -- until it is exhausted, or
-`supersonic-music-assistant--recent-history-factor' tracks per album
-have been asked for."
+The history lists tracks without their album, so each is looked up
+with `music/item_by_uri', `supersonic-music-assistant--recent-lookups'
+at a time; MA throttles lookups at streaming providers, so a cold
+cache makes this slow.  Failed lookups and tracks without an album are
+skipped, unless every lookup fails, which signals the first failure.
+The history has no offset, so while albums are missing it is asked
+again for twice as many tracks, skipping those already seen, up to
+`supersonic-music-assistant--recent-history-factor' per album."
  (let ((connection (supersonic-music-assistant--connection))
        (limit (* supersonic-music-assistant--recent-history-start count))
        (max-limit (* supersonic-music-assistant--recent-history-factor count))
@@ -686,8 +649,7 @@ still honour, rather than `providers', which schema 28 does not know."
 
 (aio-defun
  supersonic-music-assistant--podcasts ()
- "Return a promise resolving to every podcast in the library.
-Asks `music/podcasts/library_items' a page at a time."
+ "Return a promise resolving to every podcast in the library."
  (mapcar #'supersonic-music-assistant--podcast
          (aio-await
           (supersonic-music-assistant--all-items
@@ -723,14 +685,9 @@ since only the proxy scales."
 
 (defun supersonic-music-assistant--retrieve-image (url)
   "Start a GET of the image at URL, returning a promise of (STATUS . BUFFER).
-Marked noninteractive, so that a server answering 401 -- a public
-image's host is whatever a feed points at -- makes `url.el' fail the
-request rather than prompt for a user name and password, from a timer
-in the middle of painting a list.  `url.el' still asks auth-source for
-that host first, as it does for any 401; only the prompts are gone.
-A plain function, as `supersonic-music-assistant--retrieve' is, so
-that the binding is certain to be in effect while `url-retrieve'
-reads it."
+Noninteractive, so that a 401 from whatever host a feed points at
+fails rather than prompts from a timer.  A plain function, so that the
+binding is in effect while `url-retrieve' reads it."
   (let ((url-request-noninteractive t))
     (supersonic-url-retrieve url)))
 

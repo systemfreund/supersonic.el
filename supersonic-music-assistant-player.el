@@ -32,33 +32,19 @@
 ;;   (require 'supersonic-music-assistant-player)
 ;;   (setq supersonic-playback-backend 'music-assistant)
 ;;
-;; The player is `supersonic-music-assistant-player', which
-;; `supersonic-music-assistant-select-player' picks from the players
-;; the server has -- or, with none picked yet, playing or enqueueing
-;; offers, taking the server's only player without asking (#93).  A
-;; player's queue has the player's id, so that is what every command
-;; names.
+;; The player is `supersonic-music-assistant-player', picked with
+;; `supersonic-music-assistant-select-player' -- or, with none picked
+;; yet, offered when playing or enqueueing, taking the server's only
+;; player without asking (#93).  A player's queue has the player's id.
 ;;
-;; That offer comes once the server has answered with its players, so
-;; after the command that played has returned: a second play before
-;; the first is answered asks again, rather than waiting on the first
-;; -- which a `C-g' at its prompt would leave waiting for good.
+;; MA's HTTP API pushes nothing, so the queue is polled through
+;; `supersonic-poller.el' while `music-assistant' is the active backend.
+;; Its entries, which carry whole media items, are only asked for when
+;; the queue's state says they may have changed; see
+;; `supersonic-music-assistant-player--items-key'.  Status, queue and
+;; liveness answer from what the latest poll found.
 ;;
-;; The provider talks to MA over its plain HTTP API, which tells a
-;; client nothing on its own, so this polls the queue through the
-;; machinery in `supersonic-poller.el', exactly while `music-assistant'
-;; is the active backend.  A poll asks `player_queues/get' for the
-;; queue's state, and `player_queues/items' for its entries only when
-;; that state says they may have changed -- see
-;; `supersonic-music-assistant-player--items-key' -- since an entry
-;; carries the whole media item and its stream details, and a queue of
-;; a few albums would otherwise be a fair bit of JSON every couple of
-;; seconds.  The status, queue and liveness operations answer from
-;; what the latest poll found, as the jukebox's do.
-;;
-;; No scrobbling: MA records play history itself, and the provider
-;; does not implement `scrobble', which the poller asks before it
-;; would.
+;; No scrobbling: MA records play history itself.
 
 ;;; Code:
 
@@ -113,11 +99,9 @@ tell, an entry moved by another client, shows within that long.")
 (defun supersonic-music-assistant-player--items-key (queue)
   "Return what tells whether QUEUE's entries may have changed since a poll.
 QUEUE is what `player_queues/get' answered.  Its id, the number of
-entries, the current and the next entry -- an MA queue entry has an
-id of its own, made up afresh whenever it is queued -- and whether it
-is shuffled.  Entries added, removed or replaced change one of those;
-only an entry moved further down the queue, by another client, goes
-unnoticed -- until something else changes, or for
+entries, the ids of the current and the next entry, which are new
+whenever one is queued, and whether it is shuffled.  Only an entry
+moved further down by another client goes unnoticed, for
 `supersonic-music-assistant-player--items-max-age' at most."
   (list (assoc-default "queue_id" queue)
         (assoc-default "items" queue)
@@ -143,14 +127,11 @@ the entry's track plist, or nil.  POLLED-AT is a
 `float-time' timestamp of when QUEUE was received, ITEMS-POLLED-AT
 one of when ITEMS were.
 
-The position is the queue's `elapsed_time' as of its
-`elapsed_time_last_updated', the server's own timestamp, so that
-`supersonic-poller-position' counts on from when the server last
-looked rather than from when the answer arrived -- as MA's own client
-does.  The timestamp is read on the local clock, shifted by
-`supersonic-music-assistant--clock-offset': a server clock running
-behind would otherwise put the position ahead by as much, and a
-relative seek with it.  Never later than POLLED-AT."
+The position is `elapsed_time' as of the server's
+`elapsed_time_last_updated', shifted onto the local clock by
+`supersonic-music-assistant--clock-offset', so it is counted on from
+when the server last looked, as MA's own client does.  Never later
+than POLLED-AT."
   (let* ((current (assoc-default "current_item" queue))
          (updated (assoc-default "elapsed_time_last_updated" queue))
          (index (assoc-default "current_index" queue)))
@@ -300,14 +281,11 @@ A failure is reported as failing to DESCRIPTION."
 
 (defun supersonic-music-assistant-player--with-chosen-target (description sole-format action)
   "Call ACTION with what a command playing or enqueueing is sent to.
-That is, with what `supersonic-music-assistant-player--target'
-returns.  With no player selected, offers one first, as
+With no player selected, offers one first, as
 `supersonic-music-assistant-player--choose' does with SOLE-FORMAT,
-and calls ACTION once one is chosen -- so that the command need not be
-repeated.  A failure to choose is reported as failing to DESCRIPTION.
-Only for a command the user ran, as it may prompt: one controlling a
-queue that is not there has nothing to offer a player for, and keeps
-the `user-error' `supersonic-music-assistant-player--target' signals."
+then calls ACTION, so the command need not be repeated.  A failure to
+choose is reported as failing to DESCRIPTION.  Only for a command the
+user ran, as it may prompt."
   (let ((connection (supersonic-music-assistant--connection))
         (queue-id (plist-get supersonic-music-assistant-player :id)))
     (ignore
@@ -379,9 +357,8 @@ that entry over instead."
 
 (defun supersonic-music-assistant-player-stop ()
   "Stop the player.
-Nothing to stop with no player selected, or no server to reach it on,
-which is no reason to keep `supersonic-playback-switch-backend' from
-switching away."
+Does nothing with no player or no server, so that
+`supersonic-playback-switch-backend' can still switch away."
   (let ((target (ignore-error user-error (supersonic-music-assistant-player--target))))
     (when target
       (ignore
@@ -401,10 +378,8 @@ refuses to seek."
 
 (defun supersonic-music-assistant-player-seek (offset)
   "Seek OFFSET seconds relative to the player's current position.
-MA's `seek' takes an absolute position, which this adds OFFSET to the
-position counted on from the latest poll to get -- rather than
-leaving that to `skip', which adds it to whatever position the server
-last recorded, seconds old while the player is playing.  Signals a
+OFFSET is added to the position counted on from the latest poll,
+not left to MA's `skip', whose position may be seconds old.  Signals a
 `user-error' before any poll found a position to seek from."
   (let ((target (supersonic-music-assistant-player--target))
         (position (supersonic-music-assistant-player--position)))

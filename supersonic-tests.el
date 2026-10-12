@@ -4,19 +4,9 @@
 
 ;;; Commentary:
 
-;; Exercises supersonic.el's mpv queueing/scrobbling-id-mapping logic
-;; against a real (but headless, synthetic-audio) mpv process, since
-;; that is what the package actually talks to; nothing here needs a
-;; real supersonic server.  Run with:
-;;
-;;   make test
-;;
-;; or directly:
-;;
-;;   cask emacs -Q --batch -L . -l ert -l supersonic.el -l supersonic-tests.el \
-;;     -f ert-run-tests-batch-and-exit
-;;
-;; Skipped automatically if mpv is not installed.
+;; Many of these run against a real, headless mpv playing synthetic
+;; audio; none needs a server.  Run with `make test'.  Tests needing mpv
+;; are skipped without it.
 
 ;;; Code:
 (require 'ert)
@@ -361,10 +351,7 @@ seconds, and its pause state."
    (should
     (equal
      "av://lavfi:sine=frequency=440:duration=10" (supersonic-tests--resolve (supersonic-playback-status 'track-id))))
-   ;; mpv reports `time-pos' as unavailable until it has actually started
-   ;; decoding, which is a moment after the `loadfile' that populated
-   ;; `supersonic--playlist' above -- so wait for a position rather than
-   ;; expecting one to exist the instant the queue does.
+   ;; mpv only reports `time-pos' once it has started decoding.
    (should
     (supersonic-tests--wait-for
      (lambda () (numberp (supersonic-tests--resolve (supersonic-playback-status 'position))))))
@@ -374,10 +361,8 @@ seconds, and its pause state."
    (should (supersonic-tests--resolve (supersonic-playback-status 'paused)))))
 
 (ert-deftest supersonic-tests-get-property-resolves-nil-when-unsendable ()
-  "`supersonic-mpv-get-property' used to be documented as hanging forever
-if mpv was not running, since no reply could ever arrive to resolve its
-promise.  It resolves to nil instead, which is what lets
-`supersonic-playback-status' promise its callers an answer either way."
+  "`supersonic-mpv-get-property' resolves to nil when mpv is not running,
+which lets `supersonic-playback-status' promise an answer either way."
   (let ((supersonic-mpv--socket nil)
         (supersonic-mpv--pending-requests (make-hash-table)))
     (should-not (supersonic-tests--resolve (supersonic-mpv-get-property "time-pos")))
@@ -504,10 +489,8 @@ dropping the previous queue's entries rather than appending to them."
          (kill-buffer buff))))))
 
 (ert-deftest supersonic-tests-seeking-does-not-open-the-transient ()
-  "Seeking only seeks.  It used to end by calling the `supersonic'
-transient, which meant the menu popped up whenever the seek commands
-were invoked from anywhere else -- e.g. from the now-playing buffer.
-The menu now stays open on its own via the suffixes' `:transient t'."
+  "Seeking only seeks, without opening the `supersonic' transient, which
+stays open by itself through the suffixes' `:transient t'."
   (let ((commands nil)
         (opened-transient nil))
     (cl-letf (((symbol-function 'supersonic-mpv-command) (lambda (&rest args) (push args commands)))
@@ -661,11 +644,8 @@ wrong-resolution envelope cached before the change."
 
 (ert-deftest supersonic-tests-art-and-waveform-cache-files-never-collide ()
   "Cover art and waveforms share `supersonic-cache-path', but their
-cache file names must never collide even for the same id and the same
-numeric size/bucket count -- a real scenario, not a hypothetical one:
-a track's own id often doubles as its cover art id, and
-`supersonic-now-playing-art-size' (300) happens to match the default
-`supersonic-waveform-buckets' (300)."
+file names never collide, even for the same id and the same size and
+bucket count: a track's id often doubles as its cover art id."
   (let ((supersonic-cache-path "/tmp/supersonic-tests-shared-cache"))
     (should-not (equal (supersonic-art-cache-file "shared-id" 300) (supersonic-waveform-cache-file "shared-id" 300)))))
 
@@ -775,8 +755,7 @@ a WAVEFORM argument, above its own clip rectangle and text."
 (ert-deftest supersonic-tests-art-overlay-propertize-honors-the-label-face ()
   "`supersonic-art-overlay-propertize' draws its text with
 `supersonic-now-playing-art-overlay-label's `:weight'/`:family'/`:foreground',
-not the hardcoded bold white it used to be baked in with -- so
-customizing that face actually reaches the SVG text."
+so that customizing that face reaches the SVG text."
   (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-cached-art
    "art-1" 100
@@ -822,12 +801,7 @@ text only understands \"bold\"/\"normal\"."
 
 (ert-deftest supersonic-tests-art-overlay-layers-dropping-one-omits-it ()
   "Dropping a layer from `supersonic-art-overlay-layers' omits it from the
-image even when the data that would feed it (a WAVEFORM argument) is
-still given -- the list decides whether anything gets drawn, not the
-presence of a matching argument by itself. Compared against the same
-call with `supersonic-art-overlay-layers' left at its default, the way
-`supersonic-tests-art-overlay-propertize-draws-a-waveform-lane-when-given-one'
-compares against a call with WAVEFORM left out."
+image even when its data, a WAVEFORM argument, is still given."
   (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-cached-art
    "art-1" 100
@@ -883,12 +857,9 @@ scrim/waveform/text stacked on top of it."
      (should (= 0 (supersonic-tests--count-substring "<image" data))))))
 
 (ert-deftest supersonic-tests-art-overlay-scroll-layers-are-configurable-independently ()
-  "`supersonic-art-overlay-scroll-layers' governs
-`supersonic-art-overlay-scroll-propertize' the same way
-`supersonic-art-overlay-layers' governs the static variant, and
-separately from it -- dropping the scroll variant's waveform layer
-leaves the static variant's default list, and its own drawing,
-untouched."
+  "`supersonic-art-overlay-scroll-layers' governs the scrolling variant
+as `supersonic-art-overlay-layers' does the static one, independently
+of it."
   (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-cached-art
    "art-1" 100
@@ -912,13 +883,8 @@ untouched."
      (should (memq #'supersonic-art-overlay-layer-waveform supersonic-art-overlay-layers)))))
 
 (ert-deftest supersonic-tests-art-overlay-context-reclaims-the-text-row-when-no-text-layer-is-listed ()
-  "`supersonic-art-overlay--context' sizes the scrim off which layers are
-actually going to draw, for the text row just as much as for the
-waveform lane: dropping the text layer takes that row's share of the
-scrim with it rather than leaving a permanently empty band behind --
-the very gap dropping `supersonic-art-overlay-layer-waveform' was made
-to reclaim.  Checked on the context itself, since that is the one place
-every layer reads its geometry from."
+  "`supersonic-art-overlay--context' leaves the text row out of the
+scrim when no text layer is listed, as it does the waveform lane."
   (supersonic-tests--with-cached-art
    "art-1" 100
    (let* ((waveform (cons (cons (supersonic-tests--bytes '(255 0)) (supersonic-tests--bytes '(200 0))) 0.5))
@@ -940,10 +906,7 @@ every layer reads its geometry from."
      (should (= lane (plist-get without-text :scrim-height)))
      (should (= (- (plist-get with-text :scrim-height) (plist-get with-text :text-height))
                 (plist-get without-text :scrim-height)))
-     ;; The scrolling variant's text layer counts for exactly as much:
-     ;; `-scroll-layers' carries it in place of `-layer-text', so a
-     ;; membership test naming only the static one would wrongly reclaim
-     ;; the row out from under every scrolling overlay there is.
+     ;; The scrolling variant's text layer counts just the same.
      (should (> (plist-get (supersonic-art-overlay--context
                             "art-1" 100 "Some Track" nil
                             (list #'supersonic-art-overlay-layer-scrim
@@ -957,12 +920,10 @@ every layer reads its geometry from."
                              :scrim-height))))))
 
 (ert-deftest supersonic-tests-list-use-header-line-reaches-the-podcast-modes-too ()
-  "`supersonic-list-use-header-line' seeds `tabulated-list-use-header-line'
-in every mode its docstring claims -- both podcast modes as well as
-both album ones, rather than the album ones only.  Checked for nil as
-well as t because the interesting failure is a mode that never reads
-the variable at all, which shows up as tabulated-list's own default of
-t surviving a nil setting."
+  "`supersonic-list-use-header-line' reaches every mode its docstring
+names, the podcast modes included.  Checked for nil as well as t: a
+mode that never reads it shows as tabulated-list's default of t
+surviving nil."
   (dolist (want (list t nil))
     (let ((supersonic-list-use-header-line want))
       (dolist (mode '(supersonic-album-mode
@@ -974,12 +935,10 @@ t surviving a nil setting."
           (should (eq want tabulated-list-use-header-line)))))))
 
 (ert-deftest supersonic-tests-art-scroll-text-width-uses-real-font-metrics-when-available ()
-  "`supersonic-art-scroll-text-width' measures TEXT via `string-pixel-width'
-rather than a flat per-character guess whenever that function exists.
-The flat guess (0.6 of FONT-SIZE per character) called text like
-\"Barcode anxiety - paniq\" -- many narrow characters and spaces --
-worth scrolling even though it visually fit the cover art; this is
-what replaced it to fix that."
+  "`supersonic-art-scroll-text-width' measures TEXT with
+`string-pixel-width' where it exists.  The flat per-character guess
+took text of many narrow characters, such as
+\"Barcode anxiety - paniq\", for too wide."
   (skip-unless (fboundp 'string-pixel-width))
   (cl-letf (((symbol-function 'string-pixel-width) (lambda (&rest _) 42)))
     (should (= 42 (supersonic-art-scroll-text-width "Barcode anxiety - paniq" 21)))))
@@ -1027,18 +986,12 @@ blocks the UI exactly as badly as computing it synchronously would."
     (should (= 5 (length (car envelope))))))
 
 (ert-deftest supersonic-tests-waveform-analyze-samples-async-drains-process-output-between-slices ()
-  "Every yield between slices explicitly drains pending process output.
-Rescheduling via a zero-delay timer alone is not a real yield as far
-as process I/O is concerned: idle in its command loop, Emacs runs every
-due timer (redisplaying in between) and only reads process output once
-no timer is due -- and a zero-delay timer that re-arms itself is always
-due.  Without the drain, a whole analysis would go by without a single
-mpv IPC reply or HTTP response being delivered, which is exactly what
-left the now-playing buffer frozen on a track change until the
-previous track's analysis had finished (keyboard input does interrupt
-that loop, so mpv itself still switched tracks right away).  This can't
-be reproduced under `--batch', where the wait loop behaves differently,
-so it's pinned structurally: one drain per non-final slice."
+  "Every yield between slices drains pending process output.  A
+self-rearming zero-delay timer is always due, and Emacs only reads
+process output once no timer is, so without the drain the now-playing
+buffer froze until the analysis finished.  That cannot be reproduced
+under `--batch', so it is pinned structurally: one drain per
+non-final slice."
   (let* ((wav (supersonic-tests--wav (make-list 20 100)))
          (chunk (supersonic-waveform--find-data-chunk wav))
          (supersonic-waveform--analysis-tick-budget 0)
@@ -1194,12 +1147,9 @@ once the whole track is done."
          (delete-directory supersonic-cache-path t))))))
 
 (ert-deftest supersonic-tests-waveform-ensure-reuses-an-in-flight-job-for-the-same-track ()
-  "Re-asking for a waveform that is already being generated must not
-restart it.  The now-playing buffer re-renders -- and so re-asks -- on
-every pause, resume and `g', plus two or three times over in the first
-second of a fresh mpv start; cancelling and respawning each time meant
-a long track's waveform could never finish.  Only the callbacks are
-replaced: the process object stays the very same one."
+  "Re-asking for a waveform that is being generated does not restart it,
+as the now-playing buffer re-asks on every re-render.  Only the
+callbacks are replaced; the process stays the same."
   (supersonic-tests--with-mpv
    (cl-letf (((symbol-function 'supersonic-build-url)
               (lambda (_endpoint _extra-query) "av://lavfi:sine=frequency=440:duration=30")))
@@ -1339,28 +1289,18 @@ would look like something actually went wrong."
              (supersonic-waveform-ensure "long-track" (lambda (_envelope) (setq finished t)))
              (should (supersonic-tests--wait-for (lambda () (process-live-p supersonic-waveform--process))))
              (supersonic-waveform-cancel)
-             ;; Wait for the sentinel to actually finish (and, if it were
-             ;; going to, log a message) instead of just for the process to
-             ;; die -- `supersonic-waveform-cancel' clears the process
-             ;; variables itself, synchronously, well before that.
+             ;; Wait for the sentinel, not just the process:
+             ;; `supersonic-waveform-cancel' clears the process variables
+             ;; itself, well before that.
              (should (supersonic-tests--wait-for (lambda () finished)))
              (should-not (cl-some (lambda (m) (string-match-p "Failed to generate waveform" m)) messages)))
          (delete-directory supersonic-cache-path t))))))
 
 (ert-deftest supersonic-tests-waveform-cancel-stops-in-flight-analysis ()
-  "`supersonic-waveform-cancel' can also invalidate chunked sample
-analysis that's already under way, not just kill the mpv transcode
-process -- by the time analysis is running, that process has already
-exited, so killing it (as
-`supersonic-tests-waveform-cancel-kills-in-flight-transcode' covers)
-does nothing to stop the analysis itself from grinding through a track
-nobody cares about anymore.  Asserted by comparing the progress-tick
-count right at the moment of cancelling against the count some time
-later, rather than by waiting for the whole (potentially very slow --
-each tick is its own timer reschedule, and that overhead adds up)
-analysis to either finish or conspicuously not: even a single
-straggling tick after cancelling would let this catch a regression
-where the analysis keeps going instead of actually stopping."
+  "`supersonic-waveform-cancel' also stops sample analysis under way,
+after mpv has exited.  Asserted by the progress ticks not advancing
+after cancelling, rather than by waiting for a slow analysis to finish
+or not."
   (supersonic-tests--with-mpv
    (cl-letf (((symbol-function 'supersonic-build-url)
               (lambda (_endpoint _extra-query) "av://lavfi:sine=frequency=440:duration=1")))
@@ -1373,10 +1313,7 @@ where the analysis keeps going instead of actually stopping."
            (progn
              (supersonic-waveform-ensure
               "track-1" (lambda (envelope) (setq result envelope)) (lambda (_envelope) (cl-incf progress-count)))
-             ;; Wait until analysis has actually started (mpv already
-             ;; exited, at least one chunked slice done) before cancelling,
-             ;; so this exercises the analysis phase specifically rather
-             ;; than the transcode phase.
+             ;; Cancel during analysis, not during the transcode.
              (should (supersonic-tests--wait-for (lambda () (> progress-count 0)) 10))
              (let ((count-at-cancel progress-count))
                (supersonic-waveform-cancel)
@@ -1389,13 +1326,9 @@ where the analysis keeps going instead of actually stopping."
          (delete-directory supersonic-cache-path t))))))
 
 (ert-deftest supersonic-tests-waveform-transcode-outfile-avoids-media-extension ()
-  "The transcode output file must not use a media-file extension like
-\"wav\": a package that intercepts media-file reads via
-`file-name-handler-alist' (e.g. ready-player.el, which really does
-this) can silently hand back empty content instead of the real bytes
-for such a path -- breaking analysis with no error at all, since mpv
-itself still succeeds regardless. This bit a real user; guard against
-it coming back."
+  "The transcode output file has no media-file extension: a package
+hooking those via `file-name-handler-alist', such as ready-player.el,
+may hand back empty content, silently breaking analysis."
   (cl-letf (((symbol-function 'executable-find) (lambda (&rest _) "/usr/bin/mpv"))
             ((symbol-function 'make-process) (lambda (&rest _) nil))
             ;; The stubbed `make-process' hands back no process to feed
@@ -1418,10 +1351,7 @@ WIDTH*HEIGHT*3 bytes of pixel data -- and building it doesn't error even
 against the placeholder \"unspecified-fg\"/\"unspecified-bg\" colors a
 frameless batch Emacs reports, thanks to `supersonic-waveform--rgb''s
 fallback."
-  ;; A `--without-x'-style build (e.g. the headless Emacs CI runs tests
-  ;; against) has no image support compiled in at all, `pbm' included --
-  ;; not something this package can work around, so skip like the mpv
-  ;; tests do when their own prerequisite is missing.
+  ;; A build without image support, as in CI, has no `pbm'.
   (if (not (image-type-available-p 'pbm))
       (ert-skip "pbm image type not available")
     (let* ((supersonic-waveform-width 12)
@@ -1433,13 +1363,9 @@ fallback."
       (should (= (+ (length "P6\n12 6\n255\n") (* 12 6 3)) (length (plist-get (cdr img) :data)))))))
 
 (ert-deftest supersonic-tests-waveform-image-has-transparent-background ()
-  "The seekbar's flat background is masked out rather than left as a
-solid rectangle baked into the bitmap, so the buffer's actual
-background -- or any highlighting drawn behind it, like `hl-line' or
-an active region -- shows through instead of clashing with whatever
-`face-background' happened to report at render time.  Also guards the
-assumption `:mask 'heuristic' relies on: even a full-height peak bar
-must leave the corner pixel it keys off of untouched."
+  "The seekbar's background is masked out, so that whatever is behind it
+shows through.  Also guards what `:mask 'heuristic' relies on: even a
+full-height peak bar leaves the corner pixel alone."
   (if (not (image-type-available-p 'pbm))
       (ert-skip "pbm image type not available")
     (let* ((supersonic-waveform-width 12)
@@ -1458,9 +1384,7 @@ must leave the corner pixel it keys off of untouched."
 (ert-deftest supersonic-tests-waveform-bars-splits-rms-and-peak-around-center ()
   "`supersonic-waveform-bars' turns each bucket of an envelope into a
 geometry plist whose :rms-extent never exceeds its :peak-extent, and
-whose :x0/:x1 tile WIDTH exactly -- the same bucket math
-`supersonic-waveform-image' used to compute inline, now shared with
-`supersonic-waveform-svg-bars' too."
+whose :x0/:x1 tile WIDTH exactly."
   (let* ((peaks (supersonic-tests--bytes '(255 0)))
          (rms (supersonic-tests--bytes '(128 0)))
          (bars (supersonic-waveform-bars (cons peaks rms) 0.5 10 8)))
@@ -1499,37 +1423,25 @@ perfectly flat tone) gets just the one solid rectangle."
 
 (ert-deftest supersonic-tests-waveform-seek-map-suppresses-drag-region-point-move ()
   "`supersonic-waveform-seek-map' overrides `down-mouse-1' with a no-op.
-The global `down-mouse-1' binding is `mouse-drag-region', which moves
-point to the click position as its first act; left unoverridden, that
-puts point (and the box cursor drawn at it) right on top of the
-seekbar image after every click -- visually a stray frame/border
-around it that has nothing to do with the actual click handling."
+Otherwise `mouse-drag-region' moves point, and the cursor drawn at it,
+onto the seekbar on every click."
   (should (eq #'ignore (lookup-key supersonic-waveform-seek-map [down-mouse-1]))))
 
 (ert-deftest supersonic-tests-waveform-seek-at-click-reads-image-via-posn-image ()
-  "Clicking the waveform must read the clicked image via `posn-image',
-not `car' of `posn-object': for an image, `posn-object' returns the
-image spec itself -- a list whose car is the literal symbol `image',
-not a (IMAGE . POS) cons -- so `car'ing it yields that bare symbol
-instead of the spec, and `image-size' then errors with \"Invalid image
-specification\".  This bit a real user: clicking the seekbar did
-nothing but log that error."
+  "Clicking the waveform reads the clicked image via `posn-image'.
+For an image, `car' of `posn-object' is the symbol `image', on which
+`image-size' signals \"Invalid image specification\"."
   (if (not (image-type-available-p 'pbm))
       (ert-skip "pbm image type not available")
     (let* ((peaks (supersonic-tests--bytes '(200 200)))
            (rms (supersonic-tests--bytes '(100 100)))
            (image (supersonic-waveform-image (cons peaks rms) 0))
-           ;; Mirrors the position list `event-start' hands back: nth 7 is
-           ;; the image (`posn-image'), nth 8 is (DX . DY) relative to it
-           ;; (`posn-object-x-y') -- see `posn-image' and
-           ;; `posn-object-x-y' in subr.el.
+           ;; As `event-start' has it: nth 7 the image, nth 8 (DX . DY)
+           ;; relative to it.
            (posn (list nil nil nil nil nil nil nil image '(4 . 0)))
            (event (list 'down-mouse-1 posn))
            (command nil))
-      ;; `image-size' needs a window-system frame even just to measure a
-      ;; pixel count, which a batch Emacs never has -- stub it rather than
-      ;; skip the whole test, since the point here is `posn-image' plumbing,
-      ;; not image measurement.
+      ;; `image-size' needs a window-system frame, which batch Emacs lacks.
       (cl-letf (((symbol-function 'supersonic-mpv-command) (lambda (&rest args) (setq command args)))
                 ((symbol-function 'image-size)
                  (lambda (spec &optional _pixels _frame)
@@ -1593,16 +1505,9 @@ buffer behind for the rest of the session."
 
 (defun supersonic-tests--force-animation-tick (buff)
   "Run one `supersonic-now-playing--animation-tick' for BUFF, one field switch late.
-`supersonic-now-playing--animation-tick' now measures real elapsed time
-rather than assuming each call is
-`supersonic-now-playing-cycle-interval' seconds after the last, so
-calling it back to back the way a test does no longer switches fields
-deterministically on its own -- barely any wall-clock time passes
-between two synchronous Lisp calls.  Backdating
-`supersonic-now-playing--animation-last-time' first makes the tick see
-exactly one interval's worth of elapsed time, however fast the test
-itself actually ran, so tests can still drive the animation one
-deterministic step at a time."
+Backdates `supersonic-now-playing--animation-last-time' by one
+`supersonic-now-playing-cycle-interval': the tick measures real
+elapsed time, of which a test takes next to none."
   (with-current-buffer buff
     (setq supersonic-now-playing--animation-last-time
           (- (float-time) supersonic-now-playing-cycle-interval)))
@@ -1704,17 +1609,12 @@ without re-rendering the buffer, and stops ticking once mpv is gone."
 
 (ert-deftest supersonic-tests-now-playing-position-follows-a-seek-at-once ()
   "A seek shows up in the now-playing buffer as soon as mpv has carried it
-out, rather than sitting on the pre-seek position until the next tick --
-which is what made clicking the waveform seekbar look like nothing had
-happened.  `supersonic-now-playing-interval' is set far beyond the test's
-own patience here, so only `supersonic-playback-position-change-hook' can
-account for the buffer catching up.
+out, not at the next tick: `supersonic-now-playing-interval' is set
+beyond the test's patience, so only
+`supersonic-playback-position-change-hook' can account for it.
 
-Seeks by an offset rather than by the fraction the seekbar itself
-works in, because mpv only estimates the duration of the synthetic
-stream played here and a percentage of a wrong duration lands
-somewhere unpredictable.  Everything from mpv reporting the seek
-onwards -- which is all this is about -- is the same either way."
+Seeks by an offset rather than a fraction, as mpv only estimates the
+synthetic stream's duration."
   (supersonic-tests--with-mpv
    (cl-letf (((symbol-function 'supersonic-get-json)
               (aio-lambda (url) `(("subsonic-response" ("song" ("title" . ,url) ("duration" . 60)))))))
@@ -1736,11 +1636,8 @@ onwards -- which is all this is about -- is the same either way."
 
 (ert-deftest supersonic-tests-now-playing-buffer-follows-pause-toggle ()
   "An open now-playing buffer reflects pausing and resuming, which mpv
-reports as a property change rather than as a track event: the
-play/pause button flips between \"⏸\" and \"▶\" accordingly.  Matched
-padded (\" ▶ \") rather than bare, since the transport row also has a
-\"▶▶|\" skip button and \"▶▶\" seek button that would otherwise match a
-bare \"▶\" even while playing."
+reports as a property change.  The button is matched padded, as
+\" ▶ \", since the skip and seek buttons contain \"▶\" too."
   (supersonic-tests--with-mpv
    (cl-letf (((symbol-function 'supersonic-get-json)
               (aio-lambda (url) `(("subsonic-response" ("song" ("title" . ,url)))))))
@@ -1823,12 +1720,8 @@ typeface, ...) actually reaches the label -- see
 
 (ert-deftest supersonic-tests-now-playing-animation-tick-does-not-assume-elapsed-time ()
   "Two `supersonic-now-playing--animation-tick' calls back to back do not
-switch the field just because two ticks happened -- unlike
-`supersonic-now-playing-animation-frame-interval' (how often a tick
-fires at all), `supersonic-now-playing-cycle-interval' (how long a
-field is actually shown) is paced against real elapsed time
-(`supersonic-now-playing--advance-field'), and running two ticks in the
-same test barely takes any wall-clock time at all."
+switch the field: `supersonic-now-playing-cycle-interval' is paced
+against real elapsed time, of which they take next to none."
   (supersonic-tests--with-mpv
    (cl-letf (((symbol-function 'supersonic-get-json)
               (aio-lambda (url) `(("subsonic-response" ("song" ("title" . ,url) ("artist" . "Some Artist")))))))
@@ -1853,15 +1746,9 @@ same test barely takes any wall-clock time at all."
 
 (ert-deftest supersonic-tests-now-playing-advance-field-does-not-double-count-a-composite-tick ()
   "Listing a field-cycling built-in twice in
-`supersonic-now-playing-animation-functions' -- the shape that
-variable's own docstring recommends for showing the rotated field in
-two places at once -- still only advances one step per
-`supersonic-now-playing-cycle-interval', not one step per call.
-Without `supersonic-now-playing--cycle-tick' guarding
-`supersonic-now-playing--advance-field' against a second call, each
-call would accumulate the same DELTA again and the field would land
-two steps ahead -- title straight to album, skipping artist -- from a
-single tick."
+`supersonic-now-playing-animation-functions' still advances one step
+per `supersonic-now-playing-cycle-interval', not one per call; see
+`supersonic-now-playing--cycle-tick'."
   (supersonic-tests--with-mpv
    (cl-letf (((symbol-function 'supersonic-get-json)
               (aio-lambda (url)
@@ -1911,11 +1798,8 @@ there is no timer left running to advance it later."
 
 (ert-deftest supersonic-tests-now-playing-animation-tick-skips-while-buffer-hidden ()
   "`supersonic-now-playing--animation-tick' leaves the animated field alone
-for a now-playing buffer that exists but isn't on display -- redrawing
-it (the art overlay variants rebuild a whole SVG image to do so) is
-real work not worth spending on nothing anyone can see -- and picks
-back up exactly where it left off, neither having skipped ahead nor
-reset, the moment the buffer becomes visible again."
+while the buffer is not on display, and picks up exactly where it left
+off once it is."
   (supersonic-tests--with-mpv
    (cl-letf (((symbol-function 'supersonic-get-json)
               (aio-lambda (url)
@@ -2072,15 +1956,10 @@ draws once and leaves it alone regardless of how many ticks follow."
 
 (ert-deftest supersonic-tests-now-playing-art-overlay-scroll-bounces-when-text-overflows ()
   "`supersonic-now-playing-animate-art-overlay-scroll' rests at 0, scrolls
-forward to `supersonic-art-scroll-max-offset' once
-`supersonic-now-playing-scroll-pause' seconds have passed, rests there,
-then scrolls back to 0 and repeats -- a bounce, never scrolling past
-either edge or looping straight back to the start without resting.
-`supersonic-art-scroll-max-offset' itself is stubbed to a fixed
-overflow rather than relied on to measure some text wide enough to
-overflow for real: the bounce state machine is what this exercises,
-not `supersonic-art-scroll-text-width''s real font metrics, which do
-not mean much rendered under `--batch' anyway."
+to `supersonic-art-scroll-max-offset' once
+`supersonic-now-playing-scroll-pause' seconds have passed, rests,
+scrolls back, and repeats, never past either edge.  The max offset is
+stubbed, as real font metrics mean little under `--batch'."
   (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-scroll-overlay "Some Track"
     (let ((supersonic-now-playing-scroll-step 1000)
@@ -2125,9 +2004,7 @@ track id instead of claiming that nothing is playing."
 
 (ert-deftest supersonic-tests-now-playing-render-functions-control-row-order-and-presence ()
   "Trimming `supersonic-now-playing-render-functions' down to a single
-entry drops every other informational row -- proof that
-`supersonic-now-playing--render' no longer hardcodes which rows exist,
-the way it did before this variable existed."
+entry drops every other informational row."
   (let ((buff (get-buffer-create "*supersonic-tests-now-playing*"))
         (song '(:id "t" :title "A Title" :artist "An Artist" :album "An Album")))
     (unwind-protect
@@ -2197,10 +2074,7 @@ instead of letting it take every row after it down too."
 
 (ert-deftest supersonic-tests-now-playing-layout-functions-control-row-presence ()
   "Trimming `supersonic-now-playing-layout-functions' down drops the rows
-left out -- proof that `supersonic-now-playing--render' no longer
-hardcodes art/waveform/label/buttons the way it did before this
-variable existed, the same way `supersonic-now-playing-render-functions'
-already covers the informational rows below them."
+left out."
   (skip-unless (image-type-available-p 'pbm))
   (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
     (let ((supersonic-enable-waveform t)
@@ -2232,10 +2106,8 @@ instead of below it, the reverse of the default order."
                        #'supersonic-now-playing-layout-art
                        #'supersonic-now-playing-layout-buttons)))
             (supersonic-now-playing--render buff song nil 0 "t")
-            ;; No cached art for "t" -- `supersonic-now-playing-layout-art'
-            ;; inserts nothing either way, so this only asserts on the one
-            ;; row that is actually there to move: the label now comes
-            ;; before the buttons rather than after.
+            ;; No cached art, so only the label and buttons are there to
+            ;; compare.
             (should
              (< (supersonic-tests--now-playing-field-position buff 'label)
                 (save-excursion (goto-char (point-min)) (search-forward "◀◀"))))))
@@ -2369,14 +2241,8 @@ which only cares whether an image has landed in one."
 track, without disturbing anything else already rendered."
   (skip-unless (image-type-available-p 'pbm))
   (supersonic-tests--with-mpv
-   ;; Play a plain, filesystem-safe track id (unlike the raw `av://...'
-   ;; urls `supersonic-tests--with-mpv' otherwise treats as ids), so it
-   ;; can double as the waveform cache key below; re-stub `supersonic-build-url'
-   ;; to still resolve it to a real playable url for mpv.  Long enough
-   ;; that mpv is still around (and its IPC socket still alive) for the
-   ;; whole test -- a track ending mid-assertion is exactly what
-   ;; `supersonic-tests-now-playing-position-advances-on-its-own' exercises
-   ;; on purpose elsewhere, not something this test is about.
+   ;; A plain id, so that it can serve as the waveform cache key, resolved
+   ;; to a playable url; long enough for mpv to last the whole test.
    (cl-letf (((symbol-function 'supersonic-get-json)
               (aio-lambda (url) `(("subsonic-response" ("song" ("title" . ,url) ("duration" . 30))))))
              ((symbol-function 'supersonic-build-url)
@@ -2467,10 +2333,8 @@ with the wrong scheme (https vs. http) and the request fails."
 
 (ert-deftest supersonic-tests-signal-if-failed-raises-on-failed-status ()
   "`supersonic--signal-if-failed' raises an `error' carrying the server's
-message when a \"subsonic-response\" reports status \"failed\", e.g. the
-\"Wrong username or password\" the server sends back for a bad
-auth-source entry -- this used to pass through silently as if it were
-an ordinary, empty result."
+message when a \"subsonic-response\" reports status \"failed\", such as
+for a bad auth-source entry, rather than passing for an empty result."
   (should-error
    (supersonic--signal-if-failed
     '(("subsonic-response" ("status" . "failed") ("error" ("code" . 40) ("message" . "Wrong username or password.")))))
@@ -2513,11 +2377,8 @@ ordinary, empty-looking result."
 
 (ert-deftest supersonic-tests-get-json-kills-the-url-retrieve-buffer ()
   "`supersonic-get-json' kills the very buffer `url-retrieve' handed its
-callback, not a copy of it -- `aio-url-retrieve' before aio 1.2
-resolved to a `clone-buffer' of that buffer (skeeto/emacs-aio#33), so
-killing what it returns left the original ` *http host:port*' buffer
-behind on every request, and the jukebox poll alone piled up thousands
-of them overnight (#42)."
+callback, not a copy: aio before 1.2 resolved to a clone, leaving the
+original behind on every request (#42)."
   (let ((response (generate-new-buffer " *supersonic-tests-response*")))
     (unwind-protect
         (cl-letf (((symbol-function 'url-retrieve)
@@ -2536,11 +2397,9 @@ of them overnight (#42)."
 
 (ert-deftest supersonic-tests-get-json-gives-up-after-the-request-timeout ()
   "A request the server never answers rejects after
-`supersonic-request-timeout', and takes its connection and response
-buffer down with it -- asynchronous `url-retrieve' has no timeout of
-its own, so without one such a request held a file descriptor open for
-the rest of the session, and a poll every few seconds against a server
-that stopped answering ran Emacs out of them (#70)."
+`supersonic-request-timeout', closing its connection and buffer, so
+that polling a dead server cannot run Emacs out of file descriptors
+\(#70)."
   (let* ((supersonic-request-timeout 0.05)
          (response (generate-new-buffer " *supersonic-tests-response*"))
          (connection (make-pipe-process :name "supersonic-tests-connection" :buffer response :noquery t)))
@@ -2578,12 +2437,8 @@ timeout, rather than leaving a timer behind for every request ever made."
         (kill-buffer response)))))
 
 (ert-deftest supersonic-tests-refresh-shows-error-on-bad-credentials ()
-  "A refresh function surfaces a Subsonic-level \"failed\" response (e.g.
-wrong username/password from auth-source) to the user instead of
-silently rendering an empty list, mirroring
-`supersonic-tests-refresh-shows-error-on-network-failure' but for a
-failure that arrives inside a 200 OK body rather than as an HTTP/network
-error."
+  "A refresh shows a Subsonic \"failed\" response, such as for a wrong
+password, which arrives in a 200 OK body, rather than an empty list."
   (cl-letf (((symbol-function 'supersonic-build-url) (lambda (_endpoint _extra-query) "dummy://url")))
     (supersonic-tests--with-stubbed-response
         "{\"subsonic-response\":{\"status\":\"failed\",\"error\":{\"code\":40,\"message\":\"Wrong username or password.\"}}}"
@@ -2626,10 +2481,7 @@ suggest trying again."
 
 (ert-deftest supersonic-tests-auth-picks-up-host-change-at-runtime ()
   "`supersonic-auth' re-resolves against `auth-source-search' as soon as
-`supersonic-host' changes, instead of keeping whatever was looked up
-the first time it was called (which used to be frozen in for the rest
-of the Emacs session, e.g. via a `defvar' initializer evaluated once
-at load time)."
+`supersonic-host' changes, rather than keeping what it first looked up."
   (let ((supersonic-host "host-a"))
     (cl-letf (((symbol-function 'auth-source-search)
                (lambda (&rest args) (list (list :host (plist-get args :host) :user "u" :secret (lambda () "p"))))))
@@ -2638,12 +2490,9 @@ at load time)."
       (should (equal "host-b" (plist-get (supersonic-auth) :host))))))
 
 (ert-deftest supersonic-tests-auth-picks-up-corrected-credentials-at-runtime ()
-  "`supersonic-auth' re-resolves against `auth-source-search' on every call,
-so correcting a wrong username/password in the authinfo entry (and
-forgetting `auth-source''s own cache, e.g. via
-`auth-source-forget-all-cached') takes effect on the next request --
-even though `supersonic-host' itself never changed -- instead of
-keeping whatever supersonic itself first memoized for that host."
+  "`supersonic-auth' asks `auth-source-search' on every call, so that a
+corrected authinfo entry takes effect once auth-source's own cache is
+forgotten."
   (let ((supersonic-host "host-a")
         (user "wrong-user"))
     (cl-letf (((symbol-function 'auth-source-search)
@@ -2936,18 +2785,10 @@ those into one (id [name art]) row apiece."
     (should (equal '(("1" ["Alice" ""]) ("2" ["Bob" ""]) ("3" ["Carl" ""])) (supersonic-artists-rows artists)))))
 
 (ert-deftest supersonic-tests-albums-buffer-becomes-current ()
-  "`supersonic-albums' leaves the freshly created album-list buffer as
-the current/displayed buffer, instead of popping back to whichever
-buffer the command happened to be invoked from.
-
-Regression test for a bug where `set-buffer' (which switches the
-current buffer for the rest of the function) was replaced by
-`supersonic--init-list-buffer', which only switches buffers via
-`with-current-buffer' and unwinds *before* `supersonic-albums'
-returns.  `(current-buffer)' at the end of `supersonic-albums' then
-picked up the original buffer again, so e.g. `supersonic-random-albums'
-silently reopened whatever buffer it was called from instead of the
-new albums list."
+  "`supersonic-albums' leaves the new album list as the current buffer.
+Guards against `supersonic--init-list-buffer' switching buffers only
+within `with-current-buffer', which had `supersonic-random-albums'
+reopen the buffer it was called from."
   (cl-letf (((symbol-function 'supersonic-build-url) (lambda (_endpoint _extra-query) "dummy://url"))
             ((symbol-function 'supersonic-get-json) (aio-lambda (_url) nil)))
     (let ((origin (get-buffer-create "*supersonic-tests-origin*")))
@@ -2993,11 +2834,9 @@ after it, in list order, and nil for an id that isn't in the list."
     (should (equal '() (supersonic-get-tracklist-id "nope")))))
 
 (ert-deftest supersonic-tests-parse-survives-a-missing-duration ()
-  "The Subsonic API marks \"duration\" optional and really does leave it
-out -- a podcast episode that hasn't been downloaded yet has none.
-Formatting happens inside a `mapcar' over the whole response, so a
-`format-seconds' call signalling on nil used to empty the entire list
-buffer over one such row."
+  "The Subsonic API may leave \"duration\" out, e.g. for a podcast
+episode not downloaded yet; that row must not take the whole list
+down with it."
   (let ((tracks
          '(("subsonic-response" ("album" ("song"
               (("title" . "No Duration") ("id" . "1"))
@@ -3015,11 +2854,8 @@ buffer over one such row."
       (should (equal "1:02:05" (aref (nth 1 (nth 1 rows)) 1))))))
 
 (ert-deftest supersonic-tests-now-playing-fetch-reports-its-own-errors ()
-  "`supersonic-now-playing-fetch-and-render' returns a promise every
-caller `ignore's, so anything signalled inside it -- a missing
-authinfo entry, most plainly -- used to reject a promise nobody was
-awaiting and vanish, leaving only a buffer that had quietly stopped
-updating.  It reports instead."
+  "`supersonic-now-playing-fetch-and-render' reports its errors itself,
+as every caller `ignore's the promise it returns."
   (let ((buff (get-buffer-create "*supersonic-tests-now-playing*"))
         (messages nil))
     (unwind-protect
@@ -3076,12 +2912,9 @@ left a gap where the image had been until something else redrew it."
         (kill-buffer buff)))))
 
 (ert-deftest supersonic-tests-now-playing-buffer-records-no-undo ()
-  "The now-playing buffer keeps no undo history.  Every field update
-deletes the old text, display property and all, and undo kept each one
--- a superseded cover art overlay or seekbar image spec per entry, for
-a buffer nobody edits.  `truncate_undo_list' only weighs the deleted
-text, a single space, so a few thousand entries and over 10 MB of dead
-images stuck around."
+  "The now-playing buffer keeps no undo history.  Each field update would
+keep a superseded image spec in it, since `truncate_undo_list' only
+weighs the deleted text, a single space: over 10 MB after a while."
   (let ((buff (get-buffer-create "*supersonic-tests-now-playing*")))
     (unwind-protect
         (with-current-buffer buff
@@ -3130,11 +2963,6 @@ crosses into another bucket -- once every twelve seconds for a
               (should (= 1 redraws))))
         (kill-buffer buff)))))
 
-;; `supersonic-now-playing--update-field' finding no `waveform' field to
-;; patch used to be the only thing standing between a hidden seekbar and
-;; its render -- by which point the full-size image had already been
-;; built as that call's argument, only to be thrown away.  At 400x120
-;; that was tens of milliseconds of blocked input every bucket change.
 (ert-deftest supersonic-tests-now-playing-waveform-builds-no-image-without-a-row ()
   "Neither a freshly delivered envelope nor a bucket change renders the
 standalone seekbar image when the layout has no `waveform' row to put
@@ -3196,11 +3024,8 @@ tick still fetches once something does -- here, art being enabled."
 
 (ert-deftest supersonic-tests-now-playing-layout-functions-default-omits-the-standalone-waveform-row ()
   "`supersonic-now-playing-layout-functions''s default list leaves
-`supersonic-now-playing-layout-waveform' out, so a track with waveforms
-available and nothing else configured shows the seekbar layered onto
-the cover art overlay only, not a second standalone row below it too --
-the same look `supersonic-now-playing-waveform-in-overlay' being on
-used to be the only way to get, now the default without it."
+`supersonic-now-playing-layout-waveform' out, so that the seekbar
+shows in the cover art overlay only."
   (skip-unless (image-type-available-p 'pbm))
   (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
     (let ((supersonic-enable-waveform t)
@@ -3215,14 +3040,8 @@ used to be the only way to get, now the default without it."
 
 (ert-deftest supersonic-tests-now-playing-waveform-standalone-row-and-overlay-lane-coexist ()
   "The standalone `waveform' row (`supersonic-now-playing-layout-waveform')
-and the cover art overlay's waveform lane
-(`supersonic-art-overlay-layer-waveform', via
-`supersonic-now-playing-animate-art-overlay') are independent consumers
-of the same cached envelope -- both can show at once, driven purely by
-their own list membership, with nothing left to force a choice between
-them the way `supersonic-now-playing-waveform-in-overlay' used to.  The
-standalone row is opt-in rather than the default, so this test asks
-for it explicitly rather than relying on it being there."
+and the cover art overlay's waveform lane are independent, and can
+show at once.  The row is opt-in, so this asks for it."
   (skip-unless (image-type-available-p 'pbm))
   (skip-unless (image-type-available-p 'svg))
   (cl-letf (((symbol-function 'display-graphic-p) (lambda (&optional _display) t)))
@@ -3269,12 +3088,8 @@ for it explicitly rather than relying on it being there."
         (delete-directory supersonic-cache-path t)))))
 
 (ert-deftest supersonic-tests-now-playing-art-overlay-waveform-is-seekable ()
-  "The cover art overlay stays clickable to seek once a waveform is
-layered onto it -- `supersonic-now-playing-animate-art-overlay-scroll'
-hands its result through `supersonic-now-playing--maybe-seekable' when
-`supersonic-now-playing--overlay-waveform' returns non-nil, the same
-way `supersonic-waveform-propertize' already makes the standalone
-seekbar clickable."
+  "The cover art overlay is clickable to seek once a waveform is layered
+onto it, like the standalone seekbar."
   (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-scroll-overlay
    "Some Track"
@@ -3288,13 +3103,9 @@ seekbar clickable."
 
 (ert-deftest supersonic-tests-now-playing-art-overlay-is-not-seekable-without-the-waveform-layer ()
   "Cover art that never got a waveform lane is not clickable to seek, even
-with an envelope cached and ready to hand over: dropping
-`supersonic-art-overlay-layer-waveform' from the layer list -- the
-customization the README spells out for moving the seekbar to its own
-row -- leaves nothing under the pointer to seek in, so
-`supersonic-now-playing--maybe-seekable' has to follow the layer list
-rather than the envelope alone.  The default list is exercised in the
-same test, so a keymap going missing for some unrelated reason cannot
+with an envelope cached: dropping `supersonic-art-overlay-layer-waveform',
+as the README describes, leaves nothing to seek in.  The default list
+is checked too, so that a keymap missing for another reason cannot
 pass this."
   (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-scroll-overlay
@@ -3312,13 +3123,9 @@ pass this."
      (should (eq supersonic-waveform-seek-map (supersonic-tests--now-playing-art-keymap buff))))))
 
 (ert-deftest supersonic-tests-now-playing-art-overlay-seekability-follows-each-animator-s-own-layer-list ()
-  "Each art animator decides seekability from the layer list it actually
-draws with: `supersonic-now-playing-animate-art-overlay-scroll' from
-`supersonic-art-overlay-scroll-layers' and
-`supersonic-now-playing-animate-art-overlay' from
-`supersonic-art-overlay-layers'.  Dropping the waveform layer from one
-list must not make the other's overlay stop seeking, which is what
-consulting a single hardcoded list for both would do."
+  "Each art animator decides seekability from its own layer list, so
+that dropping the waveform layer from one list does not stop the
+other's overlay from seeking."
   (skip-unless (image-type-available-p 'svg))
   (supersonic-tests--with-scroll-overlay
    "Some Track"
@@ -3515,22 +3322,11 @@ particular backend."
 
 (ert-deftest supersonic-tests-user-options-live-in-the-options-file ()
   "Every `defcustom' belongs to `supersonic-custom.el', unless its default
-is a function of the package -- that one lives in the file defining the
-function.
-Several options are read by more than one file -- `supersonic-cache-path'
-by both caches, `supersonic-mpv' by both the playback backend and the
-waveform transcoder that is otherwise independent of it -- so there is
-no natural owner to move them to.  Keeping them together is what lets
-every other file simply require them, instead of carrying `defvar'
-stubs that keep the byte-compiler quiet while leaving the options
-genuinely void for anyone who requires that file on its own.  An
-option defaulting to a function of the package has an owner: the file
-defining the function, which is also the one reading it.  Defining it
-anywhere else would make that file refer to one requiring it -- see
+is a function of the package, which lives in the file defining the
+function.  See the Commentary of `supersonic-custom.el' for why, and
 `supersonic-tests-options-file-refers-to-nothing-of-the-package'.
-
-`supersonic-credentials.el' keeps its one option to itself, as it
-must load without `supersonic-custom.el' -- see its Commentary."
+`supersonic-credentials.el' keeps its one option to itself; see its
+Commentary."
   (dolist (file (supersonic-tests--package-files))
     (let ((name (file-name-nondirectory file)))
       (unless (member name '("supersonic-custom.el" "supersonic-credentials.el"))
@@ -3636,21 +3432,12 @@ instead of depending on however long the test itself actually takes to run.")
 
 (defmacro supersonic-tests--with-jukebox (&rest body)
   "Run BODY with jukeboxControl faked against `supersonic-tests--jukebox-playlist'.
-`action=get' answers with its current value wrapped up as a
-jukeboxPlaylist; every other action succeeds without an effect of its
-own, since none of this file's actions read anything back from their
-own response -- see the commentary in `supersonic-jukebox.el' for why
-a poll always re-fetches the whole playlist instead. Every request's
-query alist is recorded, in order, in `supersonic-tests--jukebox-requests'.
-
-`supersonic-build-url' is faked to hand the query alist straight
-through unencoded, rather than building a real URL string, so
-`supersonic-tests--jukebox-requests' entries can be inspected directly
-instead of parsed back out of a query string. `float-time' is faked to
-read `supersonic-tests--jukebox-clock', which stands still unless a
-test advances it, so a poll's `:polled-at' -- and anything interpolated
-from it -- is exact and reproducible rather than however many
-microseconds the test happened to take."
+`action=get' answers with its value as a jukeboxPlaylist; every other
+action succeeds without an effect.  Every request's query alist is
+recorded, in order, in `supersonic-tests--jukebox-requests', as
+`supersonic-build-url' hands it through unencoded.  `float-time' reads
+`supersonic-tests--jukebox-clock', which only moves when a test
+advances it, so that positions come out exact."
   `(let ((supersonic-jukebox--poller (supersonic-jukebox--make-poller))
          (supersonic-tests--jukebox-requests nil)
          (supersonic-tests--jukebox-playlist nil)
@@ -3961,12 +3748,9 @@ itself gates on it, so this backend needs no gate of its own."
        (should (= 2 requests))))))
 
 (ert-deftest supersonic-tests-jukebox-poll-reports-failure-once ()
-  "A failing poll marks the backend not live, but reports the failure to
-the user -- and runs the track-change hook, so a stale snapshot stops
-being shown as current -- only on the transition into failing; a
-server that stays unreachable does not narrate itself once per poll
-interval. This includes the very first poll ever failing, which has
-no earlier success to transition from."
+  "A failing poll marks the backend not live, but reports the failure,
+and runs the track-change hook, only on going into failure -- the very
+first poll included -- not once per poll."
   (let ((supersonic-jukebox--poller (supersonic-jukebox--make-poller))
         (supersonic-playback-track-change-hook nil)
         (track-changes 0)
@@ -4091,11 +3875,8 @@ releases it, oldest first -- a server taking its time to answer."
   (dotimes (_ 5) (accept-process-output nil 0.01)))
 
 (ert-deftest supersonic-tests-jukebox-poll-tick-skips-while-a-poll-is-in-flight ()
-  "A poll tick does not send another `get' while the last one is still
-waiting on the server: each tick used to send one regardless, so a
-server that stopped answering piled up a connection every
-`supersonic-jukebox-poll-interval' until Emacs ran out of file
-descriptors (#70)."
+  "A poll tick sends no `get' while the last one is still waiting on the
+server, so that a dead server does not pile up connections (#70)."
   (supersonic-tests--with-held-jukebox-polls
     (supersonic-poller--tick supersonic-jukebox--poller)
     (supersonic-poller--tick supersonic-jukebox--poller)
@@ -4951,8 +4732,8 @@ it shows the bare id as the title, as it always has."
         (kill-buffer buff)))))
 
 (ert-deftest supersonic-tests-now-playing-renders-a-subsonic-song-as-before ()
-  "A getSong answer mapped by the Subsonic provider renders the same rows
-the raw song alist used to: title, artist, album, format and size."
+  "A getSong answer mapped by the Subsonic provider renders title,
+artist, album, format and size."
   (let ((buff (get-buffer-create "*supersonic-tests-now-playing*"))
         (song (supersonic-subsonic--track
                '(("id" . "s-1") ("title" . "One") ("artist" . "Alice") ("album" . "First") ("duration" . 65)

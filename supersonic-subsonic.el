@@ -24,20 +24,12 @@
 ;; facade in `supersonic-provider.el' against any server speaking the
 ;; Subsonic REST API, and registers them under the name `subsonic'.
 ;;
-;; Everything Subsonic-shaped about browsing -- and about streaming,
-;; scrobbling and cover art, which the backends and caches ask for
-;; through the facade too -- stops here.  Requests go
-;; out through `supersonic-api.el'; what comes back is turned from
-;; Subsonic's JSON into the facade's plist vocabulary before anyone
-;; else sees it, so no list buffer ever has to know which endpoint an
-;; artist came from or what key a server keeps an album's year under.
-;; Subsonic ids are handed out verbatim, as the opaque ids the facade
-;; asks for, and `coverArt' becomes `:art'.
-;;
-;; Which endpoint an album's tracks come from is Subsonic's own
-;; business too: `supersonic-browse-by-tags' picks between the ID3 tag
-;; view (getAlbum) and the folder view (getMusicDirectory) in here,
-;; not in the buffer that shows the result.
+;; Everything Subsonic-shaped stops here: requests go out through
+;; `supersonic-api.el', and what comes back is turned into the facade's
+;; plists before anyone else sees it.  Subsonic ids are handed out
+;; verbatim, and `coverArt' becomes `:art'.  `supersonic-browse-by-tags'
+;; picks between the ID3 tag view (getAlbum) and the folder view
+;; (getMusicDirectory) here too.
 
 ;;; Code:
 
@@ -119,11 +111,8 @@ Flattens every letter bucket of the \"index\" array, in bucket order."
 
 (defun supersonic-subsonic--tracks-path ()
   "Return the json path to a track list, per current `supersonic-browse-by-tags'.
-Computed fresh on every call rather than cached, so that toggling
-`supersonic-browse-by-tags' at runtime stays consistent with
-`supersonic-subsonic--album-tracks', which also reads it live to pick
-the endpoint -- a cached path here would otherwise go stale and parse
-the response at the wrong key."
+Read live, as `supersonic-subsonic--album-tracks' picks the endpoint
+by it too."
   (if supersonic-browse-by-tags
       '("subsonic-response" "album" "song")
     '("subsonic-response" "directory" "child")))
@@ -240,17 +229,10 @@ Asks getPodcasts for that one channel, episodes included."
 (aio-defun
  supersonic-subsonic--stream-url (id &optional format)
  "Return a promise resolving to the stream.view URL for track ID.
-Built locally, without asking the server anything.  It carries the
-\"u\"/\"t\"/\"s\" token-auth triple, which never expires -- hence the
-facade's warning to keep it off command lines.
-
-FORMAT, if given, is the plist the facade documents for `stream-url' --
-`(:format EXT :max-bit-rate KBPS)'.  `:format' becomes stream.view's
-own `format' parameter (transcode to EXT, or \"raw\" to skip Subsonic's
-usual on-the-fly transcoding), `:max-bit-rate' becomes `maxBitRate' in
-kbps.  Either key left out of FORMAT is left out of the request, the
-same as when FORMAT is nil altogether, so the server keeps deciding
-for itself exactly as it always has."
+Built locally.  It carries the token-auth triple, which never expires.
+FORMAT's `:format' becomes stream.view's `format' (EXT, or \"raw\" for
+no transcoding) and `:max-bit-rate' its `maxBitRate'; a key left out
+leaves the choice to the server."
  (supersonic-build-url
   "/stream.view"
   (append
@@ -265,18 +247,12 @@ for itself exactly as it always has."
    (supersonic-build-url
     "/scrobble.view"
     `(("id" . ,id)
-      ;; send a submission by default
       ("submission" .
        ,(if now-playing
             "false"
           "true"))))
-   ;; Nothing here reads the reply, but `url-retrieve' still hands
-   ;; the callback a response buffer and then forgets about it --
-   ;; without this every scrobble leaves one ` *http host:port*'
-   ;; buffer behind for the rest of the session.  Killing it from
-   ;; inside the callback is safe: url-http has already handed the
-   ;; connection back to its keep-alive pool before calling us (see
-   ;; `url-http-activate-callback').
+   ;; Kill the unread response buffer, which would otherwise stay.  The
+   ;; connection is back in its pool by now (`url-http-activate-callback').
    (lambda (_status) (kill-buffer (current-buffer)))))
 
 (defun supersonic-subsonic--cover-art-request-url (art size)

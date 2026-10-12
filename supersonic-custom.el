@@ -20,35 +20,16 @@
 
 ;;; Commentary:
 
-;; The user options of supersonic.el, plus the `supersonic'
-;; customization group they all belong to.
+;; The user options of supersonic.el and their `supersonic' group.
+;; They live here, in a file with no dependencies that every other file
+;; requires, because several are read by more than one file, and so
+;; that requiring any one file defines the options it reads.
 ;;
-;; They live here rather than each in the file that reads them because
-;; several are read by more than one: `supersonic-cache-path' by both
-;; the cover art and the waveform cache, `supersonic-mpv' by both the
-;; playback backend and the waveform transcoder (which is otherwise
-;; deliberately independent of that backend -- see
-;; `supersonic-waveform.el').  Splitting them up would mean either
-;; picking an arbitrary owner for each shared one or duplicating
-;; declarations.
-;;
-;; This is also the file with no dependencies of its own, which every
-;; other file in the package requires first.  That is the point: before
-;; this file existed, the options were defined in `supersonic.el' ahead
-;; of its own `require's, and the files that read them carried `defvar'
-;; stubs to keep the byte-compiler quiet -- so requiring any one of them
-;; on its own (a test, or a user who only wants the seekbar) left those
-;; options genuinely void, with the stubs hiding it.
-;;
-;; The one exception is an option whose default is a function of the
-;; package -- `supersonic-auth-function', `supersonic-art-overlay-layers'
-;; and the like.  It lives next to that function instead, in the file
-;; that is also the one reading it, so that this file does not refer
-;; back to the files requiring it.  Requiring that file defines the
-;; option, so it cannot be void there either.
-;; `supersonic-credentials-cache-expiry' lives with
-;; `supersonic-cached' for another reason, given in
-;; `supersonic-credentials.el'.
+;; The exception is an option whose default is a function of the
+;; package, such as `supersonic-auth-function': it lives next to that
+;; function, so that this file does not refer back to the files
+;; requiring it.  `supersonic-credentials-cache-expiry' lives with
+;; `supersonic-cached', see `supersonic-credentials.el'.
 
 ;;; Code:
 
@@ -73,7 +54,7 @@ assumed."
   :group 'supersonic)
 
 (defcustom supersonic-default-volume 100
-  "Default  volume for mpv to use."
+  "Default volume for mpv to use."
   :type 'integer
   :group 'supersonic)
 
@@ -85,21 +66,12 @@ this for that one seek."
   :group 'supersonic)
 
 (defcustom supersonic-cache-path (expand-file-name "supersonic-cache" user-emacs-directory)
-  "Path to store cached cover art and waveform peak/RMS envelopes.
-Shared by both `supersonic-art-cache-file' and
-`supersonic-waveform-cache-file', which prefix their file names
-distinctly enough (\"art-\"/\"waveform-\") that the two never collide,
-even though both are keyed on provider ids that could otherwise
-coincide (e.g. a track and its own cover art id).  The rest of each
-name is `supersonic-provider-cache-name' of the id, so files cached
-from different providers or servers never stand in for each other."
+  "Path to store cached cover art and waveform peak/RMS envelopes."
   :type 'directory
   :group 'supersonic)
 
 (defcustom supersonic-enable-art t
-  "Enable displaying album art in supported frames.
-Also a statement about the frame itself, since supersonic only draws
-art it can draw -- see `supersonic-art-available-p'."
+  "Enable displaying album art in graphic frames."
   :type 'boolean
   :group 'supersonic)
 
@@ -112,36 +84,17 @@ re-download of anything already cached at the old size."
 
 (defcustom supersonic-artist-art-size 64
   "Height in pixels of the artist images in the artist list, or nil for none.
-Smaller than `supersonic-list-art-size' because the artist list holds
-the whole library and is browsed rather than looked at: every row is
-this high.  Only the rows in view are fetched, see
-`supersonic-art-fill-visible'.  Like that setting, a new size means
-fetching the images again.  Read when the artist list is opened, so it
-takes effect for the next one."
+Smaller than `supersonic-list-art-size' because every row of the
+artist list is this high.  A new size means fetching the images again,
+and takes effect for the next artist list opened."
   :type '(choice (const :tag "No artist images" nil) integer)
   :group 'supersonic)
 
 (defcustom supersonic-list-use-header-line nil
   "Where the column headers go in supersonic's artist, album and podcast lists.
-Seeded into `tabulated-list-use-header-line' by `supersonic-artist-mode',
-`supersonic-album-mode', `supersonic-album-type-mode',
-`supersonic-podcast-mode' and `supersonic-podcast-episodes-mode', which
-is the whole of its reach -- the other list buffers (tracks, search
-results, the play queue) leave that variable at its own default and are
-unaffected.
-
-This chooses between the two ways tabulated-list can present the column
-names, not between showing and hiding them: non-nil puts them in the
-window's header line, where they stay pinned as the list scrolls; nil
-\(the default) puts them in the buffer itself, as a
-`tabulated-list-fake-header' line above the first row, which scrolls
-away with everything else.  There is no third setting that leaves them
-out altogether.
-
-Read once, when the major mode is turned on.  Changing it does not
-reach list buffers that are already open -- reopen them (`RET' from the
-artist list, `M-x supersonic-albums', ...) for a new value to take
-effect, since only that runs the mode function again."
+Non-nil puts them in the window's header line, pinned as the list
+scrolls; nil puts them in the buffer above the first row, scrolling
+with it.  Takes effect for lists opened afterwards."
   :type 'boolean
   :group 'supersonic)
 
@@ -154,30 +107,25 @@ re-download of anything already cached at the old size."
 
 (defcustom supersonic-art-fetch-concurrency 6
   "How many cover art downloads may be in flight at the same time.
-A list buffer asks for every row's art at once; without a cap that
-opens one connection per row, so a 50 album list hits the server with
-50 simultaneous requests and leaves 50 idle keep-alive connections in
-`url-http-open-connections' afterwards.  Six is what browsers and
+A list buffer asks for every row's art at once, which would otherwise
+open one connection per row.  Six is what browsers and
 `url-queue-parallel-processes' settle on per host."
   :type 'integer
   :group 'supersonic)
 
 (defcustom supersonic-enable-waveform t
   "Enable a clickable waveform seekbar in the now-playing buffer.
-Requires a graphic frame and the `pbm' image type (see
-`supersonic-waveform-available-p'), the same restriction
-`supersonic-enable-art' has.  Generating a waveform means transcoding
-the whole track through a disposable mpv process, so the first time a
-track is shown its seekbar appears a beat after the rest of the
-buffer; it is cached on disk afterwards (see `supersonic-cache-path')."
+Requires a graphic frame and the `pbm' image type.  The waveform is
+computed by transcoding the whole track with mpv, so the first time a
+track is shown its seekbar appears a moment later; it is cached
+afterwards."
   :type 'boolean
   :group 'supersonic)
 
 (defcustom supersonic-waveform-buckets 300
   "Number of peak/RMS samples computed across a track.
-Also the horizontal resolution of the rendered seekbar.  The cache is
-keyed on this value (see `supersonic-waveform-cache-file'), so raising
-it costs a re-analysis of anything already cached, not just a redraw."
+Also the horizontal resolution of the rendered seekbar.  Changing it
+means analysing cached tracks again."
   :type 'integer
   :group 'supersonic)
 
@@ -193,103 +141,57 @@ it costs a re-analysis of anything already cached, not just a redraw."
 
 (defcustom supersonic-now-playing-interval 1
   "Seconds between playback position updates in the now-playing buffer.
-Each update is a single query to the active backend via
-`supersonic-playback-status', and only runs while that buffer is both
-open and on display.
-
-Left at its own pace even under the `jukebox' backend, whose own poll
-timer (`supersonic-jukebox-poll-interval') only refreshes its cached
-position every few seconds: the two intervals are independent, and
-that backend interpolates the position it answers with forward from
-the wall clock time elapsed since its last poll (see
-`supersonic-poller-position'), so it still has
-something new to show this often even between polls."
+Each update is a single query to the active backend, and only runs
+while that buffer is on display.  Independent of the polling backends'
+own intervals: between polls, they count the position on."
   :type 'number
   :group 'supersonic)
 
 (defcustom supersonic-now-playing-cycle-fields '(title artist)
   "Fields `supersonic-now-playing-animation-functions' rotates through.
 A list drawn from `title', `artist' and `album', in the order they
-should cycle; nil turns cycling off and pins the display on the
-track's title, same as `supersonic-now-playing-cycle-label' being nil
-used to.  How often it advances is
-`supersonic-now-playing-cycle-interval'; what advancing actually
-draws is `supersonic-now-playing-animation-functions'."
+should cycle; nil pins the display on the track's title.  How often it
+advances is `supersonic-now-playing-cycle-interval'."
   :type '(repeat (choice (const title) (const artist) (const album)))
   :group 'supersonic)
 
 (defcustom supersonic-now-playing-cycle-interval 10
   "Seconds between advances of `supersonic-now-playing-cycle-fields'.
-Only takes effect while that list is non-nil.  Measured against real
-elapsed time (see `supersonic-now-playing--advance-field'), not against
-how often the animation timer happens to fire -- that is
-`supersonic-now-playing-animation-frame-interval', a separate setting,
-so turning that one down for a smooth
-`supersonic-now-playing-animate-art-overlay-scroll' crawl does not also
-speed up how often the field switches here."
+Only takes effect while that list is non-nil.  Independent of
+`supersonic-now-playing-animation-frame-interval'."
   :type 'number
   :group 'supersonic)
 
 (defcustom supersonic-now-playing-animation-frame-interval 0.2
   "Seconds between animation timer ticks.
-Independent of `supersonic-now-playing-cycle-interval': this is how
-often `supersonic-now-playing-animation-functions' merely get a chance
-to redraw, not how often anything actually changes.
-`supersonic-now-playing-animate-label' and
-`supersonic-now-playing-animate-art-overlay' still only switch fields
-once `supersonic-now-playing-cycle-interval' seconds have really
-passed, however many ticks that took;
-`supersonic-now-playing-animate-art-overlay-scroll' instead redraws on
-every tick, moving forward in proportion to real elapsed time (see
-`supersonic-now-playing-scroll-step'), so lowering this only makes its
-crawl look smoother, not faster."
+This is how often `supersonic-now-playing-animation-functions' get a
+chance to redraw, not how often fields switch (that is
+`supersonic-now-playing-cycle-interval').  Lowering it makes the
+scrolling art overlay smoother, not faster."
   :type 'number
   :group 'supersonic)
 
 (defcustom supersonic-now-playing-force-redisplay nil
   "Force a redisplay after every now-playing tick, even off the selected frame.
-Emacs's own redisplay normally happens whenever it next goes idle,
-which shows an animation/position update within a fraction of a second
-of the tick that caused it -- but a frame that is visible without being
-selected (its own frame, while a different one has input focus, say)
-can end up waiting far longer than that for a truly idle moment,
-especially if something else -- another frame doing its own frequent
-updates, for instance -- keeps Emacs busy in the meantime.  The buffer
-still ticks along correctly the whole time either way (see
-`supersonic-now-playing--field-index' advancing regardless); this is
-purely about how promptly that becomes visible.
-
-Turning this on adds a forced, uninterruptible `redisplay' call -- see
-`redisplay's FORCE argument -- to every
-`supersonic-now-playing-animation-frame-interval'/
-`supersonic-now-playing-interval' tick, so updates show up right away
-regardless of which frame is selected.  Off by default: most setups
-never need it, and forcing a redisplay this often is real, avoidable
-overhead for the ones that don't."
+Emacs redisplays when it next goes idle, which a frame that is visible
+but not selected can wait long for while Emacs is kept busy.  Turning
+this on forces a `redisplay' on every tick, so updates show up right
+away, at the cost of that overhead."
   :type 'boolean
   :group 'supersonic)
 
 (defcustom supersonic-now-playing-scroll-step 30
   "Pixels per second `supersonic-now-playing-animate-art-overlay-scroll' advances.
-Only meaningful with that function listed in
-`supersonic-now-playing-animation-functions' -- the other two built-ins
-ignore it.  A speed, not a per-tick amount, so it stays the same crawl
-however often (or unevenly) `supersonic-now-playing-animation-frame-interval'
-actually fires.  Does not apply at all when
-`supersonic-now-playing-cycle-fields''s joined-up text already fits
-without scrolling -- see `supersonic-now-playing-scroll-pause'."
+A speed, so independent of
+`supersonic-now-playing-animation-frame-interval'."
   :type 'number
   :group 'supersonic)
 
 (defcustom supersonic-now-playing-scroll-pause 2
   "Seconds `supersonic-now-playing-animate-art-overlay-scroll' rests at each end.
-That function does not loop continuously: when
-`supersonic-now-playing-cycle-fields''s joined-up text is wider than
-the cover art, it scrolls left just far enough to bring the far end
-into view, rests here for this long, scrolls back to the start, rests
-there for this long too, and repeats.  When the text fits without
-scrolling at all, it is shown once, motionless, and this is not
-consulted."
+Text wider than the cover art scrolls to its end, rests this long,
+scrolls back, rests again, and repeats.  Text that fits doesn't
+scroll."
   :type 'number
   :group 'supersonic)
 
@@ -349,13 +251,10 @@ the server has, and saves it if asked to; nil means none is selected."
 
 (defcustom supersonic-music-assistant-poll-interval 2
   "Seconds between polls of the Music Assistant player.
-Only while `music-assistant' is the active backend.  This package
-talks to Music Assistant over plain HTTP, which reports nothing on its
-own, so `supersonic-music-assistant-player.el' asks the player's
-queue for its state on this interval.  The now-playing
-buffer, the queue buffer and MPRIS follow the player within one
-interval, changes made from other Music Assistant clients included.
-The position shown in between is counted on from the last poll."
+Only while `music-assistant' is the active backend.  Over HTTP, Music
+Assistant reports nothing on its own, so changes, including those from
+other clients, show up within one interval.  The position shown in
+between is counted on from the last poll."
   :type 'number
   :group 'supersonic)
 
@@ -387,14 +286,9 @@ a file descriptor, open for the rest of the session."
 
 (defcustom supersonic-jukebox-poll-interval 3
   "Seconds between jukeboxControl polls while `jukebox' is the active backend.
-The Subsonic API has no push mechanism for jukebox state, so
-`supersonic-jukebox.el' polls `action=get' on this interval instead,
-caching the result and firing the generalized playback hooks whenever
-the cached snapshot changes; the jukebox backend's status accessor and
-queue listing both answer from that cache rather than issuing a fresh
-request of their own.  Lower values notice a track change or a pause
-toggled from another client sooner, at the cost of one request to the
-server per interval."
+The Subsonic API cannot push the jukebox's state, so it is polled.
+Lower values notice changes from other clients sooner, at the cost of
+one request to the server per interval."
   :type 'number
   :group 'supersonic)
 
@@ -428,12 +322,10 @@ none is selected."
 
 (defcustom supersonic-upnp-poll-interval 2
   "Seconds between polls of the renderer while `upnp' is the active backend.
-A UPnP renderer reports its state only when asked -- this package does
-not subscribe to its events -- so `supersonic-upnp.el' asks it for its
-transport state and position on this interval.  The now-playing
-buffer, the queue buffer and MPRIS follow the renderer within one
-interval; so does moving on to the next queued track once one ends.
-The position shown in between is counted on from the last poll."
+A UPnP renderer reports its state only when asked, so changes, and the
+move to the next queued track once one ends, happen within one
+interval.  The position shown in between is counted on from the last
+poll."
   :type 'number
   :group 'supersonic)
 
@@ -456,66 +348,36 @@ display, if it has one."
 
 (defcustom supersonic-waveform-samplerate 3000
   "Sample rate in Hz mpv transcodes a track to for waveform analysis.
-Every sample is walked individually in Lisp and every byte of the
-transcode passes through a temp file and an Emacs buffer, so both
-analysis time and peak memory scale linearly with this: an hour-long
-podcast is 11 MB and 5.4 M iterations at 3000 Hz, four times that at
-12000.  Only `supersonic-waveform-buckets' peak/RMS pairs come out the
-far end either way, so the precision this buys is precision inside a
-bucket -- a few hundred samples per bucket already pins a peak down
-well.  Raising it is unlikely to be visible in the rendered seekbar;
-lowering it far enough eventually flattens short transients.
-
-The cache is keyed on this value (see `supersonic-waveform-cache-file'),
-so changing it costs a re-analysis of anything already cached rather
-than mixing envelopes measured at different rates."
+Analysis time and memory grow linearly with it: an hour-long podcast
+is about 22 MB at 3000 Hz.  A few hundred samples per bucket already pin a
+peak down, so raising it is unlikely to be visible; lowering it far
+enough flattens short transients.  Changing it means analysing cached
+tracks again."
   :type 'integer
   :group 'supersonic)
 
 (defface supersonic-now-playing-label
   '((t :inherit bold))
-  "Face for the track/artist/album label below the cover art.
-Applied by `supersonic-now-playing-animate-label' to whichever field
-`supersonic-now-playing-cycle-fields' currently has up; customize this
-to change that label's font, e.g. `:height' for its size or `:family'
-for a different typeface, without touching the rest of the buffer."
+  "Face for the track/artist/album label below the cover art."
   :group 'supersonic)
 
 (defface supersonic-now-playing-art-overlay-label
   '((t :weight bold :foreground "white"))
   "Face for the label drawn onto the cover art itself.
-Used by `supersonic-now-playing-animate-art-overlay'/`-scroll', as
-opposed to `supersonic-now-playing-label'
-for the plain-text side label -- this text is painted into the SVG
-overlay image rather than shown as propertized buffer text, so only
-`:weight', `:family' and `:foreground' carry over, onto the SVG text's
-`font-weight'/`font-family'/`fill' respectively (see
-`supersonic-art-overlay-font-weight'/`-font-family'/`-fill').  `:height'
-does not: the pixel size is decided by `supersonic-art-overlay-font-size',
-proportional to `supersonic-now-playing-art-size' rather than a fixed
-point size, so the label keeps the same size relative to the art
-whatever that is set to."
+The text is drawn into an SVG image, so only `:weight', `:family' and
+`:foreground' apply; its size follows `supersonic-now-playing-art-size'."
   :group 'supersonic)
 
 (defface supersonic-now-playing-button
   '((t :box t :height 0.85))
   "Face for the transport buttons in the now-playing buffer.
-Deliberately does not inherit the default `button' face: that one in
-turn inherits `link', whose underline and link color read as a
-hyperlink rather than a pushable control.  A plain box around the
-default face is the ready-player look this is going for instead; hover
-feedback still comes for free from `button-type-get's `mouse-face',
-which is unaffected by this face.  `:height' is relative (a float),
-scaling off whatever face this is displayed alongside, e.g.
-`supersonic-now-playing-label' below the cover art, rather than a
-fixed point size that would stop tracking it."
+Doesn't inherit `button', which looks like a hyperlink rather than a
+control."
   :group 'supersonic)
 
 (defface supersonic-albums-name
   '((t :inherit bold))
-  "Face for album names in *supersonic-albums* and *supersonic-artist-albums*.
-Customize this to change the font size, weight, or typeface of album
-listings, e.g. via `M-x customize-face'."
+  "Face for album names in *supersonic-albums* and *supersonic-artist-albums*."
   :group 'supersonic)
 
 (defface supersonic-albums-artist

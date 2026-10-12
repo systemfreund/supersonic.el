@@ -20,36 +20,19 @@
 
 ;;; Commentary:
 
-;; Waveform seekbar generation for supersonic.el, ported from the
-;; approach the (unrelated, same-name) Go client "supersonic" uses:
-;; transcode the track to a small mono WAV via a disposable mpv
-;; subprocess, walk the raw PCM samples in fixed-size buckets to get a
-;; peak/RMS envelope, cache that on disk, and render it into a
+;; Waveform seekbar for supersonic.el, after the approach of the
+;; (unrelated, same-name) Go client "supersonic": transcode the track
+;; to a small mono WAV with a disposable mpv, walk the PCM samples in
+;; buckets for a peak/RMS envelope, cache that, and render it into a
 ;; clickable seekbar image.
 ;;
-;; Two deliberate differences from that Go implementation, both to
-;; avoid pulling in more than mpv itself as a dependency:
+;; Unlike the Go client, it needs nothing but mpv: the WAV is parsed by
+;; hand, and the seekbar is a PPM image, since `pbm' is the one raster
+;; type Emacs always decodes itself.
 ;;
-;; - The WAV is parsed by hand instead of via a WAV-decoding library --
-;;   the RIFF container is simple enough, and mpv's output format
-;;   (mono, s16le, at a rate this file chooses) is under our control.
-;; - The seekbar is rendered as a PPM (P6) image rather than an SVG or
-;;   PNG, since `pbm' is the one raster image type Emacs always decodes
-;;   itself with no external image library required (see
-;;   `image-type-available-p'); SVG/PNG support depends on how Emacs
-;;   was built.
-;;
-;; The mpv subprocess here is only ever a transcoder: it is spawned to
-;; turn a stream into PCM and exits, independently of which playback
-;; backend is actually playing anything (see `supersonic-playback.el').
-;; The one place this file does touch playback is the seekbar click,
-;; which goes through that facade.
-;;
-;; This file knows nothing about the now-playing buffer itself, the
-;; same way `supersonic-art.el' doesn't: `supersonic-waveform-ensure'
-;; hands back peak/RMS data via a callback, and `supersonic-waveform-image'
-;; /`supersonic-waveform-propertize' render it; supersonic.el wires both
-;; into its own buffer and decides when to call them.
+;; The mpv here only transcodes, whichever backend is playing; only the
+;; seekbar click goes through the playback facade.  This file knows
+;; nothing about the now-playing buffer.
 
 ;;; Code:
 (require 'cl-lib)
@@ -64,42 +47,25 @@
 
 (defvar supersonic-waveform--outfile nil
   "The temporary WAV file `supersonic-waveform--process' is writing to.
-Tracked separately from the process object so `supersonic-waveform-cancel'
-can clean it up even though it's a plain temp file mpv writes to
-directly, not something Emacs would otherwise know to delete.")
+Kept so that `supersonic-waveform-cancel' can delete it.")
 
 (defvar supersonic-waveform--job nil
   "Plist describing the waveform job currently in flight, or nil.
-Keys are :id (the track being generated), :callback and
-:progress-callback (`supersonic-waveform-ensure''s).  Kept for a job's
-whole life -- from the transcode being spawned right through the
-chunked sample analysis that follows it -- so a second
-`supersonic-waveform-ensure' call for the same track can be recognized
-as asking for work already under way and just replace those two
-callbacks in place, instead of cancelling and restarting from scratch.
-That happens constantly: the now-playing buffer re-renders (and so
-re-asks) on every pause, resume and manual refresh, and two or three
-times over within the first second of a fresh mpv start, which used to
-kill the transcode and reopen the stream every single time -- on a
-long podcast episode, often faster than it could ever finish.
-Callbacks are replaced by mutating this plist rather than by rebinding
-it, because the in-flight job's sentinel holds on to the very same
-plist and reads them back out of it as it goes.")
+Keys are :id, the track, and :callback and :progress-callback, as
+`supersonic-waveform-ensure' got them.  Kept for the job's whole life,
+so that a repeat call for the same track -- which the now-playing
+buffer makes on every re-render -- re-points the job at its callbacks
+instead of restarting the transcode.  The callbacks are replaced by
+mutating this plist, since the job's sentinel reads them from it.")
 
 (defvar supersonic-waveform--generation 0
   "Bumped by `supersonic-waveform-cancel' to invalidate in-flight work.
-The mpv transcode process itself can just be killed, but the chunked
-sample analysis that runs after it exits (see
-`supersonic-waveform--analyze-samples-async') has no process object of
-its own -- this is what lets `supersonic-waveform-cancel' stop a stale
-analysis (for a track the user has since moved on from) from grinding
-on in the background regardless.")
+The sample analysis after the transcode has no process to kill; this
+is what stops it.")
 
 (defun supersonic-waveform-available-p ()
   "Return non-nil if a waveform can actually be shown right now.
-That takes the active provider being able to say where to stream a
-track from: the transcode needs a `supersonic-provider-stream-url'.
-Without one there is simply no waveform, and nothing to report."
+That includes the active provider having a `stream-url' to transcode."
   (and supersonic-enable-waveform
        (display-graphic-p)
        (image-type-available-p 'pbm)
@@ -107,22 +73,11 @@ Without one there is simply no waveform, and nothing to report."
 
 (defun supersonic-waveform-cache-file (id buckets)
   "Return the path ID's peak/RMS envelope is cached under at BUCKETS resolution.
-BUCKETS is part of the file name for the same reason size is part of
-`supersonic-art-cache-file': changing `supersonic-waveform-buckets'
-must not hand old callers a cached envelope at the wrong resolution.
-`supersonic-waveform-samplerate' is in there for the same reason again
--- it decides how many PCM samples each bucket is measured over, so an
-envelope from a different rate is a different measurement of the same
-track, not a reusable one.  It is read from the variable rather than
-passed in, unlike BUCKETS, because nothing outside the transcode has
-any use for it.
-ID is named via `supersonic-provider-cache-name', which makes any
-track id a single valid file name and keeps different providers' and
-servers' waveforms apart.
-Prefixed with \"waveform-\": `supersonic-cache-path' is shared with
-`supersonic-art-cache-file', whose own ID could otherwise coincide
-with this one (e.g. a track and its own cover art id) and collide on
-the same file name."
+BUCKETS and `supersonic-waveform-samplerate' are part of the name, so
+that changing either never hands out an envelope measured otherwise.
+ID is named via `supersonic-provider-cache-name'; the \"waveform-\"
+prefix keeps it apart from `supersonic-art-cache-file' in the shared
+`supersonic-cache-path'."
   (expand-file-name
    (format "waveform-%s-%d-%d" (supersonic-provider-cache-name id) buckets supersonic-waveform-samplerate)
    supersonic-cache-path))
@@ -139,18 +94,10 @@ entry is deleted again on the next visit to its track."
 
 (defun supersonic-waveform-cancel ()
   "Kill any in-flight waveform transcode and discard its output file.
-Invalidates any in-flight chunked sample analysis too, and forgets
-`supersonic-waveform--job'.
-Called before starting a new job so a quick track change doesn't leave
-a stale transcode -- or a stale analysis grinding through a track
-nobody cares about anymore, tying up Emacs's timer queue for however
-much longer that would have taken -- running in the background.  Tags
-the process as deliberately cancelled before killing it, so
-`supersonic-waveform--transcode-sentinel' knows not to report it as a
-failure -- killing it is the whole point here, not something gone
-wrong.  Bumps `supersonic-waveform--generation' unconditionally, since
-a stale analysis (the mpv process having already exited by the time it
-starts) has no process object left to kill in the first place."
+Also stops in-flight sample analysis and forgets
+`supersonic-waveform--job'.  Called before starting a new job, so that
+a track change leaves nothing running.  The process is tagged as
+cancelled first, so that its sentinel does not report a failure."
   (setq supersonic-waveform--generation (1+ supersonic-waveform--generation))
   (setq supersonic-waveform--job nil)
   (when (process-live-p supersonic-waveform--process)
@@ -206,10 +153,8 @@ before yielding back to Emacs and resuming on the next tick.")
 
 (defvar supersonic-waveform--progress-interval 0.1
   "Minimum seconds between two progress reports during sample analysis.
-Rate-limits `supersonic-waveform--analyze-samples-async''s ON-PROGRESS
-calls: each one has the caller re-render the seekbar image, which
-costs about as much as a slice of analysis itself, and ten redraws a
-second look no different from forty.")
+Each one has the caller redraw the seekbar, which costs about as much
+as a slice of analysis.")
 
 (defun supersonic-waveform--analyze-bucket (buf data-start per-bucket total-samples b)
   "Return (PEAK . RMS), each 0..255, for bucket B of mono s16le PCM.
@@ -242,51 +187,23 @@ PER-BUCKET and TOTAL-SAMPLES are as computed there."
 (defun supersonic-waveform--analyze-samples-async
     (buf data-start data-len buckets generation on-done &optional on-progress)
   "Compute peak/RMS envelopes over BUCKETS chunks of mono s16le PCM.
-Does it without blocking Emacs.  BUF is the full unibyte WAV file
-contents; DATA-START/DATA-LEN mark the sample data within it, as
-returned by `supersonic-waveform--find-data-chunk'.  Calls ON-DONE with
-\(PEAKS . RMS), each a BUCKETS-length unibyte string of 0..255
-magnitudes, once every bucket has been processed.
+BUF is the unibyte WAV file contents; DATA-START/DATA-LEN mark the
+samples in it, as `supersonic-waveform--find-data-chunk' returns them.
+Calls ON-DONE with (PEAKS . RMS), each a BUCKETS-long unibyte string of
+0..255 magnitudes.
 
-Walking a multi-minute track's raw PCM sample-by-sample in Lisp is
-real work; doing it all in one synchronous pass froze Emacs solid
-until it finished.  Instead this processes buckets in small time-boxed
-slices (`supersonic-waveform--analysis-tick-budget' each), yielding
-back to Emacs between slices via a zero-delay timer so redisplay and
-input keep running throughout.
+Works in slices of `supersonic-waveform--analysis-tick-budget' seconds
+on a zero-delay timer, so that Emacs stays responsive.  Process output
+is drained before each reschedule: Emacs only reads it once no timer is
+due, and a self-rearming zero-delay timer always is, so mpv's socket
+and HTTP connections would starve otherwise.
 
-Yielding via a timer alone is not enough, though: process output has
-to be drained explicitly (`accept-process-output') before each
-reschedule.  When Emacs is idle in its command loop, it runs every due
-timer -- redisplaying in between -- and only goes on to read process
-output once no timer is due anymore.  A zero-delay timer that re-arms
-itself is *always* due, so without the explicit drain Emacs would spin
-on this chain until it finished, never reading a byte from mpv's IPC
-socket or an HTTP connection in the meantime (keyboard input still
-interrupts that loop, which is why a keypress would still reach mpv
-while the now-playing buffer sat frozen waiting for replies that never
-got delivered).
+Stops silently, without calling ON-DONE, once GENERATION no longer
+equals `supersonic-waveform--generation'.
 
-ON-PROGRESS calls are rate-limited to one per
-`supersonic-waveform--progress-interval' (the first slice always
-reports): rendering a seekbar image costs about as much as a whole
-slice of analysis, and redrawing it dozens of times a second buys
-nothing over redrawing it ten.
-
-GENERATION must still equal `supersonic-waveform--generation' at the
-start of every slice, checked there and nowhere in between -- once
-`supersonic-waveform-cancel' bumps that counter out from under it, the
-current slice is still allowed to finish, but no further slice is
-scheduled and ON-DONE is never called.  Silent by design: this is how
-a stale analysis (for a track the user has since moved on from) is
-made to stop, not a failure to report.
-
-If given, ON-PROGRESS is called with the same shape of (PEAKS . RMS)
-after every slice but the last -- still-unprocessed buckets read as 0
-in it -- so a caller can redraw the seekbar as it fills in instead of
-only once the whole track has been analyzed.  Each call gets its own
-copies, safe to hold onto after this function has moved on to the next
-slice."
+ON-PROGRESS, if given, is called with a copy of the partial
+\(PEAKS . RMS), unprocessed buckets reading 0, at most once per
+`supersonic-waveform--progress-interval'."
   (let* ((total-samples (/ data-len 2))
          (per-bucket (max 1 (/ total-samples buckets)))
          (peaks (make-string buckets 0 nil))
@@ -299,12 +216,8 @@ slice."
        (when (= generation supersonic-waveform--generation)
          (let ((deadline (+ (float-time) supersonic-waveform--analysis-tick-budget))
                (continue t))
-           ;; Checking the deadline only after processing a bucket
-           ;; (rather than in a plain `while' condition checked up
-           ;; front) matters at the low end: with a small or zero
-           ;; budget, elapsed time can already exceed the deadline
-           ;; before a single bucket ran, which would make zero
-           ;; progress per tick and never finish.
+           ;; The deadline is checked after a bucket, so that every
+           ;; slice makes progress however small the budget.
            (while continue
              (let ((pr (supersonic-waveform--analyze-bucket buf data-start per-bucket total-samples b)))
                (aset peaks b (car pr))
@@ -316,10 +229,7 @@ slice."
                (when (and on-progress (>= (- (float-time) last-progress) supersonic-waveform--progress-interval))
                  (setq last-progress (float-time))
                  (funcall on-progress (cons (copy-sequence peaks) (copy-sequence rms))))
-               ;; Let pending process output (mpv IPC replies, HTTP
-               ;; responses, subprocess sentinels) through before the
-               ;; next slice -- see the docstring for why the timer
-               ;; reschedule alone would never get around to that.
+               ;; Let process output through; see the docstring.
                (accept-process-output nil 0)
                (run-with-timer 0 nil #'step))
            (funcall on-done (cons peaks rms))))))
@@ -327,43 +237,23 @@ slice."
 
 (defun supersonic-waveform--analyze-file-async (path buckets generation on-done &optional on-progress)
   "Read the mono s16le WAV at PATH and call ON-DONE with its envelope.
-The envelope is a (PEAKS . RMS) pair at BUCKETS resolution.  Signals an
-error synchronously -- before ON-DONE ever enters the picture -- if
-PATH is not a valid WAV file or has no \"data\" chunk.
-The sample-crunching itself happens via
-`supersonic-waveform--analyze-samples-async', spread across several
-event-loop turns rather than in one uninterrupted pass, reporting
-partial results via ON-PROGRESS if given and stopping early if
-GENERATION goes stale -- see that function for why.
+The envelope is a (PEAKS . RMS) pair at BUCKETS resolution, computed by
+`supersonic-waveform--analyze-samples-async' with GENERATION and
+ON-PROGRESS.  Signals an error right away if PATH is no WAV file with
+a \"data\" chunk.
 
-Deletes PATH as soon as its contents have been read, before any of
-that: it is a disposable temp file, nothing reads it again once the
-bytes are in memory, and waiting until analysis finishes would leak it
-whenever analysis gets cancelled instead.
-
-Reads with `file-name-handler-alist' bound to nil: PATH is our own
-disposable temp file, not something a handler installed for the user's
-own purposes (e.g. a media-file minor mode intercepting file
-operations on recognized audio extensions) should ever get a say in --
-see `supersonic-waveform--start-transcode' for why PATH deliberately
-doesn't have one of those extensions in the first place."
+PATH is deleted as soon as it is read, so that a cancelled analysis
+does not leak it.  It is read with `file-name-handler-alist' nil, so
+that no handler for media files gets a say."
   (let* ((file-name-handler-alist nil)
          (buf
           (with-temp-buffer
             (set-buffer-multibyte nil)
             (insert-file-contents-literally path)
             (buffer-string))))
-    ;; PATH's bytes are in memory now, so the file itself is dead weight
-    ;; from here on -- delete it immediately rather than once analysis is
-    ;; done.  A cancelled analysis never reaches its completion path at
-    ;; all (see `supersonic-waveform--analyze-samples-async'), so deleting
-    ;; there leaked one multi-megabyte temp file per interrupted track.
     (supersonic-waveform--delete-file path)
-    ;; Length-checked first: anything shorter than the 12-byte
-    ;; "RIFF" <size> "WAVE" header isn't one, and `substring' would
-    ;; signal `args-out-of-range' over it instead of the error this
-    ;; actually means to report (which the sentinel goes on to show the
-    ;; user verbatim).
+    ;; Length first, so that a short file gets this error rather than
+    ;; `args-out-of-range'.
     (unless (and (>= (length buf) 12) (string= (substring buf 0 4) "RIFF"))
       (error "Not a RIFF file: %s" path))
     (let ((chunk (supersonic-waveform--find-data-chunk buf)))
@@ -401,28 +291,12 @@ reads as a miss rather than crashing the caller;
 
 (defun supersonic-waveform--transcode-sentinel (outfile buckets cache-file job)
   "Return a process sentinel finishing JOB, whose transcode wrote to OUTFILE.
-Reads and analyzes OUTFILE once the process exits -- asynchronously,
-via `supersonic-waveform--analyze-file-async', so a long track's worth
-of sample-crunching can't block Emacs -- caches the result to
-CACHE-FILE at BUCKETS resolution, and calls JOB's :callback with it (or
-with nil if the process failed, or OUTFILE turned out not to be a
-readable WAV file).  Any such failure is also reported via `message',
-rather than only manifesting as \"no waveform ever showed up\" with
-nothing to explain why.  A process `supersonic-waveform-cancel' killed
-on purpose (a track change interrupting an in-flight transcode, say)
-is the one exception: that's an ordinary part of switching tracks, not
-a failure, so it's cleaned up silently instead.
-
-JOB is the plist `supersonic-waveform--start-transcode' installed as
-`supersonic-waveform--job'.  Both callbacks are read back out of it at
-the moment they are called rather than captured here, which is what
-lets `supersonic-waveform-ensure' re-point a job already under way at
-a fresh pair instead of restarting it -- see
-`supersonic-waveform--job'.
-
-The `supersonic-waveform--generation' snapshot taken here, right as
-analysis begins, is what lets a later `supersonic-waveform-cancel'
-stop it -- see that function's GENERATION parameter."
+Once the process exits, OUTFILE is analyzed, the envelope cached to
+CACHE-FILE at BUCKETS resolution, and JOB's :callback called with it,
+or with nil on failure, which is reported.  A process
+`supersonic-waveform-cancel' killed is cleaned up silently.  The
+callbacks are read from JOB when called, so that
+`supersonic-waveform-ensure' can re-point them."
   (lambda (proc event)
     (unless (process-live-p proc)
       (when (eq proc supersonic-waveform--process)
@@ -442,10 +316,7 @@ stop it -- see that function's GENERATION parameter."
                (file-error
                 (supersonic--log "Could not cache waveform to %s: %s"
                                  cache-file (error-message-string err)))))
-           ;; Analysis deletes OUTFILE itself the moment it has the bytes
-           ;; in memory (see `supersonic-waveform--analyze-file-async'),
-           ;; so this only ever has anything left to do on the paths
-           ;; where analysis never ran at all.
+           ;; Only left over where analysis never ran.
            (when (file-exists-p outfile)
              (supersonic-waveform--delete-file outfile)))
          (when (eq job supersonic-waveform--job)
@@ -473,34 +344,18 @@ stop it -- see that function's GENERATION parameter."
 
 (defun supersonic-waveform--start-transcode (url buckets cache-file job)
   "Spawn the disposable mpv that transcodes the stream at URL to WAV.
-Helper for `supersonic-waveform-ensure', on behalf of JOB -- the
-`supersonic-waveform--job' it installed; see
-`supersonic-waveform--transcode-sentinel' for what happens once the
-process exits, and where JOB's callbacks end up.  BUCKETS and
-CACHE-FILE are passed straight through to that sentinel.
+For `supersonic-waveform-ensure', on behalf of JOB; see
+`supersonic-waveform--transcode-sentinel', which BUCKETS and
+CACHE-FILE are passed on to, for the rest.
 
-The output file deliberately does NOT get a \".wav\" (or other
-media-file) extension: a media-file minor mode (e.g. ready-player.el)
-can register a `file-name-handler-alist' entry for such extensions
-that intercepts reads of the file and hands back empty/placeholder
-content instead of the real bytes, on the assumption that nothing
-needs the raw data of a file it's offering to play instead.
+The output file has no media extension: a media-file mode such as
+ready-player.el may register a `file-name-handler-alist' entry for
+those that hides the real bytes.
 
-URL, the active provider's `supersonic-provider-stream-url' for the
-track, is written to mpv's stdin as a one-line playlist
-\(`--playlist=fd://0') rather than passed as an argv element, because
-it may carry credentials -- Subsonic's carries its \"u\"/\"t\"/\"s\"
-token-auth triple -- and argv is world-readable via `ps' and /proc for
-as long as the transcode runs.  That token never expires -- the server
-only ever checks md5(password + s) = t -- so a captured triple would
-authenticate indefinitely, which is exactly the exposure
-`supersonic--auth-query' switched to token auth to avoid in the first
-place.  The playback path has the same property for the same reason:
-it sends \"loadfile\" over mpv's IPC socket instead of naming the URL
-on a command line.
-`--load-unsafe-playlists' is set because the sole entry is one we just
-wrote ourselves, and mpv otherwise refuses non-HTTP protocols
-\(e.g. the \"av://\" test streams) from a playlist."
+URL is written to mpv's stdin as a one-line playlist rather than put
+in argv, where `ps' would show its credentials, such as Subsonic's
+never-expiring token.  `--load-unsafe-playlists' lets mpv play
+non-HTTP entries from it, such as the \"av://\" test streams."
   (unless (and supersonic-mpv (executable-find supersonic-mpv))
     (error "No mpv executable found"))
   ;; Nothing may signal between `make-temp-file' and the `setq' right
@@ -508,12 +363,8 @@ wrote ourselves, and mpv otherwise refuses non-HTTP protocols
   ;; stranded where not even `supersonic-waveform-cancel' could find it
   ;; again.  That is why URL comes in already resolved.
   ;;
-  ;; A transcode in flight when Emacs exits would otherwise leave its
-  ;; temp file behind: mpv is still writing to it, so nothing has
-  ;; deleted it yet.  Hooked only while there is one, and taken off
-  ;; again by `supersonic-waveform-cancel' or the sentinel, rather than
-  ;; at load time.  Only covers a graceful exit -- there is no hook for
-  ;; being killed.
+  ;; So that a transcode in flight at exit leaves no temp file behind;
+  ;; taken off again by `supersonic-waveform-cancel' or the sentinel.
   (add-hook 'kill-emacs-hook #'supersonic-waveform-cancel)
   (let ((outfile (make-temp-file "supersonic-waveform-" nil ".tmp")))
     (setq supersonic-waveform--outfile outfile)
@@ -534,10 +385,8 @@ wrote ourselves, and mpv otherwise refuses non-HTTP protocols
             "--audio-format=s16"
             "--load-unsafe-playlists"
             "--playlist=fd://0")
-           ;; A pipe, not the `process-connection-type' default of a pty:
-           ;; the URL below is written to it and `process-send-eof' has to
-           ;; actually close it, which is what makes mpv stop reading its
-           ;; one-line playlist and get on with playing the entry.
+           ;; A pipe, not a pty, so that `process-send-eof' closes it and
+           ;; mpv gets on with playing the playlist.
            :connection-type 'pipe
            :noquery t
            :sentinel (supersonic-waveform--transcode-sentinel outfile buckets cache-file job)))
@@ -546,24 +395,15 @@ wrote ourselves, and mpv otherwise refuses non-HTTP protocols
 
 (defun supersonic-waveform-ensure (id callback &optional progress-callback)
   "Ensure a (PEAKS . RMS) envelope for track ID exists, then call CALLBACK with it.
-Reads a disk cache if one exists (see `supersonic-waveform-cache-file');
-otherwise transcodes ID's stream through a disposable mpv subprocess
-and analyzes the result, caching it for next time.  A cache entry that
-turns out to be unreadable counts as a miss and is deleted, so it gets
-regenerated once instead of failing every time it's read.  CALLBACK is
-called with nil if generation fails for any reason (mpv missing, a
-transcode error) rather than left unnotified.
+Reads the disk cache if there is an entry; otherwise transcodes ID's
+stream and analyzes it, caching the result.  An entry that cannot be
+read is deleted and regenerated.  CALLBACK gets nil if generation
+fails.
 
-Calling this again for a track whose generation is still under way
-does not start over: the in-flight job is re-pointed at the new
-CALLBACK/PROGRESS-CALLBACK, and the earlier pair is simply dropped
-without being called.  See `supersonic-waveform--job'.
-
-If given, PROGRESS-CALLBACK is called with a (PEAKS . RMS) envelope of
-whatever has been analyzed so far, repeatedly, before CALLBACK's final
-call -- letting a caller redraw the seekbar as it fills in rather than
-only once the whole track is done.  Never called on a cache hit, since
-there's nothing partial about that case."
+Calling this again for a track still being generated re-points the job
+at the new callbacks, dropping the earlier ones.  PROGRESS-CALLBACK, if
+given, gets the partial envelope as analysis goes; never on a cache
+hit."
   (let* ((buckets supersonic-waveform-buckets)
          (cache-file (supersonic-waveform-cache-file id buckets))
          (cached
@@ -576,21 +416,15 @@ there's nothing partial about that case."
                       (supersonic--log "Could not read waveform cache %s: %s"
                                        cache-file (error-message-string err))
                       nil))
-                   ;; There is a file but nothing usable in it (truncated,
-                   ;; or written at a different bucket count).  Delete it
-                   ;; and fall through to regenerating: leaving it in place
-                   ;; would report failure again on every future visit to
-                   ;; this track, forever.
+                   ;; Nothing usable in it: delete it, so that it is
+                   ;; regenerated.
                    (progn
                      (supersonic-waveform--delete-file cache-file)
                      nil)))))
     (cond
      (cached
       (funcall callback cached))
-     ;; Already being generated for this very track: re-point the job at
-     ;; the callbacks this call brought along and let it carry on.  See
-     ;; `supersonic-waveform--job' for why re-asking is the common case
-     ;; rather than the exception, and cancelling here was so costly.
+     ;; Already being generated for this track: re-point the job.
      ((equal id (plist-get supersonic-waveform--job :id))
       (plist-put supersonic-waveform--job :callback callback)
       (plist-put supersonic-waveform--job :progress-callback progress-callback)
@@ -638,13 +472,8 @@ nil."
 
 (defun supersonic-waveform--rgb (color)
   "Return COLOR (a color name or hex string) as an (R G B) list, each 0..255.
-Falls back to black if COLOR doesn't resolve to a real color -- either
-`color-values' returning nil (an unset face attribute reported back as
-\"unspecified-fg\"/\"unspecified-bg\") or COLOR not being a color at all
-\(nil, from a face attribute a theme leaves fully unset, which
-`color-values' signals an error on rather than returning nil for) --
-so a pathological theme dims the waveform instead of erroring out of
-the whole now-playing buffer render."
+Falls back to black for an unset or invalid COLOR, so that an odd
+theme dims the waveform rather than breaking the render."
   (mapcar
    (lambda (v) (/ v 257))
    (or (and (stringp color)
@@ -657,9 +486,8 @@ the whole now-playing buffer render."
 
 (defun supersonic-waveform--set-pixel (buf width x y r g b)
   "Set the pixel at X,Y in unibyte PPM pixel buffer BUF (WIDTH wide) to R G B.
-Takes the three channels apart rather than as an (R G B) list, since
-`supersonic-waveform-image' calls this per pixel of every bar it draws
-and would otherwise walk the same list with `nth' each time."
+Takes the channels apart rather than as a list, as it is called per
+pixel."
   (let ((offset (* 3 (+ x (* y width)))))
     (aset buf offset r)
     (aset buf (1+ offset) g)
@@ -667,21 +495,14 @@ and would otherwise walk the same list with `nth' each time."
 
 (defun supersonic-waveform-bars (envelope progress width height)
   "Return each bucket of (PEAKS . RMS) ENVELOPE as a bar geometry plist.
-Shared by `supersonic-waveform-image' (a standalone seekbar, drawn
-pixel by pixel into a PBM image) and `supersonic-waveform-svg-bars'
-\(the same bars layered onto something else's SVG canvas instead, e.g.
-`supersonic-art-overlay-scroll-propertize' onto the cover art) -- both
-need the identical bucket-by-bucket split between a solid RMS reach and
-a lighter peak reach around a vertical center at WIDTH x HEIGHT, and
-differ only in what they draw those bars with.  PROGRESS (0..1, or nil
-for 0) is the played/unplayed boundary, same as `supersonic-waveform-image'.
+Shared by `supersonic-waveform-image' and
+`supersonic-waveform-svg-bars'.  PROGRESS (0..1, or nil for 0) is the
+played/unplayed boundary, at WIDTH x HEIGHT.
 
-Each element is a plist: :x0/:x1 (this bar's pixel column range, half
-open), :played (t or nil), and :rms-extent/:peak-extent (pixels out
-from the vertical center at (/ HEIGHT 2) each bar's RMS/peak reaches --
-:peak-extent is always >= :rms-extent, and neither ever exceeds
-HEIGHT/2, so a caller centering both around that same HEIGHT never has
-to clamp)."
+Each element is a plist: :x0/:x1, the bar's half-open pixel column
+range; :played; and :rms-extent/:peak-extent, how many pixels out from
+the vertical center the bar reaches, :peak-extent >= :rms-extent,
+neither past HEIGHT/2."
   (let* ((peaks (car envelope))
          (rms (cdr envelope))
          (buckets (length peaks))
@@ -701,21 +522,10 @@ to clamp)."
 (defun supersonic-waveform-image (envelope progress)
   "Render (PEAKS . RMS) ENVELOPE into a seekbar image.
 PROGRESS (0..1, or nil for 0) marks how much of the track counts as
-already played, drawn in the buffer's ordinary foreground color, with
-the rest in `shadow' -- the same two faces the rest of the now-playing
-buffer already uses for emphasis vs. de-emphasis.  RMS pixels are
-drawn solid; the extra reach out to the peak is blended halfway into
-the background instead, mirroring the solid/translucent split
-supersonic (the Go player this is ported from) draws its own seekbar
-with.
-
-The flat background fill is masked out (`:mask' set to `heuristic',
-keying off the corner pixel -- always pure background, since even a
-full-height peak bar leaves a margin at the very top and bottom row)
-rather than left as a solid rectangle, so whatever is actually behind
-the seekbar in the buffer -- the real background, `hl-line', an active
-region -- shows through instead of whatever `face-background' happened
-to report when this image was generated."
+played, drawn in the default foreground, the rest in `shadow'.  RMS is
+drawn solid, the reach out to the peak blended into the background.
+The background is masked out, so that whatever is behind the image,
+such as `hl-line', shows through."
   (let* ((width supersonic-waveform-width)
          (height supersonic-waveform-height)
          (bg (supersonic-waveform--rgb (face-background 'default nil t)))
@@ -723,12 +533,8 @@ to report when this image was generated."
          (unplayed (supersonic-waveform--rgb (face-foreground 'shadow nil t)))
          (played-peak (supersonic-waveform--blend played bg 0.4))
          (unplayed-peak (supersonic-waveform--blend unplayed bg 0.4))
-         ;; Pre-filled with the flat background by repeating its three
-         ;; bytes, rather than by a `--set-pixel' call per pixel: the
-         ;; whole image is background before any bar is drawn, and at
-         ;; 500x48 that was 24000 calls (three `aset's each) per render --
-         ;; on every progress tick of an analysis, and once a second
-         ;; during playback after that.
+         ;; Pre-filled with the background, far cheaper than pixel by
+         ;; pixel, as this renders once a second.
          (buf (mapconcat #'identity (make-list (* width height) (apply #'unibyte-string bg)) ""))
          (center (/ height 2)))
     (dolist (bar (supersonic-waveform-bars envelope progress width height))
@@ -770,18 +576,9 @@ to report when this image was generated."
 
 (defun supersonic-waveform-svg-bars (svg bars y height)
   "Draw BARS (see `supersonic-waveform-bars') into SVG as rectangles.
-Y and HEIGHT mark the band BARS was computed against, so every bar's
-:rms-extent/:peak-extent already falls within [0, HEIGHT/2] of its
-vertical center -- no clamping needed here, unlike the raw pixel
-buffer `supersonic-waveform-image' draws into.
-
-Colors are a plain white rather than that function's theme-derived
-faces: this is meant for drawing onto a photograph (see
-`supersonic-art-overlay-scroll-propertize'), not the buffer background,
-and a fixed light color is the one that reliably reads over any cover
-art -- the same reasoning the scrim's own text already relies on.
-Played vs. unplayed, and the RMS vs. peak reach, are both told apart by
-opacity instead of a different color, for the same reason."
+Y and HEIGHT mark the band BARS was computed for.  Drawn in white,
+with played and unplayed, RMS and peak told apart by opacity, since
+this goes onto cover art, where a fixed light color reads best."
   (let ((center (+ y (/ height 2))))
     (dolist (bar bars)
       (let* ((x0 (plist-get bar :x0))
@@ -797,13 +594,8 @@ opacity instead of a different color, for the same reason."
 (defvar supersonic-waveform-seek-map
   (let ((map (make-sparse-keymap)))
     (define-key map [mouse-1] #'supersonic-waveform--seek-at-click)
-    ;; The global `down-mouse-1' binding is `mouse-drag-region', which moves
-    ;; point to the click position as its very first act (to support
-    ;; selecting a region by dragging) -- visible here as the cursor box
-    ;; rendering right on top of the seekbar image after every click.
-    ;; Overriding it locally with a no-op keeps that from ever running for
-    ;; clicks on the image, so point (and the cursor drawn at it) never
-    ;; moves there in the first place.
+    ;; Keep `mouse-drag-region' from moving point, and the cursor, onto
+    ;; the image.
     (define-key map [down-mouse-1] #'ignore)
     map)
   "Keymap active on the waveform image.
@@ -811,10 +603,7 @@ opacity instead of a different color, for the same reason."
 
 (defun supersonic-waveform--seek-at-click (event)
   "Seek to the position in the track EVENT clicked within the waveform.
-The image's width stands for the whole track, so the click's x offset
-within it is a fraction of the track -- which is exactly what
-`supersonic-playback-seek-fraction' takes, whichever backend is
-playing."
+The image's width stands for the whole track."
   (interactive "e")
   (let* ((posn (event-start event))
          (image (posn-image posn))
@@ -826,15 +615,8 @@ playing."
 
 (defun supersonic-waveform-seekable (display)
   "Return a display string showing DISPLAY (an image spec), clickable to seek.
-Shared by `supersonic-waveform-propertize' and whichever of
-`supersonic-now-playing-animate-art-overlay'/`-scroll' just composited
-a waveform onto the cover art (see
-`supersonic-now-playing--maybe-seekable', which is what decides that a
-composited overlay actually got a waveform lane worth clicking in):
-both hand back exactly this, differing only in what image DISPLAY
-actually is.  The click itself does not care which one it was either --
-`supersonic-waveform--seek-at-click' reads the fraction straight off
-wherever in the image was clicked, the same way regardless."
+Shared by `supersonic-waveform-propertize' and the art overlay with a
+waveform lane."
   (propertize " " 'display display 'keymap supersonic-waveform-seek-map 'pointer 'hand 'help-echo
               "mouse-1: seek to this position"))
 

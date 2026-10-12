@@ -30,10 +30,8 @@
 ;; server's jukebox, a UPnP/DLNA renderer or a Music Assistant player.
 ;; Start with `M-x supersonic'; see the README for configuration.
 ;;
-;; mpv is driven over its JSON IPC protocol through a Unix-domain
-;; socket (`--input-ipc-server'), so this only works on platforms that
-;; support those -- i.e. not native Windows, where mpv's IPC transport
-;; is a named pipe with a different naming scheme instead.
+;; mpv is driven over a Unix-domain socket, so local playback does not
+;; work on native Windows.
 
 ;;; Code:
 (require 'json)
@@ -44,9 +42,7 @@
 (require 'url)
 (require 'seq)
 (require 'aio)
-;; `prop-match-beginning'/`prop-match-end' are plain struct accessors
-;; from this file, not autoloads, so requiring it is not optional even
-;; though `text-property-search-forward' itself is autoloaded.
+;; `prop-match-beginning'/`prop-match-end' are not autoloaded.
 (require 'text-property-search)
 
 (require 'transient)
@@ -64,82 +60,45 @@
         #'supersonic-now-playing-layout-label
         #'supersonic-now-playing-layout-buttons)
   "Functions laying out the now-playing buffer's primary rows, in order.
-Each is called as (FUNCTION BUFF SONG), the same convention
-`supersonic-now-playing-render-functions' uses -- SONG being the same
-track plist described there -- right after
-`supersonic-now-playing--render' erases BUFF for a track that exists --
-this is the part of the buffer that always came before that variable's
-own rows (see its docstring for where this list's output ends and that
-one's begins).  Each built-in inserts its own row(s), including
-whatever blank line separates it from what comes after, so
-reordering this list reorders the rows cleanly; dropping one drops the
-row entirely.  Same per-function error isolation as
-`supersonic-now-playing-animation-functions'.
+Each is called as (FUNCTION BUFF SONG), as
+`supersonic-now-playing-render-functions' are, before those.  Each
+built-in inserts its row and any spacing after it, so reordering the
+list reorders the rows, and dropping one drops its row.  A function
+that signals an error is reported and skipped.
 
-Four are built in; three make up the default, in the order they have
-always appeared in:
+Four are built in, the first three making up the default:
 
-- `supersonic-now-playing-layout-art': SONG's cover art, if it has any.
-- `supersonic-now-playing-layout-label': a placeholder row for whichever
-  field `supersonic-now-playing-animation-functions' cycles through,
-  unconditional even when nothing has been drawn there yet.
-- `supersonic-now-playing-layout-buttons': the transport button row.
+- `supersonic-now-playing-layout-art': SONG's cover art, if any.
+- `supersonic-now-playing-layout-label': a placeholder row for the
+  field `supersonic-now-playing-animation-functions' cycles through.
+- `supersonic-now-playing-layout-buttons': the transport buttons.
+- `supersonic-now-playing-layout-waveform': a standalone waveform
+  seekbar, independent of the one in the cover art overlay.
 
-The fourth, `supersonic-now-playing-layout-waveform', is not in the
-default list -- a placeholder row for the standalone waveform seekbar,
-left out entirely when `supersonic-waveform-available-p' is nil.  Add
-it (in whatever position) for a standalone row alongside, or instead
-of, whatever `supersonic-art-overlay-layers'/`-scroll-layers' are
-drawing into the cover art overlay -- the two are independent
-consumers of the same cached envelope, not alternatives that pick one
-another out (see `supersonic-now-playing-layout-waveform's own
-docstring), so adding this back does not disturb the overlay's own
-waveform lane, and dropping `supersonic-art-overlay-layer-waveform'
-from the overlay layers does not disturb this row either.
-
-Adding a function of your own -- a second cover art at a different
-size, say -- inserts it alongside the rest; it can read BUFF's
-`supersonic-now-playing--paused', `supersonic-now-playing--art-id' and
-so on the way the built-ins do, since none of that buffer-local state
-is threaded through the (FUNCTION BUFF SONG) call itself."
+A function of your own can read BUFF's buffer-local state, such as
+`supersonic-now-playing--paused', as the built-ins do."
   :type '(repeat function)
   :group 'supersonic)
 
 (defcustom supersonic-now-playing-animation-functions (list #'supersonic-now-playing-animate-art-overlay)
   "Functions run in order on every animation tick to render the buffer.
 Each is called as (FUNCTION BUFF DELTA), DELTA being the real seconds
-elapsed since the last tick (0 for an unconditional first paint -- see
-`supersonic-now-playing--render').  A function that signals an error is
-reported rather than left to take the rest of the list -- and the timer
-driving all of them -- down with it; see
-`supersonic-now-playing--run-field-functions'.
+elapsed since the last tick, or 0 for an unconditional first paint.  A
+function that signals an error is reported and skipped.
 
 Three are built in:
 
-- `supersonic-now-playing-animate-label': updates the text label below
-  the cover art -- the only place a rotated field ever showed before
-  this existed.  Only actually switches fields (and redraws) once
-  `supersonic-now-playing-cycle-interval' seconds of DELTA have really
-  accumulated, however many ticks that took.
-- `supersonic-now-playing-animate-art-overlay' (the default): layers
-  the field onto the cover art itself instead, in place of the side
-  label, switching between fields (and gating its redraws) the same
-  way the label does.
-- `supersonic-now-playing-animate-art-overlay-scroll': also layers onto
-  the art, but joins every field in `supersonic-now-playing-cycle-fields'
-  into one line instead of switching between them one at a time.  Shown
-  once, motionless, if that already fits; otherwise bounced left just
-  far enough to read the far end and back, resting at each end -- see
-  `supersonic-now-playing-scroll-step' and
-  `supersonic-now-playing-scroll-pause'.
+- `supersonic-now-playing-animate-label': shows the current field of
+  `supersonic-now-playing-cycle-fields' as a label below the art.
+- `supersonic-now-playing-animate-art-overlay' (the default): shows
+  it on the cover art itself.
+- `supersonic-now-playing-animate-art-overlay-scroll': shows every
+  field joined into one line on the art, scrolling it back and forth
+  if it does not fit.
 
-To show it in both places at once, list both rather than looking for a
-fourth built-in for it -- there is no in-between behaviour left to name
-that a plain combination of two of the above doesn't already cover.
-
-See `supersonic-now-playing-position-functions' for this list's
-counterpart: the same idea, but driven by the playback position the
-active backend reports rather than by elapsed time."
+List two of them to show the field in both places.  See
+`supersonic-now-playing-position-functions' for the counterpart driven
+by the playback position."
   :type '(repeat function)
   :group 'supersonic)
 
@@ -148,30 +107,21 @@ active backend reports rather than by elapsed time."
         #'supersonic-now-playing-recolor-waveform
         #'supersonic-now-playing-maybe-fetch-waveform)
   "Functions run in order whenever the now-playing buffer's position updates.
-The position-driven counterpart to
-`supersonic-now-playing-animation-functions': each is called as
-\(FUNCTION BUFF POSITION), POSITION being what the active backend just
-reported rather than a DELTA -- a seek or a pause between two updates
-must never show up as drift, which ruled out counting elapsed seconds
-locally the way the animation side does.  Runs on
-`supersonic-now-playing-interval''s regular timer and also right away
-on a seek, via `supersonic-now-playing-maybe-update-position'.  Same
-per-function error isolation as `supersonic-now-playing-animation-functions'.
+Each is called as (FUNCTION BUFF POSITION), POSITION being what the
+active backend reported, on `supersonic-now-playing-interval''s timer
+and right after a seek.  A function that signals an error is reported
+and skipped.
 
 Three are built in, and make up the default:
 
 - `supersonic-now-playing-update-duration-field': redraws the
-  \"Duration:\" line's elapsed/total split.
+  \"Duration:\" line.
 - `supersonic-now-playing-recolor-waveform': redraws the waveform
-  seekbar's played/unplayed split, once a waveform is actually showing
-  for the current track.
-- `supersonic-now-playing-maybe-fetch-waveform': kicks off waveform
-  generation for the current track, unless that has already been
-  requested (also requires `supersonic-enable-waveform').
+  seekbar's played/unplayed split.
+- `supersonic-now-playing-maybe-fetch-waveform': starts waveform
+  generation for the current track, unless already requested.
 
-Dropping one of these from the list turns that behaviour off; adding a
-function of your own -- synced lyrics keyed on position, say -- runs it
-alongside the rest."
+A function of your own -- synced lyrics, say -- runs alongside them."
   :type '(repeat function)
   :group 'supersonic)
 
@@ -184,47 +134,19 @@ alongside the rest."
         #'supersonic-now-playing-render-format
         #'supersonic-now-playing-render-size)
   "Functions laying out the now-playing buffer's informational text rows.
-Each is called as (FUNCTION BUFF SONG), in list order, once every entry
-in `supersonic-now-playing-layout-functions' has had its turn -- so
-these rows always follow that list's output as a block, wherever
-reordering that list has left the individual rows within it.  SONG is
-the track `supersonic-now-playing--render' is rendering, as the plist
-`supersonic-provider-track' resolved it to: `:title', `:artist',
-`:album', `:duration' (seconds), `:track', `:art', `:suffix',
-`:content-type' and `:size' (bytes), each left out when the provider
-does not know it, plus whatever keys of its own the provider adds --
-the Subsonic provider adds `:genre', for one.  Read them with
-`plist-get', e.g. (plist-get song :title).  Should the lookup fail,
-SONG is just (:id ID :title ID), so the bare id shows as the title.
-Every built-in inserts nothing at all if its value is missing for the
-current track, so a track with no album, say, just leaves that row out
-rather than showing it empty.  Same per-function error isolation as
-`supersonic-now-playing-animation-functions'.
+Each is called as (FUNCTION BUFF SONG), in order, after
+`supersonic-now-playing-layout-functions'.  SONG is the track as
+`supersonic-provider-track' resolved it: `:title', `:artist', `:album',
+`:duration' (seconds), `:track', `:art', `:suffix', `:content-type' and
+`:size' (bytes), each left out when unknown, plus keys of the
+provider's own, such as Subsonic's `:genre'.  Should the lookup fail,
+SONG is just (:id ID :title ID).  A function that signals an error is
+reported and skipped.
 
-This is the layout counterpart to that variable and
-`supersonic-now-playing-position-functions': those two decide how a
-handful of tagged fields (the label/art overlay, the duration text, the
-waveform) get redrawn as time or position moves on; this one decides
-which rows exist in the first place, and in what order, each time
-`supersonic-now-playing--render' rebuilds the buffer from scratch.
-Reordering entries reorders the rows; dropping one drops the row;
-adding a function of your own -- a \"Genre:\" row read off SONG, say --
-inserts it alongside the rest.  Cover art, the label/art overlay, the
-standalone waveform row and the transport buttons are not part of this
-list -- they are `supersonic-now-playing-layout-functions''s rows, run
-before this list and configurable in exactly the same way; the split
-between the two is about ordering, not about which one is fixed.
-
-Seven are built in, and make up the default, in the order they have
-always appeared in: `supersonic-now-playing-render-title',
-`-artist', `-album', `-duration' (tags its row so
-`supersonic-now-playing-update-duration-field' can keep patching it as
-playback moves on, wherever reordering puts it),
-`-queue-position' (reads the play queue
-`supersonic-now-playing-fetch-and-render' fetched alongside SONG, not
-SONG itself, so its \"Queue: N/M\" row leaves itself out the same way
-whenever the active backend has no queue to report on), `-format' and
-`-size'."
+The built-ins each leave their row out when its value is missing:
+`supersonic-now-playing-render-title', `-artist', `-album',
+`-duration', `-queue-position', `-format' and `-size'.  A function of
+your own -- a \"Genre:\" row, say -- inserts its row alongside."
   :type '(repeat function)
   :group 'supersonic)
 
@@ -467,12 +389,10 @@ track starting or ending."
 (aio-defun
  supersonic-queue-parse (entries)
  "Turn ENTRIES into tabulated-list entries.
-ENTRIES are as resolved by `supersonic-playback-queue'.  Looks up
-each entry's track through `supersonic-provider-track', unless the entry
-brings its `:track' along, concurrently (fired up front, below, before
-anything is awaited) and tolerates individual lookup failures
-via `aio-catch', falling back to the \"?\" placeholder row instead of
-aborting the whole render."
+ENTRIES are as resolved by `supersonic-playback-queue'.  Each entry's
+track is looked up through `supersonic-provider-track', all at once,
+unless the entry brings its `:track' along; a failed lookup shows as
+\"?\"."
  (let* ((pending
          (seq-map-indexed
           (lambda (entry index)
@@ -483,17 +403,15 @@ aborting the whole render."
                     (not (plist-get entry :track))
                     (aio-catch (supersonic-provider-track track-id))))))
           entries)))
-   ;; A plain `mapcar' lambda would call `aio-await' through an ordinary `funcall', outside of this function's own
-   ;; generator machinery, which `generator.el' cannot transform -- so this collects results via a `dolist', which
-   ;; (like `while') stays inline and awaits correctly.
+   ;; `dolist' rather than `mapcar', so that `aio-await' stays in this
+   ;; function's own body, where generator.el can transform it.
    (let (rows)
      (dolist (item pending)
        (pcase-let ((`(,index ,track-id ,current ,brought ,promise) item))
          (let* ((outcome (and promise (aio-await promise)))
                 (track (or brought (and outcome (eq (car outcome) :success) (cdr outcome)))))
            (push (list
-                  ;; A missing track id would only happen if a backend handed back an entry it could not resolve;
-                  ;; fall back to the entry's position so the row still gets a usable, if display-only, id.
+                  ;; Without a track id, the position serves as the row's id.
                   (or track-id (number-to-string index))
                   (vector
                    ;; A blank rather than "" when not current, so the fitted marker column keeps its width.
@@ -568,24 +486,16 @@ Only runs while that list is non-nil and a track is playing; see
 `supersonic-now-playing--animation-tick'.")
 
 (defvar supersonic-now-playing--animation-timer-interval nil
-  "Frame interval as of the last (re)start of the animation timer, or nil.
-Holds `supersonic-now-playing-animation-frame-interval' as of the last
-\(re)start of `supersonic-now-playing--animation-timer', and is nil
-while it is not running.  A `run-at-time' timer's period is fixed at creation
-and does not track later changes to the variable it was read from, so
-`supersonic-now-playing--start-animation-timer' compares against this
-to notice a customization made (live, e.g. via `setopt') while a track
-is already playing and restart the timer at the new pace instead of
-leaving it ticking at whatever interval was in effect when it first
-started -- otherwise silently stale for as long as playback itself
-never stops, however unrelated a change the interval on paper looks.")
+  "Frame interval the animation timer was last started with, or nil.
+A timer's period is fixed, so
+`supersonic-now-playing--start-animation-timer' compares this with
+`supersonic-now-playing-animation-frame-interval' to pick up a change
+made while playing.")
 
 (defvar-local supersonic-now-playing--title nil
   "Title of the track the now-playing buffer is currently showing, or nil.
-Kept around, alongside `supersonic-now-playing--artist' and
-`supersonic-now-playing--album', so
-`supersonic-now-playing--animation-tick' can rotate between them
-without another metadata lookup.")
+Kept, like `supersonic-now-playing--artist' and
+`supersonic-now-playing--album', for the animation to rotate through.")
 
 (defvar-local supersonic-now-playing--artist nil
   "Artist of the track the now-playing buffer is currently showing, or nil.
@@ -597,42 +507,23 @@ See `supersonic-now-playing--title'.")
 
 (defvar-local supersonic-now-playing--art-id nil
   "Cover art id of the track the now-playing buffer is currently showing, or nil.
-Set by `supersonic-now-playing--render'; read by
-`supersonic-now-playing-animate-art-overlay' so it can redraw the art
-with new text without needing the whole track plist again.")
+Kept for the art overlay to redraw the art with.")
 
 (defvar-local supersonic-now-playing--field-index 0
   "Index into `supersonic-now-playing-cycle-fields' of the field currently shown.
-Advanced by `supersonic-now-playing--advance-field'; reset to 0
-whenever `supersonic-now-playing--render' moves on to a new track, so
-a track change always starts out on the title.")
+Reset to 0, the title, whenever a new track is rendered.")
 
 (defvar-local supersonic-now-playing--cycle-elapsed 0
   "Seconds accumulated toward the next `supersonic-now-playing--advance-field'.
-Real elapsed time, not a tick count -- see
-`supersonic-now-playing--animation-tick' -- so a field switch lands
-`supersonic-now-playing-cycle-interval' seconds after the last one
-on average however unevenly `supersonic-now-playing-animation-frame-interval'
-actually fires.  Reset to 0 whenever `supersonic-now-playing--render'
-moves on to a new track, the same way `supersonic-now-playing--field-index' is.")
+Real elapsed time, so that fields switch on schedule however unevenly
+the timer fires.  Reset to 0 whenever a new track is rendered.")
 
 (defvar-local supersonic-now-playing--cycle-tick nil
   "Animation timestamp as of the last DELTA actually accumulated, or nil.
-Holds `supersonic-now-playing--animation-last-time' as of the last
-DELTA `supersonic-now-playing--advance-field' actually accumulated.
-`supersonic-now-playing-animation-functions' can list more than one of
-the field-cycling built-ins
-\(`supersonic-now-playing-animate-label',
-`supersonic-now-playing-animate-art-overlay') to run in the same tick,
-each with the same DELTA; without this, both would accumulate it into
-`supersonic-now-playing--cycle-elapsed' independently and the field
-would advance twice as fast as `supersonic-now-playing-cycle-interval'
-says.  Comparing against `supersonic-now-playing--animation-last-time'
-\(unchanged for the duration of one tick, however many built-ins it
-calls) is how `supersonic-now-playing--advance-field' recognizes a
-second call within the same tick and skips accumulating again.  Reset
-to nil whenever `supersonic-now-playing--render' moves on to a new
-track, the same way the fields above are.")
+Both field-cycling built-ins in `supersonic-now-playing-animation-functions'
+get the same DELTA in a tick; comparing this with
+`supersonic-now-playing--animation-last-time' keeps it from being
+accumulated twice.")
 
 (defvar-local supersonic-now-playing--cycle-changed nil
   "Whether `supersonic-now-playing--advance-field' last switched the field.
@@ -642,87 +533,44 @@ one did instead of re-deciding from DELTA already spent.")
 
 (defvar-local supersonic-now-playing--animation-last-time nil
   "Value of `float-time' at this buffer's last animation tick, or nil.
-Lets `supersonic-now-playing--animation-tick' compute how much real
-time actually passed since the last one instead of assuming it always
-matches `supersonic-now-playing-animation-frame-interval' -- a tick can
-run late, or (see that function) be skipped over entirely while the
-buffer is hidden.  Reset to nil whenever `supersonic-now-playing--render'
-moves on to a new track, so the first tick afterwards starts fresh
-rather than measuring against a timestamp from the track before it.")
+For `supersonic-now-playing--animation-tick' to measure real elapsed
+time.  Reset to nil whenever a new track is rendered.")
 
 (defvar-local supersonic-now-playing--scroll-offset 0
   "Pixels `supersonic-now-playing-animate-art-overlay-scroll' has scrolled so far.
-0 is the text's left edge; `supersonic-art-scroll-max-offset' is its
-right edge.  Advanced (or retreated) by
-`supersonic-now-playing--advance-scroll' at
-`supersonic-now-playing-scroll-step' pixels per second; reset to 0
-whenever `supersonic-now-playing--render' moves on to a new track, the
-same way `supersonic-now-playing--field-index' is, so a track change
-always starts the bounce back at the beginning.")
+0 is the text's left edge, `supersonic-art-scroll-max-offset' its
+right one.  Reset to 0 whenever a new track is rendered.")
 
 (defvar-local supersonic-now-playing--scroll-phase 'pause-start
   "Where `supersonic-now-playing--advance-scroll' currently is in its bounce.
-One of `pause-start' (resting at `supersonic-now-playing--scroll-offset'
-0), `forward' (moving toward
-`supersonic-art-scroll-max-offset'), `pause-end' (resting there), or
-`backward' (moving back toward 0) -- always in that order, cycling
-back to `pause-start' once `backward' reaches 0.  Reset to `pause-start'
-whenever `supersonic-now-playing--render' moves on to a new track, the
-same way `supersonic-now-playing--scroll-offset' is.")
+One of `pause-start', `forward', `pause-end' and `backward', cycled in
+that order.  Reset to `pause-start' whenever a new track is rendered.")
 
 (defvar-local supersonic-now-playing--scroll-pause-elapsed 0
   "Seconds accumulated in the current `pause-start' or `pause-end' phase.
-Compared against `supersonic-now-playing-scroll-pause' by
-`supersonic-now-playing--advance-scroll' to know when to move on to the
-next phase; meaningless (and left untouched) during `forward' or
-`backward'.  Reset to 0 whenever `supersonic-now-playing--render' moves
-on to a new track, the same way `supersonic-now-playing--scroll-offset' is.")
+Compared against `supersonic-now-playing-scroll-pause'.")
 
 (defvar-local supersonic-now-playing--duration nil
-  "Duration in seconds of the track the now-playing buffer is showing.
-Kept around so the position can be re-rendered on its own tick, without
-another round of metadata lookups just to learn what to count towards.")
+  "Duration in seconds of the track the now-playing buffer is showing.")
 
 (defvar-local supersonic-now-playing--queue-place nil
   "Where the now-playing buffer's track sits in the play queue, or nil.
-A (POSITION . TOTAL) pair: POSITION is the track's 1-based index, TOTAL
-the queue's length.  Set by `supersonic-now-playing--render' from what
-`supersonic-now-playing-fetch-and-render' resolved out of
-`supersonic-playback-queue' via
-`supersonic-now-playing--current-queue-place'; read by
-`supersonic-now-playing-render-queue-position' to show a \"Queue: N/M\"
-row.  Nil whenever the active backend has no queue to report on, the
-same way `supersonic-now-playing--duration' is nil for a track with no
-known duration.  Kept whole rather than split across a position and a
-total variable because nothing ever wants one half without the other --
-neither half means anything on its own.")
+A (POSITION . TOTAL) pair, POSITION being 1-based; nil when the
+active backend has no queue to report on.")
 
 (defvar-local supersonic-now-playing--track-id nil
   "Id of the track the now-playing buffer is currently showing, or nil.
-Set by `supersonic-now-playing--render'; consulted by
-`supersonic-now-playing-maybe-fetch-waveform' to discard a
-`supersonic-waveform-ensure' callback that arrives after the buffer
-has already moved on to a different track (a full-track transcode can
-take a few seconds, plenty of time for that to happen).")
+Lets a waveform arriving after a track change be discarded.")
 
 (defvar-local supersonic-now-playing--paused nil
   "Whether the now-playing buffer's last render showed playback as paused.
-Set by `supersonic-now-playing--render' from its own PAUSED argument, so
-`supersonic-now-playing-layout-buttons' can read it back without that
-argument being threaded through `supersonic-now-playing-layout-functions''s
-\(FUNCTION BUFF SONG) calling convention, which every other layout,
-animation and render function already shares.")
+For `supersonic-now-playing-layout-buttons' to read.")
 
 (defvar-local supersonic-now-playing--position nil
   "Playback position in seconds as of the now-playing buffer's last update.
-Written by `supersonic-now-playing--render' and by every
-`supersonic-now-playing--tick', so that whatever needs the current
-position can read it here rather than close over one captured earlier.
-`supersonic-now-playing--show-waveform' is the reason it exists: a
-cold-cache waveform arrives a transcode later than the render that
-asked for it, and drawing that first seekbar against the position from
-back then put the played/unplayed split seconds behind where playback
-actually was until the next tick corrected it.")
+Read by `supersonic-now-playing--show-waveform': a waveform arriving a
+transcode after the render that asked for it must be drawn at the
+current position, not the one from back then.")
 
 (defvar-local supersonic-now-playing--waveform nil
   "(TRACK-ID . ENVELOPE) for the waveform seekbar currently shown, or nil.
@@ -732,22 +580,13 @@ seekbar's played/unplayed split every second without asking
 
 (defvar-local supersonic-now-playing--waveform-bucket nil
   "Index of the first unplayed bucket in the seekbar as last drawn, or nil.
-The seekbar is a bucketed image, so the position ticking on does not
-change it at all until the played/unplayed boundary actually crosses
-into the next bucket -- once every twelve seconds for a 300-bucket
-seekbar over an hour-long podcast, against a tick a second.  Comparing
-against this is how `supersonic-now-playing-recolor-waveform' skips
-the redraws in between.")
+The seekbar only changes once the position crosses into another
+bucket, so `supersonic-now-playing-recolor-waveform' redraws only then.")
 
 (defvar-local supersonic-now-playing--waveform-requested nil
   "Non-nil once a waveform fetch has been kicked off for the current track.
-Set whether or not that fetch went on to succeed.
-`supersonic-now-playing-maybe-fetch-waveform' skips generating a
-waveform for a buffer nobody is looking at -- real CPU and network
-work otherwise wasted on nothing -- and checks this itself to know
-whether it still owes the current track a first attempt once the
-buffer becomes visible again, without retrying one that already ran
-\(and maybe failed).")
+Set whether or not it succeeded, so that a failed one is not retried,
+while one skipped for a hidden buffer is still made once it shows.")
 
 (defun supersonic-now-playing-buffer ()
   "Return the now-playing buffer if it is currently live, else nil."
@@ -776,38 +615,21 @@ buffer becomes visible again, without retrying one that already ran
 
 (defun supersonic-now-playing--current-field ()
   "Return (FIELD . VALUE) for whichever field is currently up to be shown.
-FIELD is whatever `supersonic-now-playing--field-index' currently
-points at in `supersonic-now-playing-cycle-fields'; VALUE falls back to
-the track's title -- \"?\" failing that -- when the list is empty or
-the field it points at has no value for the current track, e.g. an
-index landing on `album' for a track with none.  What actually happens
-with the result is up to `supersonic-now-playing-animation-functions'."
+FIELD is what `supersonic-now-playing--field-index' points at in
+`supersonic-now-playing-cycle-fields'; VALUE falls back to the title,
+or \"?\", when the list is empty or the field has no value."
   (let* ((fields supersonic-now-playing-cycle-fields)
          (field (and fields (nth (mod supersonic-now-playing--field-index (length fields)) fields))))
     (cons (or field 'title) (or (and field (supersonic-now-playing--field-value field)) supersonic-now-playing--title "?"))))
 
 (defun supersonic-now-playing--advance-field (delta)
   "Advance `supersonic-now-playing--field-index' if DELTA pushes it over.
-DELTA is real seconds elapsed since the last animation tick, as
-`supersonic-now-playing--animation-tick' measures it -- accumulated in
-`supersonic-now-playing--cycle-elapsed' and compared against
-`supersonic-now-playing-cycle-interval' rather than assuming every
-call to this is exactly that far apart from the last one, which is
-what a plain per-tick increment amounted to before this existed and
-stopped being true the moment ticks could run at a different cadence
-than the field switch itself (`supersonic-now-playing-animation-frame-interval')
-or be skipped altogether (a hidden buffer).  Whatever does not divide
-evenly is kept rather than discarded, so a switch that is a little
-early or late one time still lands on schedule on average instead of
-drifting.
-
-A second call in the same tick -- `supersonic-now-playing-animation-functions'
-listing both `supersonic-now-playing-animate-label' and
-`supersonic-now-playing-animate-art-overlay' to run together -- does
-not accumulate DELTA again; see `supersonic-now-playing--cycle-tick'.  Returns
-non-nil if the field is due to be shown as changed this tick, which is
-what those two functions use to decide whether there is anything new
-to redraw at all."
+DELTA, the real seconds since the last tick, is accumulated in
+`supersonic-now-playing--cycle-elapsed' against
+`supersonic-now-playing-cycle-interval', any remainder kept so that
+switches stay on schedule.  A second call in the same tick does not
+accumulate DELTA again; see `supersonic-now-playing--cycle-tick'.
+Returns non-nil if the field changed this tick."
   (if (equal supersonic-now-playing--cycle-tick supersonic-now-playing--animation-last-time)
       supersonic-now-playing--cycle-changed
     (setq supersonic-now-playing--cycle-tick supersonic-now-playing--animation-last-time)
@@ -822,34 +644,16 @@ to redraw at all."
 
 (defun supersonic-now-playing-animate-label (buff delta)
   "Show BUFF's currently due field as its text label below the cover art.
-DELTA is real seconds elapsed since the last animation tick, as every
-entry in `supersonic-now-playing-animation-functions' is called with;
-0 means an unconditional first paint (see `supersonic-now-playing--render')
-rather than a tick, so this always redraws for that regardless of
-whether `supersonic-now-playing--advance-field' would otherwise say a
-switch is due yet.  The default (and only) entry in
-`supersonic-now-playing-animation-functions', and the only thing a
-rotated field did before that variable existed."
+DELTA is as `supersonic-now-playing-animation-functions' get it; at 0,
+this always redraws."
   (when (or (= delta 0) (supersonic-now-playing--advance-field delta))
     (supersonic-now-playing--update-field
      buff 'label (propertize (cdr (supersonic-now-playing--current-field)) 'face 'supersonic-now-playing-label))))
 
 (defun supersonic-now-playing--overlay-waveform ()
   "Return (ENVELOPE . PROGRESS) for the cover art overlay to layer in, or nil.
-Nil unless a waveform envelope is already cached for the current track
-\(`supersonic-now-playing--waveform') -- the same absence
-`supersonic-now-playing-animate-art-overlay'/`-scroll' already tolerate
-for the cover art itself, here extended to the waveform layered onto
-it.  Whether that envelope actually ends up drawn is then entirely
-`supersonic-art-overlay-layers'/`-scroll-layers''s call -- this
-function hands the data over unconditionally, independent of whatever
-else the current track's waveform is also being shown as (see
-`supersonic-now-playing-layout-waveform' for the standalone row, a
-separate and equally unconditional consumer of the same envelope).
-Read by those two animate functions on every redraw rather than
-cached, so a bucket change `supersonic-now-playing-recolor-waveform'
-notices shows up the next time either of them repaints, without this
-file needing to track that separately."
+Nil until a waveform is cached for the current track.  Whether it is
+drawn is up to `supersonic-art-overlay-layers'/`-scroll-layers'."
   (when supersonic-now-playing--waveform
     (cons
      (cdr supersonic-now-playing--waveform)
@@ -857,34 +661,17 @@ file needing to track that separately."
 
 (defun supersonic-now-playing--maybe-seekable (propertized waveform layers)
   "Return PROPERTIZED, made clickable-to-seek if LAYERS drew WAVEFORM into it.
-A waveform lane needs both the envelope and the layer drawing it, and
-so does a click-to-seek surface: there is nothing to seek in on cover
-art that never got a lane, whether because WAVEFORM was nil or because
-LAYERS (the same `supersonic-art-overlay-layers'/`-scroll-layers' the
-caller just handed `supersonic-art-overlay-propertize'/
-`-scroll-propertize', which differ between the two callers) does not
-list `supersonic-art-overlay-layer-waveform'.  Rather than restate that
-condition here and risk drifting out of step with the geometry, this
-asks `supersonic-art-overlay-waveform-lane-p' -- the same predicate
-`supersonic-art-overlay--context' reserves the lane on.  See
-`supersonic-waveform-seekable' for what the click itself then does."
+Asks `supersonic-art-overlay-waveform-lane-p', as the overlay's layout
+does, so that the two agree."
   (if (supersonic-art-overlay-waveform-lane-p waveform layers)
       (supersonic-waveform-seekable (get-text-property 0 'display propertized))
     propertized))
 
 (defun supersonic-now-playing-animate-art-overlay (buff delta)
   "Layer BUFF's currently due field onto its cover art instead of the side label.
-DELTA is real seconds elapsed since the last animation tick, exactly as
-`supersonic-now-playing-animate-label' takes it, including the 0 that
-forces an unconditional first paint.  Falls back to that function when
-there is no cached art to layer text onto -- `supersonic-art-available-p'
-is nil, or the file for the current track has not landed yet -- the
-same case `supersonic-now-playing--art' draws nothing for.  Also layers
-in the waveform seekbar -- see `supersonic-now-playing--overlay-waveform'
-and `supersonic-art-overlay-layer-waveform' -- and keeps the result
-clickable to seek whenever `supersonic-art-overlay-layers' really did
-draw that lane, but not when it only could have (see
-`supersonic-now-playing--maybe-seekable')."
+DELTA is as `supersonic-now-playing-animate-label' takes it.  Falls
+back to that function while there is no cached art.  Also layers in
+the waveform, clickable to seek where a lane was drawn."
   (with-current-buffer buff
     (if (and supersonic-now-playing--art-id
              (supersonic-art-available-p)
@@ -902,15 +689,8 @@ draw that lane, but not when it only could have (see
 
 (defun supersonic-now-playing--scroll-text ()
   "Return `supersonic-now-playing-cycle-fields''s values joined into one line.
-What `supersonic-now-playing-animate-art-overlay-scroll' scrolls across
-the art, rather than any one field passed to it -- the whole point of
-that function over `supersonic-now-playing-animate-art-overlay' is
-showing every configured field together instead of switching between
-them.  Fields with no value for the current track (e.g. `album' on a
-track with none) are left out rather than shown as an empty stretch of
-the line.  Falls back to the track's title -- \"?\" failing that -- if
-none of them have a value, the same fallback
-`supersonic-now-playing--current-field' uses for a single field."
+Fields without a value are left out; with none at all, the title, or
+\"?\"."
   (let ((values (delq nil (mapcar #'supersonic-now-playing--field-value supersonic-now-playing-cycle-fields))))
     (if values
         (mapconcat #'identity values "   •   ")
@@ -918,16 +698,11 @@ none of them have a value, the same fallback
 
 (defun supersonic-now-playing--advance-scroll (delta max-offset)
   "Advance the bounce between 0 and MAX-OFFSET by DELTA real seconds.
-Cycles `supersonic-now-playing--scroll-phase' through, in order,
-`pause-start' (holding `supersonic-now-playing--scroll-offset' at 0 for
-`supersonic-now-playing-scroll-pause' seconds), `forward' (moving it
-toward MAX-OFFSET at `supersonic-now-playing-scroll-step' pixels per
-second), `pause-end' (holding it at MAX-OFFSET, the same length of
-pause), and `backward' (moving it back to 0) -- then starts over at
-`pause-start'.  Called only once MAX-OFFSET is already known to be
-positive; a MAX-OFFSET of 0 means the text fits without scrolling at
-all, which `supersonic-now-playing-animate-art-overlay-scroll' handles
-itself without ever reaching this."
+Cycles `supersonic-now-playing--scroll-phase' through `pause-start',
+resting at 0 for `supersonic-now-playing-scroll-pause' seconds,
+`forward' at `supersonic-now-playing-scroll-step' pixels per second,
+`pause-end', resting at MAX-OFFSET, and `backward'.  MAX-OFFSET must be
+positive."
   (pcase supersonic-now-playing--scroll-phase
     ('pause-start
      (setq supersonic-now-playing--scroll-pause-elapsed (+ supersonic-now-playing--scroll-pause-elapsed delta))
@@ -954,24 +729,11 @@ itself without ever reaching this."
 
 (defun supersonic-now-playing-animate-art-overlay-scroll (buff delta)
   "Bounce `supersonic-now-playing-cycle-fields' across BUFF's cover art.
-DELTA is real seconds elapsed since the last animation tick.  Joins
-every configured field into one line (see
-`supersonic-now-playing--scroll-text') rather than switching between
-them one at a time the way `supersonic-now-playing-animate-art-overlay'
-does; if that already fits across the art, it is shown once, centered
-and motionless -- there is nothing to scroll.  Otherwise it starts at
-its left edge, rests, scrolls left just far enough to bring the right
-edge into view (`supersonic-art-scroll-max-offset'), rests there, and
-scrolls back, over and over (see `supersonic-now-playing--advance-scroll'
-and `supersonic-now-playing-scroll-pause') -- a bounce rather than a
-one-directional crawl, so it never has to jump back to the start
-mid-read the way a looping marquee would.  Falls back to
-`supersonic-now-playing-animate-label' under the same conditions
-`supersonic-now-playing-animate-art-overlay' does: no cover art
-available, or the file for the current track not cached yet.  Also
-layers in the waveform seekbar the same way that function does -- see
-`supersonic-now-playing--overlay-waveform' -- below the text row rather
-than behind it, so it stays put while the text scrolls past above it."
+DELTA is real seconds elapsed since the last animation tick.  Every
+field is joined into one line, drawn once if it fits, and otherwise
+scrolled back and forth; see `supersonic-now-playing--advance-scroll'.
+Falls back to `supersonic-now-playing-animate-label' while there is no
+cached art.  The waveform lane stays put below the scrolling text."
   (with-current-buffer buff
     (if (and supersonic-now-playing--art-id
              (supersonic-art-available-p)
@@ -980,8 +742,7 @@ than behind it, so it stays put while the text scrolls past above it."
                (max-offset (supersonic-art-scroll-max-offset supersonic-now-playing-art-size text))
                (waveform (supersonic-now-playing--overlay-waveform)))
           (cond
-           ;; Fits already -- draw it once and leave it alone; nothing
-           ;; here ever changes again until the track does.
+           ;; Fits: drawn once, and left alone until the track changes.
            ((<= max-offset 0)
             (when (= delta 0)
               (setq supersonic-now-playing--scroll-offset 0)
@@ -1005,17 +766,8 @@ than behind it, so it stays put while the text scrolls past above it."
 
 (defun supersonic-now-playing--start-animation-timer ()
   "Start rotating `supersonic-now-playing-cycle-fields', unless already running.
-Ticks every `supersonic-now-playing-animation-frame-interval' seconds --
-deliberately not `supersonic-now-playing-cycle-interval', which
-paces the field switch itself and needs to keep meaning that regardless
-of how fast or slow this timer happens to run (see
-`supersonic-now-playing--animation-tick').
-
-Restarts the timer first if it is already running at a stale interval
--- see `supersonic-now-playing--animation-timer-interval' -- so a
-customization of `supersonic-now-playing-animation-frame-interval' made
-while a track is already playing takes effect on the next render rather
-than being silently ignored for as long as playback itself never stops."
+Ticks every `supersonic-now-playing-animation-frame-interval' seconds,
+restarting the timer if that changed since it was started."
   (when (and supersonic-now-playing--animation-timer
              (not (equal supersonic-now-playing--animation-timer-interval
                          supersonic-now-playing-animation-frame-interval)))
@@ -1036,12 +788,8 @@ than being silently ignored for as long as playback itself never stops."
 
 (defun supersonic-now-playing--stopped-buffer (stop-fn)
   "Return the live now-playing buffer, or call STOP-FN and return nil.
-Shared by `supersonic-now-playing--animation-tick' and
-`supersonic-now-playing--tick': both give up the same way once there is
-no buffer left to update or nothing left playing to report on, just on
-two different timers (STOP-FN is whichever of
-`supersonic-now-playing--stop-animation-timer'/
-`supersonic-now-playing--stop-timer' is that tick's own)."
+Nil, too, when nothing is playing.  STOP-FN stops the calling tick's
+timer."
   (let ((buff (supersonic-now-playing-buffer)))
     (if (or (not buff) (not (supersonic-playback-live-p)))
         (progn
@@ -1051,19 +799,10 @@ two different timers (STOP-FN is whichever of
 
 (defun supersonic-now-playing--run-field-functions (functions buff arg)
   "Call each of FUNCTIONS as (FUNCTION BUFF ARG), one broken entry at a time.
-Shared by `supersonic-now-playing-animation-functions' (ARG is DELTA),
-`supersonic-now-playing-position-functions' (ARG is POSITION) and
-`supersonic-now-playing-render-functions' (ARG is SONG): all three are
-user-customizable lists, so one entry signalling an error is reported
-and skipped rather than propagated -- taking every function after it in
-the same list (and, for the first two, the timer driving the whole
-list) down with it would make one bad entry (a typo in a hand-written
-function, say) far more costly than it has to be.
-
-Also where `supersonic-now-playing-force-redisplay' takes effect, once
-per call here rather than once per FUNCTIONS entry: that variable is
-about how promptly a redraw becomes visible, not about redrawing
-again, so it only needs to run after the whole list has had its turn."
+For the customizable function lists: an entry that signals an error is
+reported and skipped rather than taking the rest, and the timer
+driving them, down with it.  Then redisplays, if
+`supersonic-now-playing-force-redisplay' says so."
   (dolist (function functions)
     (condition-case err
         (funcall function buff arg)
@@ -1073,31 +812,11 @@ again, so it only needs to run after the whole list has had its turn."
 
 (defun supersonic-now-playing--animation-tick ()
   "Measure real elapsed time and pass it on to the animation functions.
-Runs `supersonic-now-playing-animation-functions'.  Ticks fire every
-`supersonic-now-playing-animation-frame-interval'
-seconds, but that is only ever a nominal cadence -- Emacs can run a
-timer late, and a hidden buffer skips the call below entirely -- so
-what is actually passed on is DELTA, the real seconds elapsed since the
-last tick this buffer processed
-\(`supersonic-now-playing--animation-last-time'), not an assumption that
-it is always exactly the frame interval.  This is what lets
-`supersonic-now-playing-animate-label' switch fields every
-`supersonic-now-playing-cycle-interval' seconds on the dot
-regardless of what the frame interval is set to, instead of assuming
-one tick means one interval has passed.
-
-Stops itself once there is nothing left playing to animate (see
-`supersonic-now-playing--stopped-buffer').  Keeps quiet while the
-buffer is not on display, the same way `supersonic-now-playing--tick'
-does for the position -- worth even more here than there: unlike a
-position update, `supersonic-now-playing-animate-art-overlay-scroll'
-redraws the cover art's whole SVG image on every call, and at the short
-frame interval a smooth scroll needs, doing that for a buffer nobody is
-looking at would burn CPU on nothing.
-`supersonic-now-playing--animation-last-time' is still updated even
-then, so the hidden stretch is simply not counted as elapsed time at
-all rather than showing up as one big catch-up jump the moment the
-buffer is shown again."
+Runs `supersonic-now-playing-animation-functions' with the real seconds
+since the last tick, as a timer can run late.  Stops once nothing is
+playing.  Skips the functions while the buffer is not on display -- a
+scrolling overlay redraws a whole SVG every tick -- but still records
+the time, so that a hidden stretch does not count as elapsed."
   (let ((buff (supersonic-now-playing--stopped-buffer #'supersonic-now-playing--stop-animation-timer)))
     (when buff
       (with-current-buffer buff
@@ -1111,16 +830,9 @@ buffer is shown again."
 
 (defun supersonic-now-playing--tick ()
   "Update the playback position in the now-playing buffer.
-Asks the active backend where it is rather than counting seconds
-locally, so a seek or a pause in between two ticks can never leave the
-position drifting -- `supersonic-now-playing-maybe-update-position'
-exists only to show a seek sooner than the next tick would.  Stops
-itself once there is nothing left to update (see
-`supersonic-now-playing--stopped-buffer'), and keeps quiet while the
-buffer is not on display.  Also picks up a waveform fetch
-`supersonic-now-playing-maybe-fetch-waveform' skipped earlier for
-exactly that reason, the first tick after the buffer becomes visible
-again (see `supersonic-now-playing--waveform-requested')."
+Asks the active backend rather than counting locally, so that seeks
+and pauses never cause drift.  Stops once there is nothing to update,
+and keeps quiet while the buffer is not on display."
   (let ((buff (supersonic-now-playing--stopped-buffer #'supersonic-now-playing--stop-timer)))
     (when (and buff (get-buffer-window buff t))
       (supersonic-now-playing--show-position buff))))
@@ -1128,10 +840,7 @@ again (see `supersonic-now-playing--waveform-requested')."
 (aio-defun
  supersonic-now-playing--show-position (buff)
  "Ask the active backend for position and update BUFF accordingly.
-Run `supersonic-now-playing-position-functions' with the position.
-The position line, the seekbar's played/unplayed split, and a waveform
-fetch that was skipped while nobody was looking at BUFF are the default
-three \(see that variable); a customization can list more, or fewer."
+Runs `supersonic-now-playing-position-functions' with it."
  (let ((position (aio-await (supersonic-playback-status 'position))))
    (when (buffer-live-p buff)
      (with-current-buffer buff
@@ -1140,13 +849,8 @@ three \(see that variable); a customization can list more, or fewer."
 
 (defun supersonic-now-playing-maybe-update-position ()
   "Update the position shown in the now-playing buffer, if it is on display.
-Hung off `supersonic-playback-position-change-hook', so that a seek
-shows up as soon as it has taken effect rather than whenever the next
-`supersonic-now-playing--tick' happens to come round -- a wait of up
-to `supersonic-now-playing-interval' that made clicking the waveform
-seekbar feel unresponsive.  Cheaper than a refresh: only the position
-and the seekbar move when playback jumps, so none of the metadata is
-looked up again."
+On `supersonic-playback-position-change-hook', so that a seek shows
+right away rather than at the next tick.  Looks up no metadata."
   (let ((buff (supersonic-now-playing-buffer)))
     (when (and buff (get-buffer-window buff t) (supersonic-playback-live-p))
       (supersonic-now-playing--show-position buff))))
@@ -1167,18 +871,10 @@ whenever the active backend reports that playback was paused or resumed."
     (supersonic-playback-state-change-hook . supersonic-now-playing-maybe-refresh)
     (supersonic-playback-position-change-hook . supersonic-now-playing-maybe-update-position))
   "The `supersonic-playback.el' hook entries that keep this file's buffers current.
-Each element is (HOOK . FUNCTION).  Wired up from the outside rather
-than the backend calling these directly, so the backends stay
-independent of this one's buffers -- see
-`supersonic-playback-track-change-hook'/
-`supersonic-playback-queue-change-hook'/
-`supersonic-playback-state-change-hook'.
-
-Added by `supersonic--add-playback-hooks' once there is a play queue or
-now-playing buffer to keep current, and taken off again by
-`supersonic--maybe-remove-playback-hooks' when the last of them is
-killed, instead of at load time: loading a package should not add
-hooks.")
+Each element is (HOOK . FUNCTION).  Added by
+`supersonic--add-playback-hooks' once there is a play queue or
+now-playing buffer, and removed when the last of them is killed,
+rather than at load time.")
 
 (defun supersonic--add-playback-hooks ()
   "Add `supersonic--playback-hooks', and remove them again with this buffer.
@@ -1232,18 +928,10 @@ of the buffer each time."
             (let ((inhibit-read-only t)
                   (stale (get-text-property (prop-match-beginning match) 'display)))
               (delete-region (prop-match-beginning match) (prop-match-end match))
-              ;; Each seekbar redraw is a `create-image' over freshly
-              ;; generated pixel data, so it gets its own entry in Emacs's
-              ;; image cache -- and entries linger there for
-              ;; `image-cache-eviction-delay' (300 seconds by default)
-              ;; whether or not anything still displays them.  Unflushed,
-              ;; a few minutes of playback keeps a few hundred decoded
-              ;; 500x48 pixmaps alive for one seekbar.  FRAME t flushes
-              ;; it from every window-system frame and skips the rest,
-              ;; where `image-flush' on the selected frame would signal
-              ;; "Window system frame should be used" instead -- and the
-              ;; seekbar may well be showing on some other frame anyway.
-              ;; Without image support there is no `image-flush' at all.
+              ;; Every seekbar redraw is a new image, which stays cached
+              ;; for `image-cache-eviction-delay' whether shown or not.
+              ;; FRAME t flushes it from every window-system frame, where
+              ;; the selected frame may be none.
               (when (and (eq (car-safe stale) 'image) (fboundp 'image-flush))
                 (image-flush stale t))
               (goto-char (prop-match-beginning match))
@@ -1256,22 +944,14 @@ of the buffer each time."
 
 (defun supersonic-now-playing--update-waveform-field (buff envelope progress)
   "Draw ENVELOPE at PROGRESS into BUFF's standalone `waveform' row, if any.
-Checks for the row before building the image rather than leaving that
-to `supersonic-now-playing--update-field': the image is that call's
-argument, so it would be built in full -- tens of milliseconds of
-blocked input at a large `supersonic-waveform-width' x
-`supersonic-waveform-height', every bucket change -- only to be thrown
-away under a layout without `supersonic-now-playing-layout-waveform',
-the default one."
+Checks for the row first, so that the image, costly to build, is not
+built for a layout without one, such as the default."
   (when (supersonic-now-playing--field-present-p buff 'waveform)
     (supersonic-now-playing--update-field buff 'waveform (supersonic-waveform-propertize envelope progress))))
 
 (defun supersonic-now-playing--progress-ratio (position duration)
   "Return POSITION/DURATION clamped to 0..1, or 0 if either is unavailable.
-POSITION is coerced to a float first: mpv reports \"time-pos\" as one,
-but a duration straight out of a Subsonic response is a whole number
-of seconds, and two integers would divide down to a ratio of 0 for
-everything short of the very last second of the track."
+POSITION is made a float first, as two integers would divide down to 0."
   (if (and position duration (> duration 0))
       (max 0.0 (min 1.0 (/ (float position) duration)))
     0.0))
@@ -1293,32 +973,11 @@ whatever the active backend most recently reported, read there off
 
 (defun supersonic-now-playing-recolor-waveform (buff position)
   "Redraw BUFF's waveform seekbar(s) at POSITION.
-POSITION is the new played/unplayed split.  No-op unless a waveform is
-already showing for BUFF's current track --
-there's nothing to recolor before `supersonic-waveform-ensure''s
-callback has delivered the first envelope -- and no-op too while the
-split still falls within the bucket it was last drawn in, which is
-most ticks (see `supersonic-now-playing--progress-bucket').  Built into
-`supersonic-now-playing-position-functions'.
-
-A bucket change patches the standalone `waveform' field, if
-`supersonic-now-playing-layout-waveform' put one in the buffer, and
-separately re-runs `supersonic-now-playing-animation-functions' with a
-DELTA of 0 -- the same \"repaint now, do not advance anything\" signal
-`supersonic-now-playing--render' uses for the very first paint -- so
-whichever of `supersonic-now-playing-animate-art-overlay'/`-scroll' is
-configured picks the fresh envelope/progress back up off
-`supersonic-now-playing--waveform' the next time it draws.  Both run
-unconditionally, independent of each other:
-`supersonic-now-playing--update-waveform-field' is already a no-op --
-without even building the image -- when the `waveform' field it looks
-for is not there, and re-running
-`supersonic-now-playing-animation-functions'
-costs a redraw with nothing new to show whenever none of them target
-the art overlay, the same small, unavoidable price
-`supersonic-now-playing-animate-label' already pays for every bucket
-change once a waveform is showing anywhere in the buffer, standalone
-or not."
+No-op until a waveform is showing for the current track, and while the
+played/unplayed split stays in the bucket last drawn.  Otherwise
+patches the standalone `waveform' row, if any, and reruns
+`supersonic-now-playing-animation-functions' with a DELTA of 0, so
+that the art overlay repaints too."
   (when (buffer-live-p buff)
     (with-current-buffer buff
       (when supersonic-now-playing--waveform
@@ -1332,9 +991,8 @@ or not."
 
 (defun supersonic-now-playing--insert-button (label command)
   "Insert a boxed button reading LABEL that runs COMMAND when activated.
-Padded with a space on each side and given `supersonic-now-playing-button'
-so it reads as its own pushable control -- the way ready-player boxes
-its transport row -- rather than as underlined link text."
+Padded and given `supersonic-now-playing-button', so that it reads as
+a control rather than a link."
   (insert-text-button
    (format " %s " label)
    'face 'supersonic-now-playing-button
@@ -1404,15 +1062,9 @@ Built into `supersonic-now-playing-render-functions'."
 
 (defun supersonic-now-playing-render-duration (buff _song)
   "Insert BUFF's \"Duration:\" row, tagged for later updates.
-Reads the position/duration to show off `supersonic-now-playing--position'/
-`supersonic-now-playing--duration' rather than off SONG, since
-`supersonic-now-playing--render' has already set both by the time
-`supersonic-now-playing-render-functions' runs, and POSITION in
-particular is not part of SONG at all.  Tagged `duration' so
-`supersonic-now-playing-update-duration-field' can keep patching this
-row in place as playback moves on, wherever in the buffer this
-function ends up putting it.  Built into
-`supersonic-now-playing-render-functions'."
+Reads position and duration off BUFF, as the position is not part of
+SONG.  Tagged `duration', for
+`supersonic-now-playing-update-duration-field' to patch."
   (supersonic-now-playing--insert-field
    "Duration"
    (supersonic-now-playing--position
@@ -1433,12 +1085,8 @@ Built into `supersonic-now-playing-render-functions'."
 
 (defun supersonic-now-playing-render-queue-position (buff _song)
   "Insert BUFF's \"Queue:\" row, e.g. \"Queue: 4/19\".
-Reads `supersonic-now-playing--queue-place' off BUFF rather than SONG,
-since the play queue is not part of it -- see
-`supersonic-now-playing-render-duration' for why the duration row does
-the same.  Leaves the row out entirely once that is nil, the same way
-every other built-in in `supersonic-now-playing-render-functions' leaves
-its row out for a value SONG does not have."
+Reads `supersonic-now-playing--queue-place' off BUFF; left out when
+that is nil."
   (let ((place (buffer-local-value 'supersonic-now-playing--queue-place buff)))
     (supersonic-now-playing--insert-field
      "Queue" (and place (format "%d/%d" (car place) (cdr place))))))
@@ -1446,12 +1094,8 @@ its row out for a value SONG does not have."
 (defun supersonic-now-playing--current-queue-place (queue)
   "Return where QUEUE's current track sits, as a (POSITION . TOTAL) pair.
 QUEUE is as resolved by `supersonic-playback-queue'.  POSITION is the
-1-based index of QUEUE's `:current' entry among TOTAL, QUEUE's length;
-nil if QUEUE is empty or has no such entry (nothing live to be
-\"current\"), so `supersonic-now-playing-render-queue-position' knows to
-leave its row out rather than show a nonsensical count.  The two travel
-as one value all the way to `supersonic-now-playing--queue-place' --
-see that variable for why."
+1-based index of QUEUE's `:current' entry, TOTAL QUEUE's length; nil
+if there is no current entry."
   (let ((position 0) found)
     (dolist (entry queue)
       (setq position (1+ position))
@@ -1461,59 +1105,31 @@ see that variable for why."
 
 (defun supersonic-now-playing-layout-art (_buff song)
   "Insert SONG's cover art as its own row, if it has any.
-Tagged `art' the same way it always was, so
-`supersonic-now-playing-animate-art-overlay'/`-label' can still find
-and replace it via `supersonic-now-playing--update-field' regardless of
-where in `supersonic-now-playing-layout-functions' this ends up.
-Built into the default list; dropping it here leaves
-`supersonic-now-playing-animate-art-overlay'/`-scroll' with nothing to
-patch, since neither one inserts the `art' row itself -- both only ever
-replace whatever row this one left behind.  Their fallback,
-`supersonic-now-playing-animate-label', is unaffected: that one targets
-the `label' row `supersonic-now-playing-layout-label' inserts, which is
-a separate entry in `supersonic-now-playing-layout-functions'.  That
-fallback is chosen on whether cover art is available at all (cached,
-and `supersonic-art-available-p'), never on whether this row is there,
-so dropping this entry on its own leaves the rotating field nowhere to
-show: swap `supersonic-now-playing-animate-art-overlay' for
-`supersonic-now-playing-animate-label' in
-`supersonic-now-playing-animation-functions' at the same time."
+Tagged `art', for the art overlay animations to draw on.  Without this
+row they draw nothing, so drop it only together with switching
+`supersonic-now-playing-animation-functions' to
+`supersonic-now-playing-animate-label'."
   (let ((art (supersonic-now-playing--art song)))
     (when art
       (insert (propertize art 'supersonic-now-playing-field 'art) "\n"))))
 
 (defun supersonic-now-playing-layout-waveform (_buff _song)
   "Insert a placeholder row for the standalone waveform seekbar, if any.
-Nothing is inserted when `supersonic-waveform-available-p' is nil --
-waveforms are off, or the frame cannot draw one at all.  Unconditional
-otherwise: whether a waveform also ends up layered onto the cover art
-is entirely `supersonic-art-overlay-layers'/`-scroll-layers''s call
-\(via `supersonic-now-playing-animate-art-overlay'/`-scroll'), a
-decision this function neither makes nor needs to know about -- both
-consume the same `supersonic-now-playing--waveform' independently, so
-dropping this entry from `supersonic-now-playing-layout-functions'
-only ever affects this row, never whether the art overlay also draws
-one.  Whether there is an image to put in the placeholder yet is
-settled separately, at the end of `supersonic-now-playing--render',
-via `supersonic-now-playing--show-waveform'."
+Nothing when `supersonic-waveform-available-p' is nil.  Independent of
+the waveform in the cover art overlay; filled in by
+`supersonic-now-playing--show-waveform'."
   (when (supersonic-waveform-available-p)
     (insert (propertize " " 'supersonic-now-playing-field 'waveform) "\n")))
 
 (defun supersonic-now-playing-layout-label (_buff _song)
   "Insert a placeholder row for the animated side label, then a blank line.
-Unconditional, unlike `supersonic-now-playing-layout-art'/`-waveform':
-`supersonic-now-playing-animation-functions' fills this row in (or
-leaves it empty, if it targets the art overlay instead) once the rest
-of the buffer exists for it to search across -- see
-`supersonic-now-playing--render'."
+Unconditional: `supersonic-now-playing-animation-functions' fill it
+in, or leave it empty."
   (insert (propertize " " 'supersonic-now-playing-field 'label) "\n\n"))
 
 (defun supersonic-now-playing-layout-buttons (buff _song)
   "Insert the transport button row, then a blank line.
-Reads BUFF's `supersonic-now-playing--paused' rather than taking PAUSED
-as an argument, unlike every other part of
-`supersonic-now-playing--render' this function replaces -- see that
-variable for why."
+Reads BUFF's `supersonic-now-playing--paused'."
   (supersonic-now-playing--insert-button "|◀◀" #'supersonic-prev-track)
   (insert "  ")
   (supersonic-now-playing--insert-button
@@ -1533,27 +1149,15 @@ variable for why."
   "Render SONG into BUFF, marked as paused or playing according to PAUSED.
 POSITION is how many seconds into SONG playback currently is.  SONG is
 a track plist, as `supersonic-provider-track' resolves to; if it is
-nil, BUFF shows a placeholder saying that nothing is playing.  TRACK-ID
-is the id of the track playing, passed separately so that callers need
-not care whether SONG carries one -- see
-`supersonic-now-playing--track-id'.  QUEUE-PLACE is the
-current track's (POSITION . TOTAL) within the play queue as computed by
-`supersonic-now-playing--current-queue-place', or nil when the active
-backend has no queue to report on.  Optional so every existing caller
-passing just the first five arguments -- tests among them -- still
-works."
+nil, BUFF shows that nothing is playing.  TRACK-ID is the id of the
+track playing.  QUEUE-PLACE is its (POSITION . TOTAL) in the play
+queue, or nil."
   (when (buffer-live-p buff)
     (with-current-buffer buff
       (let* ((inhibit-read-only t)
              (duration (plist-get song :duration))
-             ;; Re-rendering the track already on show is the common case,
-             ;; not the exception: a pause, a resume, `g', and two or three
-             ;; renders inside the first second of a fresh mpv start all
-             ;; land here.  Whatever waveform state such a render finds is
-             ;; still about the very track it is re-rendering, so it has to
-             ;; survive -- blanking it unconditionally meant every one of
-             ;; those looked like a first request for a waveform nobody had
-             ;; ever asked for, and re-ran generation accordingly.
+             ;; Re-rendering the same track is common -- a pause, a
+             ;; resume, `g' -- and must keep its waveform state.
              (same-track (and track-id (equal track-id supersonic-now-playing--track-id))))
         (setq supersonic-now-playing--paused paused)
         (setq supersonic-now-playing--duration duration)
@@ -1565,13 +1169,7 @@ works."
         (setq supersonic-now-playing--album (plist-get song :album))
         (setq supersonic-now-playing--art-id (plist-get song :art))
         (unless same-track
-          ;; A track change always starts the animated field back on the
-          ;; title, whatever it last settled on for the track before it,
-          ;; and any scrolling overlay back at the beginning of its crawl.
-          ;; The elapsed-time trackers reset alongside them so the first
-          ;; tick for the new track measures against a fresh start rather
-          ;; than a timestamp (or partial interval) left over from the
-          ;; track before it.
+          ;; A new track starts the animation afresh.
           (setq supersonic-now-playing--field-index 0)
           (setq supersonic-now-playing--cycle-elapsed 0)
           (setq supersonic-now-playing--cycle-tick nil)
@@ -1580,9 +1178,6 @@ works."
           (setq supersonic-now-playing--scroll-offset 0)
           (setq supersonic-now-playing--scroll-phase 'pause-start)
           (setq supersonic-now-playing--scroll-pause-elapsed 0)
-          ;; Whatever waveform was cached here belonged to the previous
-          ;; track (or there wasn't one); `supersonic-now-playing-maybe-fetch-waveform'
-          ;; repopulates it for the new one once it's ready.
           (setq supersonic-now-playing--waveform nil)
           (setq supersonic-now-playing--waveform-bucket nil)
           (setq supersonic-now-playing--waveform-requested nil))
@@ -1596,47 +1191,21 @@ works."
         (if (not song)
             (insert "Nothing is playing.\n")
           (progn
-            ;; Art, the waveform (if standalone), the label placeholder
-            ;; and the transport buttons are all laid out here, in
-            ;; whatever order `supersonic-now-playing-layout-functions'
-            ;; lists them -- see that variable for what each built-in
-            ;; entry inserts and why `supersonic-now-playing--paused' is
-            ;; read back off BUFF rather than threaded through as an
-            ;; argument.
             (supersonic-now-playing--run-field-functions supersonic-now-playing-layout-functions buff song)
             (supersonic-now-playing--run-field-functions supersonic-now-playing-render-functions buff song)
-            ;; Paint whatever `supersonic-now-playing--field-index' points at
-            ;; right away rather than leaving the label (or the art overlay)
-            ;; blank until the first animation tick, which is up to
-            ;; `supersonic-now-playing-animation-frame-interval' seconds away
-            ;; -- this runs whether or not cycling is even enabled, since a
-            ;; pinned-to-the-title display still needs painting once.  A
-            ;; DELTA of 0 is this function's signal for exactly that: paint
-            ;; now, unconditionally, rather than waiting for
-            ;; `supersonic-now-playing-cycle-interval' seconds to
-            ;; actually have passed.
+            ;; Paint the animated field now rather than at the first tick,
+            ;; even with cycling off.
             (supersonic-now-playing--run-field-functions supersonic-now-playing-animation-functions buff 0)))
         (goto-char (point-min))
-        ;; `erase-buffer' above took the seekbar image with it.  If this
-        ;; was a re-render of a track whose envelope is already in hand,
-        ;; put it straight back instead of leaving a gap there until the
-        ;; next tick or progress report fills it in again.
+        ;; Put back the seekbar `erase-buffer' took.
         (when supersonic-now-playing--waveform
           (supersonic-now-playing--show-waveform buff track-id (cdr supersonic-now-playing--waveform)))))))
 
 (aio-defun
  supersonic-now-playing-fetch-and-render (buff)
  "Query the active backend for its current track and render it into BUFF.
-Tolerates a failing metadata lookup the way `supersonic-queue-parse'
-does: rather than blanking a view that refreshes on every track change,
-it falls back to showing the bare track id.
-
-Wrapped in `supersonic--with-async-error-handling' because no caller
-awaits the promise this returns -- they all `ignore' it, this being a
-render nothing waits on.  Anything signalled in here (a missing
-authinfo entry, so no URL to build; a render bug) would otherwise
-reject a promise nobody is listening to and disappear without a trace,
-leaving nothing behind but a buffer that quietly stopped updating."
+A failed metadata lookup shows the bare track id instead.  Errors are
+reported, since nobody awaits this."
  (supersonic--with-async-error-handling
   buff "refresh the now-playing buffer"
   (if (supersonic-playback-live-p)
@@ -1666,22 +1235,13 @@ leaving nothing behind but a buffer that quietly stopped updating."
 
 (defun supersonic-now-playing--show-waveform (buff track-id envelope)
   "Patch BUFF's waveform field to display ENVELOPE for TRACK-ID, if still current.
-Shared by `supersonic-waveform-ensure''s final callback, its progress
-callback -- see `supersonic-now-playing-maybe-fetch-waveform', so the
-seekbar fills in gradually as buckets finish analyzing instead of only
-popping in once the whole track is done -- and
-`supersonic-now-playing--render' putting an already-analyzed seekbar
-back after an `erase-buffer'.
-
-Takes the played/unplayed split from `supersonic-now-playing--position'
-rather than from an argument: on a cold cache this runs a whole
-transcode after the render that asked for it, by which point any
-position that render could have passed along is stale."
+For both callbacks of `supersonic-waveform-ensure', and for
+`supersonic-now-playing--render' putting the seekbar back.  The
+played/unplayed split comes from `supersonic-now-playing--position',
+which is current even when ENVELOPE arrives a transcode later."
   (when (and envelope (buffer-live-p buff))
     (with-current-buffer buff
-      ;; The buffer may have moved on to a different track by the time a
-      ;; full-track transcode finishes; discard a now-stale result instead
-      ;; of showing another track's waveform under this one.
+      ;; The buffer may have moved on to another track meanwhile.
       (when (equal track-id supersonic-now-playing--track-id)
         (setq supersonic-now-playing--waveform (cons track-id envelope))
         (let ((progress
@@ -1692,29 +1252,11 @@ position that render could have passed along is stale."
 
 (defun supersonic-now-playing-maybe-fetch-waveform (buff position)
   "Kick off waveform generation for BUFF's current track, if not already asked.
-POSITION is accepted, not used -- only so this matches every other
-entry in `supersonic-now-playing-position-functions''s (BUFF POSITION)
-calling convention; BUFF's current track id is read back off
-`supersonic-now-playing--track-id' instead.  No-op unless
-`supersonic-waveform-available-p', BUFF is actually on display -- a
-full-track transcode is real CPU and network work, not worth spending
-on a buffer nobody is looking at (see `supersonic-now-playing--tick'
-for how a buffer that becomes visible again still gets one), something
-in BUFF would actually show the waveform -- a standalone `waveform' row,
-or cover art for the overlay to draw its lane onto
-\(`supersonic-art-available-p'); otherwise the envelope would only feed
-redraws of nothing, and the same tick-by-tick retry picks it up once
-art is turned on -- and `supersonic-now-playing--waveform-requested' is
-still nil for the current track: `supersonic-waveform-ensure' answers a
-repeat call for a cached track straight out of that cache rather than
-doing nothing, so without this check every position update would
-re-read the cache file from disk for as long as the track plays.
-Fires and forgets rather than being awaited by the caller, so a
-cold-cache waveform never delays
-the rest of the buffer from appearing.  The seekbar fills in
-progressively, bucket by bucket, rather than only appearing once the
-whole track has been analyzed -- see `supersonic-waveform-ensure''s
-PROGRESS-CALLBACK."
+POSITION is unused.  Only when waveforms are available, BUFF is on
+display, something would show the waveform -- a standalone row, or
+cover art for the overlay -- and none was requested for this track
+yet; `supersonic-now-playing--tick' tries again once these hold.  The
+seekbar fills in as analysis goes."
   (ignore position)
   (let ((track-id (buffer-local-value 'supersonic-now-playing--track-id buff)))
     (when (and (supersonic-waveform-available-p)
@@ -1773,12 +1315,8 @@ same way the play queue buffer keeps itself current."
 
 (defun supersonic--format-duration (format seconds)
   "Format SECONDS with `format-seconds' FORMAT, or \"\" if there is no duration.
-The Subsonic API marks a song's/episode's \"duration\" optional and
-really does leave it out -- a podcast episode that hasn't been
-downloaded yet typically has none.  `format-seconds' signals a
-`wrong-type-argument' on nil, and since these are formatted inside a
-`mapcar' over a whole response, one such row used to take every row of
-the list buffer down with it."
+Subsonic leaves the duration out, e.g. for a podcast episode not yet
+downloaded, and `format-seconds' signals on nil."
   (if seconds
       (format-seconds format seconds)
     ""))
@@ -1849,7 +1387,6 @@ id is (ID . TYPE), TYPE being \"artist\", \"album\" or \"song\", so
  "Supersonic search mode"
  "Major mode for the result list opened by `supersonic-search'.
 Each row is an artist, album or song; opening one dispatches on which."
- ;;  type: artist|album|track
  (setq tabulated-list-format [("Type" 10 t) ("Name" 30 t)])
  (setq tabulated-list-padding 2)
  (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
@@ -2322,29 +1859,15 @@ The provider list modes are `supersonic--provider-list-modes'."
 ;;;###autoload
 (defun supersonic-provider-switch (provider &optional backend)
   "Make PROVIDER the active library provider, and BACKEND the playback backend.
-Interactively, prompts among the registered providers other than the
-active one; an empty answer switches nothing.  BACKEND nil
-picks one without asking where it can: the active backend if it can
-play for PROVIDER, else the only one that can, else the one last used
-with PROVIDER this session.  Only when none of these settles it does
-it prompt among the backends that can -- see
-`supersonic-playback-backend-for-provider' -- and declining switches
-nothing.
+Interactively, prompts among the other registered providers.  BACKEND
+nil picks one as `supersonic-playback-backend-for-provider' does,
+prompting only where it must; declining switches nothing.  A PROVIDER
+that is not registered, or a backend that cannot play for it, is
+refused before anything changes.
 
-A PROVIDER that is not registered, or a backend that cannot play for
-it, is refused with a `user-error' before anything changes, so this
-never leaves the two incompatible.
-
-Playback is stopped whenever the provider actually changes, even on a
-backend that is kept: what it has queued are the old provider's ids,
-which the queue, now-playing and MPRIS would otherwise go on looking
-up in the new one.  See `supersonic-playback-select'.
-
-The list buffers of the outgoing provider -- artists, albums, tracks,
-search results, podcasts -- are killed rather than refreshed: their
-entries are that provider's ids, which mean nothing to the new one,
-and an album list of one artist could not even be refreshed without
-its artist."
+Whenever the provider changes, playback is stopped and the old
+provider's list buffers are killed: what they hold are the old
+provider's ids."
   (interactive
    (let ((providers (mapcar #'symbol-name (remq supersonic-provider (supersonic-provider-names)))))
      (unless providers

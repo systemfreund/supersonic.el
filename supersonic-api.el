@@ -69,14 +69,8 @@ The default `supersonic-auth-function': the entry is a plist with the
 user name under :user and the password under :secret, as that option
 asks for.  Only an entry with a password is returned.
 
-Calls `auth-source-search' fresh every time rather than memoizing the
-result ourselves -- `auth-source-search' already caches internally
-\(see `auth-source-do-cache'), but that cache is invalidated by
-`auth-source-forget-all-cached' and expires on its own, so deferring
-to it means both a `supersonic-host' change and a corrected
-authinfo entry (after forgetting the cache) take effect on the next
-request instead of being frozen in for the rest of the Emacs
-session."
+Not memoized: `auth-source-search' caches on its own, and once that
+cache is forgotten a corrected entry takes effect."
   (car (auth-source-search :host host :require '(:secret))))
 
 (defun supersonic-auth (&optional host)
@@ -92,14 +86,9 @@ it is unset: a lookup for no host would match any entry."
 Returns \"\" for an empty AL, so `supersonic-build-url' never appends a
 dangling \"?\".
 
-Values are percent-encoded here rather than at each call site.  Subsonic
-ids are opaque server-generated strings and some servers really do emit
-ones containing characters that are reserved in a query (\"&\", \"+\",
-\"=\"), which would otherwise silently split one parameter into two --
-and a search query or podcast feed url has no chance of being clean.
-Keys are left alone: every one of them is a literal spelled out in this
-package.  A nil value still encodes as the empty string, the same as
-the plain `concat' this used to do."
+Values are percent-encoded, since ids, search queries and feed urls
+can contain characters reserved in a query; keys are literals and are
+left alone.  A nil value encodes as the empty string."
   (if al
       (concat "?" (mapconcat (lambda (q) (concat (car q) "=" (url-hexify-string (or (cdr q) "")))) al "&"))
     ""))
@@ -114,10 +103,8 @@ not answered within `supersonic-request-timeout': the promise then
 rejects, and the connection and BUFFER are gone already.  Otherwise
 BUFFER is the response buffer, which the caller must kill.
 
-`aio-url-retrieve' can't do this from the outside, since it never
-hands out the buffer `url-retrieve' returns -- and closing the
-connection is the point: a request that merely stopped being waited
-for would still hold a file descriptor open (#70)."
+Closing the connection is the point: a request that is merely no
+longer waited for still holds a file descriptor open (#70)."
   (let* ((promise (aio-promise))
          (timer nil)
          (buffer
@@ -158,13 +145,9 @@ closed connection as well, the same as `url-queue-kill-job'."
 (aio-defun
  supersonic-get-text (url)
  "Return a promise resolving to the body of the response from URL, as text.
-The body is decoded as UTF-8, which every caller expects: the Subsonic
-API always returns UTF-8 JSON (per RFC 8259), and a UPnP device
-description is UTF-8 by its specification.  `url-retrieve' doesn't
-reliably decode the body for us across Emacs versions, so it is
-decoded explicitly -- safe even if it already is, since
-`decode-coding-string' is a no-op on text that isn't raw undecoded
-bytes.  The promise rejects if the request failed."
+The body is decoded as UTF-8, as both Subsonic JSON and UPnP device
+descriptions are; `url-retrieve' doesn't reliably do that across Emacs
+versions.  The promise rejects if the request failed."
  (pcase-let ((`(,status . ,buffer) (aio-await (supersonic-url-retrieve url))))
    (unwind-protect
        (progn
@@ -189,12 +172,8 @@ bytes.  The promise rejects if the request failed."
 
 (defun supersonic--signal-if-failed (data)
   "Signal an `error' if the parsed Subsonic response DATA reports failure.
-The Subsonic API reports application-level failures (e.g. a wrong
-username/password from auth-source) inside a 200 OK response body,
-as a \"subsonic-response\" with status \"failed\" and an \"error\"
-object, rather than via the HTTP status -- so without this check
-`supersonic-get-json' would return that body as if it were a normal,
-empty result instead of raising anything the user can see."
+Subsonic reports failures such as wrong credentials inside a 200 OK
+response, with status \"failed\" and an \"error\" object."
   (let ((response (supersonic-recursive-assoc data '("subsonic-response"))))
     (when (equal (assoc-default "status" response) "failed")
       (let ((err (assoc-default "error" response)))
@@ -218,12 +197,9 @@ empty result instead of raising anything the user can see."
 
 (defun supersonic--auth-query (user password)
   "Build the \"u\"/\"t\"/\"s\" token-auth query parameters for one request.
-USER and PASSWORD are the Subsonic credentials.  Uses Subsonic's
-token authentication (t = md5(password + salt), s = a fresh salt per
-request) instead of sending the plaintext password, so it never ends
-up in a URL -- which, depending on how that URL is used elsewhere
-\(e.g. handed to curl as an argument), could otherwise be visible to
-any local user via `ps' or in a subprocess's argv."
+USER and PASSWORD are the Subsonic credentials.  Token authentication
+\(t = md5(password + salt), with a fresh salt s) keeps the plaintext
+password out of URLs, which can end up in a subprocess's argv."
   (let ((salt (supersonic--random-salt)))
     `(("u" . ,user) ("t" . ,(md5 (concat password salt))) ("s" . ,salt))))
 

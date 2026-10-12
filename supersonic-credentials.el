@@ -24,16 +24,10 @@
 ;; or `supersonic-music-assistant-token-function', and the cache behind
 ;; it.
 ;;
-;; This file requires nothing else of the package, and nothing of it
-;; may come to.  `supersonic-cached' is called from the user's
-;; configuration, possibly in a value `custom-set-variables' (or
-;; `use-package''s :custom) saved -- and such a value is only evaluated
-;; once its `defcustom' runs, which is while `supersonic-custom.el' or
-;; another file of the package is still loading.  The autoload this
-;; file is then loaded through must not lead back to that file: it
-;; used to live in `supersonic-api.el', which requires
-;; `supersonic-custom', so the saved value signalled "Recursive
-;; `require' for feature `supersonic-custom'".
+;; This file must not require anything else of the package: a saved
+;; `custom-set-variables' value calling `supersonic-cached' is evaluated
+;; while another file of the package is still loading, and an autoload
+;; leading back to that file is a recursive `require'.
 
 ;;; Code:
 
@@ -79,9 +73,7 @@ called with the server as they are; what it returns is kept for
 out as a function resolved first.  Finding nothing is not kept.
 A server rejecting the credentials drops what was kept for it;
 `supersonic-forget-credentials' drops everything, e.g. after a
-password change.  So does wrapping a function anew, as when
-re-evaluating the configuration, once what the old wrapper kept
-expires."
+password change.  Wrapping a function anew starts with nothing kept."
   (let ((id (make-symbol "supersonic-cached")))
     (lambda (server)
       (let* ((key (cons id server))

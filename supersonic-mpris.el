@@ -23,14 +23,9 @@
 ;; Optional MPRIS support for supersonic.el, so that desktop environments
 ;; and tools such as playerctl can see and control playback over D-Bus.
 ;;
-;; This file is deliberately one-directional: supersonic.el has no
-;; knowledge of it.  It observes and drives playback purely through the
-;; backend-agnostic facade in `supersonic-playback.el' -- subscribing to
-;; `supersonic-playback-track-change-hook'/`supersonic-playback-state-change-hook'
-;; and pulling whatever changed back through `supersonic-playback-status',
-;; and issuing control through `supersonic-playback-toggle-play'/`-next'/
-;; `-prev'/`-stop' -- so it behaves the same regardless of which backend
-;; is active, and neither side has to know the other exists.
+;; supersonic.el knows nothing of this file: it observes and drives
+;; playback only through the facade in `supersonic-playback.el', so it
+;; works the same with any backend.
 ;;
 ;; Enable it explicitly, it is never loaded or activated as a side
 ;; effect of requiring `supersonic':
@@ -137,9 +132,7 @@ ourselves.")
   "Current MPRIS PlaybackStatus: \"Playing\", \"Paused\" or \"Stopped\".")
 
 (defvar supersonic-mpris--track-id nil
-  "Supersonic id of the current track, in the facade's own vocabulary, or nil.
-Set from `supersonic-playback-status', never from a backend's private
-notion of a track -- see `supersonic-mpris--sync'.")
+  "Id of the current track, as `supersonic-playback-status' has it, or nil.")
 
 (defvar supersonic-mpris--track-song nil
   "The current track, as `supersonic-provider-track' resolved it, or nil.")
@@ -193,7 +186,7 @@ sending PropertiesChanged itself."
   (supersonic-mpris--set-player-property "Metadata" (supersonic-mpris--metadata)))
 
 ;;;
-;;; Reacting to the playback facade, without either side knowing about the other
+;;; Following the playback facade
 ;;;
 
 (aio-defun
@@ -216,15 +209,10 @@ sending PropertiesChanged itself."
 (aio-defun
  supersonic-mpris--sync ()
  "Pull the active backend's current track and play state and announce them.
-Hung off both `supersonic-playback-track-change-hook' and
-`supersonic-playback-state-change-hook' -- neither carries a payload,
-only the fact that something may be different now, so this simply asks
-the facade what is true right now (via `supersonic-playback-live-p' and
-`supersonic-playback-status') and pushes whatever changed out over
-D-Bus.  One handler for both hooks rather than one apiece: a track
-change can flip Playing/Paused just as well as a bare pause toggle can
-\(mpv unpauses itself as it loads a fresh queue\), so either hook firing
-has to be able to update either half of what MPRIS reports."
+On both `supersonic-playback-track-change-hook' and
+`supersonic-playback-state-change-hook', which carry no payload.  One
+handler for both, since a track change can flip Playing/Paused too
+\(mpv unpauses itself as it loads a fresh queue)."
  (if (supersonic-playback-live-p)
      (let* ((id-promise (supersonic-playback-status 'track-id))
             (paused-promise (supersonic-playback-status 'paused))
@@ -264,11 +252,7 @@ has to be able to update either half of what MPRIS reports."
 (aio-defun
  supersonic-mpris--play ()
  "Handle the MPRIS Play method.
-Play always means \"resume\", never \"toggle\", but the facade only
-exposes `supersonic-playback-toggle-play' -- so this asks whether
-playback is actually paused first and toggles only then, rather than
-toggling unconditionally and flipping already-playing audio into
-paused."
+Play means resume, not toggle, so this only toggles when paused."
  (if (supersonic-playback-live-p)
      (when (aio-await (supersonic-playback-status 'paused))
        (supersonic-playback-toggle-play))
@@ -307,11 +291,9 @@ paused."
 
 (defun supersonic-mpris--register-method (interface method handler)
   "Register METHOD on INTERFACE, calling HANDLER, and track it for teardown.
-All the methods we implement (Raise/Quit/Play/Pause/.../Previous) have no
-D-Bus return value, so the wrapper discards HANDLER's own Lisp return value
-and reports `:ignore', which `dbus-handle-event' requires for an empty
-reply -- without it, HANDLER's return value would get sent back as a
-bogus reply argument, tripping up strict clients such as playerctl."
+HANDLER's return value is replaced by `:ignore', which
+`dbus-handle-event' takes for an empty reply; strict clients such as
+playerctl trip over anything else."
   (push (dbus-register-method
          :session supersonic-mpris--bus-name supersonic-mpris--path interface method
          (lambda (&rest _args)
@@ -332,16 +314,10 @@ matters."
 
 (defun supersonic-mpris--register ()
   "Register the MPRIS D-Bus service and its interfaces.
-Every method/property below is registered with DONT-REGISTER-SERVICE,
-and the well-known service name is only requested as the very last
-step, once the whole object is built.  Without that, each
-`dbus-register-method'/`dbus-register-property' call implicitly
-\(re-)requests the name itself -- a synchronous D-Bus round trip during
-which Emacs services other pending D-Bus traffic, including an MPRIS
-client reacting to the resulting NameOwnerChanged by introspecting us
-immediately, while the interface is still half-built.  Clients that
-don't retry on that (playerctld, notably) then get stuck treating us as
-broken until they are restarted."
+The service name is requested last, once the whole object is built.
+Otherwise every registration requests it, and an MPRIS client reacting
+to the name can introspect a half-built object; some (playerctld)
+then treat it as broken until restarted."
   (supersonic-mpris--register-method
    dbus-interface-introspectable "Introspect" (lambda () supersonic-mpris--introspection-xml))
   ;; Root interface: methods.
@@ -366,7 +342,7 @@ broken until they are restarted."
   (supersonic-mpris--register-method supersonic-mpris--player-interface "Previous" #'supersonic-mpris--previous)
   ;; Player interface: properties.  PlaybackStatus and Metadata are kept
   ;; current via `supersonic-mpris--set-player-property'; the Can* flags are
-  ;; fixed for the reduced v1 scope (no seeking, no track list).
+  ;; fixed.
   (push (dbus-register-property
          :session supersonic-mpris--bus-name supersonic-mpris--path supersonic-mpris--player-interface "PlaybackStatus"
          :read supersonic-mpris--playback-status nil t)
@@ -378,13 +354,9 @@ broken until they are restarted."
   (dolist (prop '("CanGoNext" "CanGoPrevious" "CanPlay" "CanPause" "CanControl"))
     (supersonic-mpris--register-fixed-property supersonic-mpris--player-interface prop t))
   (supersonic-mpris--register-fixed-property supersonic-mpris--player-interface "CanSeek" nil)
-  ;; Drive the interface from the playback facade, without either side
-  ;; needing to know we exist.
   (add-hook 'supersonic-playback-track-change-hook #'supersonic-mpris--sync)
   (add-hook 'supersonic-playback-state-change-hook #'supersonic-mpris--sync)
-  ;; Only now, with every method/property handler wired up locally, put the
-  ;; well-known name on the bus -- see the docstring above for why this has
-  ;; to be last.
+  ;; Last, see the docstring.
   (unless (memq
            (dbus-register-service :session supersonic-mpris--bus-name :do-not-queue) '(:primary-owner :already-owner))
     (user-error "Could not acquire %s (already running elsewhere?)" supersonic-mpris--bus-name)))

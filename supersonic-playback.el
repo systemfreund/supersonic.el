@@ -21,31 +21,19 @@
 ;;; Commentary:
 
 ;; The single door through which every part of supersonic.el asks for
-;; something to be played.  A backend -- currently only mpv, via
-;; `supersonic-mpv.el' -- registers the functions implementing a fixed
-;; set of playback operations under a name, and the generic
-;; `supersonic-playback-*' functions here dispatch to whichever backend
-;; `supersonic-playback-backend' currently selects.
+;; something to be played.  A backend, such as mpv in
+;; `supersonic-mpv.el', registers the functions implementing a fixed set
+;; of playback operations under a name, and the `supersonic-playback-*'
+;; functions here dispatch to whichever backend
+;; `supersonic-playback-backend' selects.
 ;;
-;; Traffic runs the other way too: a backend says *that* something about
-;; playback may have changed by running the two hooks defined here, and
-;; whoever is interested pulls what it needs back through
-;; `supersonic-playback-status'.  Signal on the hook, pull on the
-;; accessor -- no payload is carried, so a consumer never has to care
-;; which backend woke it, and a backend never has to know who is
-;; listening.
+;; A backend says that something may have changed by running the hooks
+;; defined here, without payload; whoever is interested pulls what it
+;; needs through `supersonic-playback-status'.
 ;;
-;; Not every backend can play what every library provider hands out,
-;; so a backend also says, as it registers, which providers it plays
-;; for -- by name, or by the provider operations it relies on -- and
-;; this file keeps an incompatible pairing from being selected or
-;; used.  See `supersonic-playback-register-backend'.
-;;
-;; This file therefore knows nothing about mpv, HTTP streams, or the
-;; Subsonic API: it only knows the operation names.  The dependency runs
-;; the other way round, each backend requiring this file and registering
-;; itself on load, so that adding a backend never means touching the
-;; buffers and commands that drive playback.
+;; A backend also says which providers it plays for, and an
+;; incompatible pairing is kept from being selected or used; see
+;; `supersonic-playback-register-backend'.
 
 ;;; Code:
 
@@ -59,34 +47,24 @@
   '(start enqueue toggle-play next prev stop seek seek-fraction live-p status queue)
   "The playback operations a backend can implement.
 `start' and `enqueue' each take a list of supersonic track ids, and
-may finish asynchronously -- the jukebox has to ask the server, mpv
-the provider for stream URLs -- so a backend reports their failures
-itself rather than signalling them to the caller; `seek'
-takes an offset in seconds, which may be negative; `seek-fraction'
-takes a position in the current track as a fraction between 0.0 and
-1.0; `status' takes one of `supersonic-playback-status-keys'; `queue'
-and the rest take no arguments.  `status' and `queue' each return a
-promise, the same as their `supersonic-playback-*' counterparts below.
-A backend need not implement all of these -- an operation its player
-has no equivalent for is simply left out of the alist passed to
-`supersonic-playback-register-backend', and calling the corresponding
-`supersonic-playback-*' function then reports that rather than failing
-silently.")
+may finish asynchronously, so a backend reports their failures itself;
+`seek' takes an offset in seconds, which may be negative;
+`seek-fraction' takes a position in the current track as a fraction
+between 0.0 and 1.0; `status' takes one of
+`supersonic-playback-status-keys'; the rest take no arguments.
+`status' and `queue' each return a promise.  A backend may leave
+operations out; calling one then reports that.")
 
 (defconst supersonic-playback-status-keys '(track-id position paused)
   "The pieces of current playback state `supersonic-playback-status' answers.
 `track-id' is the supersonic id of whatever is playing, `position' its
 playback position in seconds, and `paused' non-nil if playback is
-paused.  Deliberately the facade's own vocabulary rather than any
-backend's property names, so that a consumer asking what is playing
-never has to know how the active backend keeps track of it.")
+paused.")
 
 (defvar supersonic-playback-track-change-hook nil
   "Hook run whenever the identity of what is playing may have changed.
-Run by whichever backend is active, with no payload: it says only that
-something may be different now, and a consumer pulls what it actually
-needs via `supersonic-playback-status'.  Buffers hang their refreshes
-off this from the outside, so no backend ever has to know they exist.")
+Run by the active backend, with no payload; a consumer pulls what it
+needs via `supersonic-playback-status'.")
 
 (defvar supersonic-playback-state-change-hook nil
   "Hook run whenever playback was paused or resumed.
@@ -95,27 +73,18 @@ Only that: a change in the identity of what is playing runs
 
 (defvar supersonic-playback-queue-change-hook nil
   "Hook run whenever the play queue's entries may have changed.
-Only while what is playing stays the same -- tracks enqueued behind it,
-say: a change in the identity of what is playing runs
-`supersonic-playback-track-change-hook' instead, and consumers re-read
-the queue on that one anyway.  Like the other hooks it carries no
-payload; a consumer pulls the queue via `supersonic-playback-queue'.")
+Only while what is playing stays the same, e.g. tracks enqueued behind
+it; otherwise `supersonic-playback-track-change-hook' runs instead.  A
+consumer pulls the queue via `supersonic-playback-queue'.")
 
 (defvar supersonic-playback-position-change-hook nil
   "Hook run whenever the playback position jumped rather than crept on.
-Seeking is what this is for.  A position that only advances by itself
-needs no signal -- whoever shows it re-reads it on a timer of its own
-choosing -- but a seek makes the value they last read wrong at once,
-and waiting out the rest of a tick to notice is what makes a click on
-the waveform seekbar look like it did not land.  So a backend says so
-as soon as the seek has actually taken effect, and consumers pull the
-new position back through `supersonic-playback-status'.")
+Run once a seek has taken effect.  A position that only creeps on is
+re-read on a timer anyway, but waiting for its tick after a seek makes
+a click on the waveform seekbar look like it did not land.")
 
 (defvar supersonic-playback--backends (make-hash-table :test #'eq)
-  "Map of backend name (a symbol) to that backend's operation alist.
-Populated by `supersonic-playback-register-backend', which every
-backend calls as it is loaded, and read by
-`supersonic-playback--implementation' when dispatching.")
+  "Map of backend name (a symbol) to that backend's operation alist.")
 
 (defvar supersonic-playback--compatibility (make-hash-table :test #'eq)
   "Map of backend name (a symbol) to the providers it can play for.
@@ -125,11 +94,8 @@ neither has no entry and plays for every provider.")
 
 (defconst supersonic-playback--unchecked-operations '(stop live-p status queue)
   "Operations the active backend answers even for an incompatible provider.
-None of them plays anything: they report on, or tear down, whatever the
-backend is already doing.  Refusing them would leave the now-playing
-buffer and MPRIS erroring on every refresh, and
-`supersonic-playback-switch-backend' unable to stop a backend it is
-switching away from.")
+None of them plays anything, and refusing them would break the
+now-playing buffer, MPRIS, and switching away from the backend.")
 
 (defun supersonic-playback-register-backend (name operations &rest compatibility)
   "Register NAME as a playback backend implementing OPERATIONS.
@@ -192,9 +158,7 @@ Signals a `user-error' if `supersonic-playback-backend' names a backend
 that was never registered -- typically because the file providing it
 has not been loaded -- or one that does not implement OPERATION, or
 one that cannot play for the active provider (unless OPERATION is one
-of `supersonic-playback--unchecked-operations').  All are
-configuration problems the user can act on, hence `user-error' rather
-than a backtrace."
+of `supersonic-playback--unchecked-operations')."
   (let ((operations (gethash supersonic-playback-backend supersonic-playback--backends)))
     (unless operations
       (user-error "No playback backend named `%s' is registered" supersonic-playback-backend))
@@ -210,9 +174,7 @@ than a backtrace."
 
 (defun supersonic-playback-backend-names ()
   "Return the names of every backend currently registered.
-That is, everything `supersonic-playback-register-backend' has been
-called for so far -- not necessarily every backend a user could select,
-since a backend not yet loaded has never registered itself."
+A backend not loaded yet has not registered itself."
   (let (names)
     (maphash (lambda (name _operations) (push name names)) supersonic-playback--backends)
     (nreverse names)))
@@ -320,40 +282,23 @@ so a negative prefix does not turn a forward seek into a backward one."
 
 (defun supersonic-playback-seek-fraction (fraction)
   "Seek to FRACTION of the way through the current track.
-FRACTION is between 0.0 and 1.0.  Separate from
-`supersonic-playback-seek' because a fraction is what the waveform
-seekbar has to work with -- a click position within an image whose
-width stands for the whole track -- and because backends express the
-two differently: mpv seeks by percentage natively, whereas a backend
-that can only seek to a number of seconds has to multiply by the
-running track's duration, which it knows and its callers do not."
+FRACTION is between 0.0 and 1.0, as the waveform seekbar has it; a
+backend seeking in seconds knows the track's duration to convert."
   (supersonic-playback--call 'seek-fraction fraction))
 
 (defun supersonic-playback-live-p ()
   "Return non-nil if the active backend currently has playback to report on.
-Synchronous, unlike `supersonic-playback-status', because for every
-backend this is a locally known fact and never a round-trip: mpv knows
-whether its process is running, and a polling backend knows whether its
-last poll got an answer.  Callers use it as a plain guard -- whether to
-render anything, whether to keep a timer ticking -- where waiting on a
-promise would buy nothing."
+Synchronous, unlike `supersonic-playback-status': every backend knows
+this locally, so it can serve as a plain guard."
   (supersonic-playback--call 'live-p))
 
 (aio-defun
  supersonic-playback-status (key)
  "Return a promise resolving to the active backend's current KEY.
 KEY is one of `supersonic-playback-status-keys'.  Resolves to nil when
-nothing is playing, rather than leaving the caller waiting on a promise
-that can never be resolved, so a caller needs no liveness guard of its
-own before asking.
-
-Answers one key per call rather than a whole snapshot of state: the
-callers that want several values want them at different moments (the
-now-playing render deliberately asks for the position last, once its
-cover-art fetch is done, so that it is as fresh as possible), and the
-one that ticks every second wants only the position.  A backend that
-holds all of its state in one polled snapshot answers every key from it
-without issuing anything."
+nothing is playing, so a caller needs no liveness guard of its own.
+One key per call, since callers want them at different moments: the
+now-playing render asks for the position last, so that it is fresh."
  (unless (memq key supersonic-playback-status-keys)
    (error "Unknown playback status key `%s'" key))
  (when (supersonic-playback-live-p)
@@ -379,10 +324,8 @@ Each entry is a plist with `:track-id', a supersonic track id, and
 backend whose player hands out what it plays along with the queue may
 add `:track', the entry's track as `supersonic-provider-track' would
 resolve it, so that showing the queue need not look each entry up
-again.  Resolves
-to nil when nothing is live, the same way `supersonic-playback-status'
-does, so a caller needs no liveness guard of its own before asking --
-an empty queue and no backend to ask look the same from here."
+again.  Resolves to nil when nothing is live, as
+`supersonic-playback-status' does."
  (when (supersonic-playback-live-p)
    (aio-await (supersonic-playback--call 'queue))))
 
@@ -412,15 +355,8 @@ the active provider -- see `supersonic-playback-compatible-p'.  A
 BACKEND that is not registered, or cannot play for the active
 provider, is refused with a `user-error' before anything is stopped.
 
-Before `supersonic-playback-backend' actually changes, this calls
-`supersonic-playback-stop' against whichever backend is still active,
-via `supersonic-playback-select' -- which is why the switch has to
-happen here rather than via a plain `setq': mpv's `stop' kills its
-process, and the jukebox backend's `stop' sends the server a `stop'
-action, so nothing each backend's own `stop' mapping already knows how
-to tear down keeps running unsupervised just because Emacs stopped
-pointing at it.  No queue is carried over -- each backend starts from
-whatever state it is independently in."
+Stops the backend switched away from first, which a plain `setq' of
+`supersonic-playback-backend' would not.  No queue is carried over."
   (interactive
    (list
     (intern
