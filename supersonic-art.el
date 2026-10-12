@@ -43,6 +43,55 @@
 ;; one otherwise knows nothing about the now-playing buffer.
 (require 'supersonic-waveform)
 
+(defcustom supersonic-art-overlay-layers
+  (list #'supersonic-art-overlay-layer-art
+        #'supersonic-art-overlay-layer-scrim
+        #'supersonic-art-overlay-layer-waveform
+        #'supersonic-art-overlay-layer-text)
+  "Layers composited into `supersonic-art-overlay-propertize's SVG, in order.
+Each is called as (FUNCTION CTX), CTX being the shared layout context
+`supersonic-art-overlay--context' builds once per call -- geometry
+\(scrim height, text baseline, whether a waveform lane is reserved at
+all) is decided there from what is present in this list and passed in,
+not from where in the list a layer happens to sit, so reordering this
+list changes stacking without changing layout.  First in the list
+draws first, so ends up on the bottom; the default order -- art, then
+the scrim, then the waveform lane, then text -- is what always drew,
+before this existed to be configurable.
+
+Reordering this list moves a layer's position in the final image, e.g.
+listing `supersonic-art-overlay-layer-text' ahead of
+`supersonic-art-overlay-layer-waveform' to draw the waveform lane over
+the label rather than below it.  Dropping a layer removes it from the
+image entirely, including the room `supersonic-art-overlay-layer-scrim'
+would otherwise reserve for it -- see `supersonic-art-overlay--context'.
+Adding a function of your own -- a border, a gradient -- draws it
+alongside the rest, reading CTX's `:svg' and whichever other keys it
+needs.
+
+See `supersonic-art-overlay-scroll-layers' for the scrolling variant's
+counterpart, used instead whenever
+`supersonic-now-playing-animate-art-overlay-scroll' is the one drawing."
+  :type '(repeat function)
+  :group 'supersonic)
+
+(defcustom supersonic-art-overlay-scroll-layers
+  (list #'supersonic-art-overlay-layer-art
+        #'supersonic-art-overlay-layer-scrim
+        #'supersonic-art-overlay-layer-waveform
+        #'supersonic-art-overlay-layer-text-scroll)
+  "Layers composited into `supersonic-art-overlay-scroll-propertize's SVG.
+The scrolling variant of `supersonic-art-overlay-layers', used whenever
+`supersonic-now-playing-animate-art-overlay-scroll' is the one drawing
+rather than `supersonic-now-playing-animate-art-overlay' -- everything
+that variable's docstring says about reordering and dropping layers
+applies here identically, the one difference being the last entry:
+`supersonic-art-overlay-layer-text-scroll' instead of
+`-layer-text', which is the one layer function this list draws with
+that the other one has no equivalent of."
+  :type '(repeat function)
+  :group 'supersonic)
+
 (defun supersonic-art-available-p ()
   "Return non-nil if cover art can actually be shown right now.
 Mirrors `supersonic-waveform-available-p'.  Callers that only download

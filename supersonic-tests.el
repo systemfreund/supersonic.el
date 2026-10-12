@@ -3491,31 +3491,75 @@ particular backend."
      (lambda (f) (equal (file-name-nondirectory f) "supersonic-tests.el"))
      (directory-files dir t "\\`supersonic.*\\.el\\'"))))
 
-(ert-deftest supersonic-tests-user-options-all-live-in-one-file ()
-  "Every `defcustom' in the package belongs to `supersonic-custom.el'.
+(defun supersonic-tests--file-forms (file)
+  "Return the top-level forms of FILE, read in order."
+  (with-temp-buffer
+    (insert-file-contents file)
+    (let ((forms nil))
+      (condition-case nil
+          (while t
+            (push (read (current-buffer)) forms))
+        (end-of-file nil))
+      (nreverse forms))))
+
+(defun supersonic-tests--quoted-functions (form)
+  "Return the symbols FORM quotes with #\\=', anywhere inside it."
+  (cond ((and (eq (car-safe form) 'function) (symbolp (cadr form)))
+         (list (cadr form)))
+        ((consp form)
+         (append (supersonic-tests--quoted-functions (car form))
+                 (supersonic-tests--quoted-functions (cdr form))))))
+
+(ert-deftest supersonic-tests-user-options-live-in-the-options-file ()
+  "Every `defcustom' belongs to `supersonic-custom.el', unless its default
+is a function of the package -- that one lives in the file defining the
+function.
 Several options are read by more than one file -- `supersonic-cache-path'
 by both caches, `supersonic-mpv' by both the playback backend and the
 waveform transcoder that is otherwise independent of it -- so there is
 no natural owner to move them to.  Keeping them together is what lets
 every other file simply require them, instead of carrying `defvar'
 stubs that keep the byte-compiler quiet while leaving the options
-genuinely void for anyone who requires that file on its own.
+genuinely void for anyone who requires that file on its own.  An
+option defaulting to a function of the package has an owner: the file
+defining the function, which is also the one reading it.  Defining it
+anywhere else would make that file refer to one requiring it -- see
+`supersonic-tests-options-file-refers-to-nothing-of-the-package'.
 
 `supersonic-credentials.el' keeps its one option to itself, as it
 must load without `supersonic-custom.el' -- see its Commentary."
   (dolist (file (supersonic-tests--package-files))
     (let ((name (file-name-nondirectory file)))
       (unless (member name '("supersonic-custom.el" "supersonic-credentials.el"))
-        (with-temp-buffer
-          (insert-file-contents file)
-          (goto-char (point-min))
-          (should-not
-           (and (re-search-forward "^(defcustom " nil t)
-                (format "%s defines a user option outside supersonic-custom.el" name))))))))
+        (let* ((forms (supersonic-tests--file-forms file))
+               (defined (mapcar #'cadr
+                                (seq-filter (lambda (form)
+                                              (memq (car-safe form) '(defun aio-defun cl-defun)))
+                                            forms))))
+          (dolist (form forms)
+            (when (eq (car-safe form) 'defcustom)
+              (let ((own (seq-filter (lambda (f) (memq f defined))
+                                     (supersonic-tests--quoted-functions (nth 2 form)))))
+                (should-not
+                 (and (null own)
+                      (format "%s defines `%s' outside supersonic-custom.el, though its default is no function of that file"
+                              name (cadr form))))))))))))
+
+(ert-deftest supersonic-tests-options-file-refers-to-nothing-of-the-package ()
+  "`supersonic-custom.el' names no function of the package.
+Every other file requires it, so a function of theirs it named --
+even just as a default, behind a `declare-function' -- would be a
+dependency running back the other way."
+  (let ((forms (supersonic-tests--file-forms
+                (expand-file-name "supersonic-custom.el"
+                                  (file-name-directory (locate-library "supersonic"))))))
+    (should-not (seq-find (lambda (form) (eq (car-safe form) 'declare-function)) forms))
+    (should-not (seq-filter (lambda (f) (string-prefix-p "supersonic-" (symbol-name f)))
+                            (supersonic-tests--quoted-functions forms)))))
 
 (ert-deftest supersonic-tests-every-file-requires-the-options-file ()
   "Each file requires `supersonic-custom' rather than assuming a load order.
-See `supersonic-tests-user-options-all-live-in-one-file' for why this
+See `supersonic-tests-user-options-live-in-the-options-file' for why this
 matters -- without it, requiring e.g. just `supersonic-waveform' left
 `supersonic-waveform-buckets' void.  Except `supersonic-credentials',
 which must not require it -- see its Commentary."

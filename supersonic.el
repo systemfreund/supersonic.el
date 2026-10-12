@@ -59,6 +59,175 @@
 (require 'supersonic-mpv)
 (require 'supersonic-waveform)
 
+(defcustom supersonic-now-playing-layout-functions
+  (list #'supersonic-now-playing-layout-art
+        #'supersonic-now-playing-layout-label
+        #'supersonic-now-playing-layout-buttons)
+  "Functions laying out the now-playing buffer's primary rows, in order.
+Each is called as (FUNCTION BUFF SONG), the same convention
+`supersonic-now-playing-render-functions' uses -- SONG being the same
+track plist described there -- right after
+`supersonic-now-playing--render' erases BUFF for a track that exists --
+this is the part of the buffer that always came before that variable's
+own rows (see its docstring for where this list's output ends and that
+one's begins).  Each built-in inserts its own row(s), including
+whatever blank line separates it from what comes after, so
+reordering this list reorders the rows cleanly; dropping one drops the
+row entirely.  Same per-function error isolation as
+`supersonic-now-playing-animation-functions'.
+
+Four are built in; three make up the default, in the order they have
+always appeared in:
+
+- `supersonic-now-playing-layout-art': SONG's cover art, if it has any.
+- `supersonic-now-playing-layout-label': a placeholder row for whichever
+  field `supersonic-now-playing-animation-functions' cycles through,
+  unconditional even when nothing has been drawn there yet.
+- `supersonic-now-playing-layout-buttons': the transport button row.
+
+The fourth, `supersonic-now-playing-layout-waveform', is not in the
+default list -- a placeholder row for the standalone waveform seekbar,
+left out entirely when `supersonic-waveform-available-p' is nil.  Add
+it (in whatever position) for a standalone row alongside, or instead
+of, whatever `supersonic-art-overlay-layers'/`-scroll-layers' are
+drawing into the cover art overlay -- the two are independent
+consumers of the same cached envelope, not alternatives that pick one
+another out (see `supersonic-now-playing-layout-waveform's own
+docstring), so adding this back does not disturb the overlay's own
+waveform lane, and dropping `supersonic-art-overlay-layer-waveform'
+from the overlay layers does not disturb this row either.
+
+Adding a function of your own -- a second cover art at a different
+size, say -- inserts it alongside the rest; it can read BUFF's
+`supersonic-now-playing--paused', `supersonic-now-playing--art-id' and
+so on the way the built-ins do, since none of that buffer-local state
+is threaded through the (FUNCTION BUFF SONG) call itself."
+  :type '(repeat function)
+  :group 'supersonic)
+
+(defcustom supersonic-now-playing-animation-functions (list #'supersonic-now-playing-animate-art-overlay)
+  "Functions run in order on every animation tick to render the buffer.
+Each is called as (FUNCTION BUFF DELTA), DELTA being the real seconds
+elapsed since the last tick (0 for an unconditional first paint -- see
+`supersonic-now-playing--render').  A function that signals an error is
+reported rather than left to take the rest of the list -- and the timer
+driving all of them -- down with it; see
+`supersonic-now-playing--run-field-functions'.
+
+Three are built in:
+
+- `supersonic-now-playing-animate-label': updates the text label below
+  the cover art -- the only place a rotated field ever showed before
+  this existed.  Only actually switches fields (and redraws) once
+  `supersonic-now-playing-cycle-interval' seconds of DELTA have really
+  accumulated, however many ticks that took.
+- `supersonic-now-playing-animate-art-overlay' (the default): layers
+  the field onto the cover art itself instead, in place of the side
+  label, switching between fields (and gating its redraws) the same
+  way the label does.
+- `supersonic-now-playing-animate-art-overlay-scroll': also layers onto
+  the art, but joins every field in `supersonic-now-playing-cycle-fields'
+  into one line instead of switching between them one at a time.  Shown
+  once, motionless, if that already fits; otherwise bounced left just
+  far enough to read the far end and back, resting at each end -- see
+  `supersonic-now-playing-scroll-step' and
+  `supersonic-now-playing-scroll-pause'.
+
+To show it in both places at once, list both rather than looking for a
+fourth built-in for it -- there is no in-between behaviour left to name
+that a plain combination of two of the above doesn't already cover.
+
+See `supersonic-now-playing-position-functions' for this list's
+counterpart: the same idea, but driven by the playback position the
+active backend reports rather than by elapsed time."
+  :type '(repeat function)
+  :group 'supersonic)
+
+(defcustom supersonic-now-playing-position-functions
+  (list #'supersonic-now-playing-update-duration-field
+        #'supersonic-now-playing-recolor-waveform
+        #'supersonic-now-playing-maybe-fetch-waveform)
+  "Functions run in order whenever the now-playing buffer's position updates.
+The position-driven counterpart to
+`supersonic-now-playing-animation-functions': each is called as
+\(FUNCTION BUFF POSITION), POSITION being what the active backend just
+reported rather than a DELTA -- a seek or a pause between two updates
+must never show up as drift, which ruled out counting elapsed seconds
+locally the way the animation side does.  Runs on
+`supersonic-now-playing-interval''s regular timer and also right away
+on a seek, via `supersonic-now-playing-maybe-update-position'.  Same
+per-function error isolation as `supersonic-now-playing-animation-functions'.
+
+Three are built in, and make up the default:
+
+- `supersonic-now-playing-update-duration-field': redraws the
+  \"Duration:\" line's elapsed/total split.
+- `supersonic-now-playing-recolor-waveform': redraws the waveform
+  seekbar's played/unplayed split, once a waveform is actually showing
+  for the current track.
+- `supersonic-now-playing-maybe-fetch-waveform': kicks off waveform
+  generation for the current track, unless that has already been
+  requested (also requires `supersonic-enable-waveform').
+
+Dropping one of these from the list turns that behaviour off; adding a
+function of your own -- synced lyrics keyed on position, say -- runs it
+alongside the rest."
+  :type '(repeat function)
+  :group 'supersonic)
+
+(defcustom supersonic-now-playing-render-functions
+  (list #'supersonic-now-playing-render-title
+        #'supersonic-now-playing-render-artist
+        #'supersonic-now-playing-render-album
+        #'supersonic-now-playing-render-duration
+        #'supersonic-now-playing-render-queue-position
+        #'supersonic-now-playing-render-format
+        #'supersonic-now-playing-render-size)
+  "Functions laying out the now-playing buffer's informational text rows.
+Each is called as (FUNCTION BUFF SONG), in list order, once every entry
+in `supersonic-now-playing-layout-functions' has had its turn -- so
+these rows always follow that list's output as a block, wherever
+reordering that list has left the individual rows within it.  SONG is
+the track `supersonic-now-playing--render' is rendering, as the plist
+`supersonic-provider-track' resolved it to: `:title', `:artist',
+`:album', `:duration' (seconds), `:track', `:art', `:suffix',
+`:content-type' and `:size' (bytes), each left out when the provider
+does not know it, plus whatever keys of its own the provider adds --
+the Subsonic provider adds `:genre', for one.  Read them with
+`plist-get', e.g. (plist-get song :title).  Should the lookup fail,
+SONG is just (:id ID :title ID), so the bare id shows as the title.
+Every built-in inserts nothing at all if its value is missing for the
+current track, so a track with no album, say, just leaves that row out
+rather than showing it empty.  Same per-function error isolation as
+`supersonic-now-playing-animation-functions'.
+
+This is the layout counterpart to that variable and
+`supersonic-now-playing-position-functions': those two decide how a
+handful of tagged fields (the label/art overlay, the duration text, the
+waveform) get redrawn as time or position moves on; this one decides
+which rows exist in the first place, and in what order, each time
+`supersonic-now-playing--render' rebuilds the buffer from scratch.
+Reordering entries reorders the rows; dropping one drops the row;
+adding a function of your own -- a \"Genre:\" row read off SONG, say --
+inserts it alongside the rest.  Cover art, the label/art overlay, the
+standalone waveform row and the transport buttons are not part of this
+list -- they are `supersonic-now-playing-layout-functions''s rows, run
+before this list and configurable in exactly the same way; the split
+between the two is about ordering, not about which one is fixed.
+
+Seven are built in, and make up the default, in the order they have
+always appeared in: `supersonic-now-playing-render-title',
+`-artist', `-album', `-duration' (tags its row so
+`supersonic-now-playing-update-duration-field' can keep patching it as
+playback moves on, wherever reordering puts it),
+`-queue-position' (reads the play queue
+`supersonic-now-playing-fetch-and-render' fetched alongside SONG, not
+SONG itself, so its \"Queue: N/M\" row leaves itself out the same way
+whenever the active backend has no queue to report on), `-format' and
+`-size'."
+  :type '(repeat function)
+  :group 'supersonic)
+
 ;;;
 ;;; List buffers
 ;;;

@@ -35,6 +35,34 @@
 (require 'supersonic-custom)
 (require 'supersonic-credentials)
 
+(defcustom supersonic-auth-function #'supersonic-auth-source-credentials
+  "Function returning the credentials for the Subsonic server.
+Called with the server, `supersonic-host', it returns a plist
+\(:user USER :secret SECRET), where SECRET is the password or a
+function returning it, or nil if it has none.  The default looks the
+server up in auth-source.
+
+For a password kept where auth-source cannot find it by host, such
+as a pass entry named for something else:
+
+  (setq supersonic-auth-function
+        (lambda (_host)
+          (list :user \"USERNAME\"
+                :secret (auth-source-pass-get \='secret \"my/entry\"))))
+
+It is called for every url built -- each track queued, each cover
+shown -- so a slow lookup, as decrypting that entry is, should be
+wrapped in `supersonic-cached':
+
+  (setq supersonic-auth-function
+        (supersonic-cached
+         (lambda (_host)
+           (list :user \"USERNAME\"
+                 :secret (auth-source-pass-get \='secret \"my/entry\")))))"
+  :type '(choice (function-item supersonic-auth-source-credentials)
+                 (function :tag "Other function"))
+  :group 'supersonic)
+
 (defun supersonic-auth-source-credentials (host)
   "Return the auth-source entry for HOST, a `supersonic-host'.
 The default `supersonic-auth-function': the entry is a plist with the

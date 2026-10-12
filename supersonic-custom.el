@@ -20,8 +20,8 @@
 
 ;;; Commentary:
 
-;; Every user option supersonic.el has, in one place, plus the
-;; `supersonic' customization group they all belong to.
+;; The user options of supersonic.el, plus the `supersonic'
+;; customization group they all belong to.
 ;;
 ;; They live here rather than each in the file that reads them because
 ;; several are read by more than one: `supersonic-cache-path' by both
@@ -39,6 +39,16 @@
 ;; stubs to keep the byte-compiler quiet -- so requiring any one of them
 ;; on its own (a test, or a user who only wants the seekbar) left those
 ;; options genuinely void, with the stubs hiding it.
+;;
+;; The one exception is an option whose default is a function of the
+;; package -- `supersonic-auth-function', `supersonic-art-overlay-layers'
+;; and the like.  It lives next to that function instead, in the file
+;; that is also the one reading it, so that this file does not refer
+;; back to the files requiring it.  Requiring that file defines the
+;; option, so it cannot be void there either.
+;; `supersonic-credentials-cache-expiry' lives with
+;; `supersonic-cached' for another reason, given in
+;; `supersonic-credentials.el'.
 
 ;;; Code:
 
@@ -55,36 +65,6 @@ credentials some other way.  May be given without a scheme
 \(\"http://\" or \"https://\"), in which case \"https://\" is
 assumed."
   :type 'string
-  :group 'supersonic)
-
-(declare-function supersonic-auth-source-credentials "supersonic-api")
-
-(defcustom supersonic-auth-function #'supersonic-auth-source-credentials
-  "Function returning the credentials for the Subsonic server.
-Called with the server, `supersonic-host', it returns a plist
-\(:user USER :secret SECRET), where SECRET is the password or a
-function returning it, or nil if it has none.  The default looks the
-server up in auth-source.
-
-For a password kept where auth-source cannot find it by host, such
-as a pass entry named for something else:
-
-  (setq supersonic-auth-function
-        (lambda (_host)
-          (list :user \"USERNAME\"
-                :secret (auth-source-pass-get \='secret \"my/entry\"))))
-
-It is called for every url built -- each track queued, each cover
-shown -- so a slow lookup, as decrypting that entry is, should be
-wrapped in `supersonic-cached':
-
-  (setq supersonic-auth-function
-        (supersonic-cached
-         (lambda (_host)
-           (list :user \"USERNAME\"
-                 :secret (auth-source-pass-get \='secret \"my/entry\")))))"
-  :type '(choice (function-item supersonic-auth-source-credentials)
-                 (function :tag "Other function"))
   :group 'supersonic)
 
 (defcustom supersonic-mpv (executable-find "mpv")
@@ -313,257 +293,6 @@ consulted."
   :type 'number
   :group 'supersonic)
 
-;; Defined in supersonic.el, which requires this file rather than the
-;; other way around (see the Commentary above) -- declared here purely
-;; to keep the byte-compiler quiet about the forward references below,
-;; not to actually load them early.
-(declare-function supersonic-now-playing-layout-art "supersonic")
-(declare-function supersonic-now-playing-layout-waveform "supersonic")
-(declare-function supersonic-now-playing-layout-label "supersonic")
-(declare-function supersonic-now-playing-layout-buttons "supersonic")
-
-(defcustom supersonic-now-playing-layout-functions
-  (list #'supersonic-now-playing-layout-art
-        #'supersonic-now-playing-layout-label
-        #'supersonic-now-playing-layout-buttons)
-  "Functions laying out the now-playing buffer's primary rows, in order.
-Each is called as (FUNCTION BUFF SONG), the same convention
-`supersonic-now-playing-render-functions' uses -- SONG being the same
-track plist described there -- right after
-`supersonic-now-playing--render' erases BUFF for a track that exists --
-this is the part of the buffer that always came before that variable's
-own rows (see its docstring for where this list's output ends and that
-one's begins).  Each built-in inserts its own row(s), including
-whatever blank line separates it from what comes after, so
-reordering this list reorders the rows cleanly; dropping one drops the
-row entirely.  Same per-function error isolation as
-`supersonic-now-playing-animation-functions'.
-
-Four are built in; three make up the default, in the order they have
-always appeared in:
-
-- `supersonic-now-playing-layout-art': SONG's cover art, if it has any.
-- `supersonic-now-playing-layout-label': a placeholder row for whichever
-  field `supersonic-now-playing-animation-functions' cycles through,
-  unconditional even when nothing has been drawn there yet.
-- `supersonic-now-playing-layout-buttons': the transport button row.
-
-The fourth, `supersonic-now-playing-layout-waveform', is not in the
-default list -- a placeholder row for the standalone waveform seekbar,
-left out entirely when `supersonic-waveform-available-p' is nil.  Add
-it (in whatever position) for a standalone row alongside, or instead
-of, whatever `supersonic-art-overlay-layers'/`-scroll-layers' are
-drawing into the cover art overlay -- the two are independent
-consumers of the same cached envelope, not alternatives that pick one
-another out (see `supersonic-now-playing-layout-waveform's own
-docstring), so adding this back does not disturb the overlay's own
-waveform lane, and dropping `supersonic-art-overlay-layer-waveform'
-from the overlay layers does not disturb this row either.
-
-Adding a function of your own -- a second cover art at a different
-size, say -- inserts it alongside the rest; it can read BUFF's
-`supersonic-now-playing--paused', `supersonic-now-playing--art-id' and
-so on the way the built-ins do, since none of that buffer-local state
-is threaded through the (FUNCTION BUFF SONG) call itself."
-  :type '(repeat function)
-  :group 'supersonic)
-
-(declare-function supersonic-now-playing-animate-label "supersonic")
-(declare-function supersonic-now-playing-animate-art-overlay "supersonic")
-(declare-function supersonic-now-playing-animate-art-overlay-scroll "supersonic")
-(declare-function supersonic-now-playing-update-duration-field "supersonic")
-(declare-function supersonic-now-playing-recolor-waveform "supersonic")
-(declare-function supersonic-now-playing-maybe-fetch-waveform "supersonic")
-
-(defcustom supersonic-now-playing-animation-functions (list #'supersonic-now-playing-animate-art-overlay)
-  "Functions run in order on every animation tick to render the buffer.
-Each is called as (FUNCTION BUFF DELTA), DELTA being the real seconds
-elapsed since the last tick (0 for an unconditional first paint -- see
-`supersonic-now-playing--render').  A function that signals an error is
-reported rather than left to take the rest of the list -- and the timer
-driving all of them -- down with it; see
-`supersonic-now-playing--run-field-functions'.
-
-Three are built in:
-
-- `supersonic-now-playing-animate-label': updates the text label below
-  the cover art -- the only place a rotated field ever showed before
-  this existed.  Only actually switches fields (and redraws) once
-  `supersonic-now-playing-cycle-interval' seconds of DELTA have really
-  accumulated, however many ticks that took.
-- `supersonic-now-playing-animate-art-overlay' (the default): layers
-  the field onto the cover art itself instead, in place of the side
-  label, switching between fields (and gating its redraws) the same
-  way the label does.
-- `supersonic-now-playing-animate-art-overlay-scroll': also layers onto
-  the art, but joins every field in `supersonic-now-playing-cycle-fields'
-  into one line instead of switching between them one at a time.  Shown
-  once, motionless, if that already fits; otherwise bounced left just
-  far enough to read the far end and back, resting at each end -- see
-  `supersonic-now-playing-scroll-step' and
-  `supersonic-now-playing-scroll-pause'.
-
-To show it in both places at once, list both rather than looking for a
-fourth built-in for it -- there is no in-between behaviour left to name
-that a plain combination of two of the above doesn't already cover.
-
-See `supersonic-now-playing-position-functions' for this list's
-counterpart: the same idea, but driven by the playback position the
-active backend reports rather than by elapsed time."
-  :type '(repeat function)
-  :group 'supersonic)
-
-(defcustom supersonic-now-playing-position-functions
-  (list #'supersonic-now-playing-update-duration-field
-        #'supersonic-now-playing-recolor-waveform
-        #'supersonic-now-playing-maybe-fetch-waveform)
-  "Functions run in order whenever the now-playing buffer's position updates.
-The position-driven counterpart to
-`supersonic-now-playing-animation-functions': each is called as
-\(FUNCTION BUFF POSITION), POSITION being what the active backend just
-reported rather than a DELTA -- a seek or a pause between two updates
-must never show up as drift, which ruled out counting elapsed seconds
-locally the way the animation side does.  Runs on
-`supersonic-now-playing-interval''s regular timer and also right away
-on a seek, via `supersonic-now-playing-maybe-update-position'.  Same
-per-function error isolation as `supersonic-now-playing-animation-functions'.
-
-Three are built in, and make up the default:
-
-- `supersonic-now-playing-update-duration-field': redraws the
-  \"Duration:\" line's elapsed/total split.
-- `supersonic-now-playing-recolor-waveform': redraws the waveform
-  seekbar's played/unplayed split, once a waveform is actually showing
-  for the current track.
-- `supersonic-now-playing-maybe-fetch-waveform': kicks off waveform
-  generation for the current track, unless that has already been
-  requested (also requires `supersonic-enable-waveform').
-
-Dropping one of these from the list turns that behaviour off; adding a
-function of your own -- synced lyrics keyed on position, say -- runs it
-alongside the rest."
-  :type '(repeat function)
-  :group 'supersonic)
-
-(declare-function supersonic-now-playing-render-title "supersonic")
-(declare-function supersonic-now-playing-render-artist "supersonic")
-(declare-function supersonic-now-playing-render-album "supersonic")
-(declare-function supersonic-now-playing-render-duration "supersonic")
-(declare-function supersonic-now-playing-render-format "supersonic")
-(declare-function supersonic-now-playing-render-size "supersonic")
-(declare-function supersonic-now-playing-render-queue-position "supersonic")
-
-(defcustom supersonic-now-playing-render-functions
-  (list #'supersonic-now-playing-render-title
-        #'supersonic-now-playing-render-artist
-        #'supersonic-now-playing-render-album
-        #'supersonic-now-playing-render-duration
-        #'supersonic-now-playing-render-queue-position
-        #'supersonic-now-playing-render-format
-        #'supersonic-now-playing-render-size)
-  "Functions laying out the now-playing buffer's informational text rows.
-Each is called as (FUNCTION BUFF SONG), in list order, once every entry
-in `supersonic-now-playing-layout-functions' has had its turn -- so
-these rows always follow that list's output as a block, wherever
-reordering that list has left the individual rows within it.  SONG is
-the track `supersonic-now-playing--render' is rendering, as the plist
-`supersonic-provider-track' resolved it to: `:title', `:artist',
-`:album', `:duration' (seconds), `:track', `:art', `:suffix',
-`:content-type' and `:size' (bytes), each left out when the provider
-does not know it, plus whatever keys of its own the provider adds --
-the Subsonic provider adds `:genre', for one.  Read them with
-`plist-get', e.g. (plist-get song :title).  Should the lookup fail,
-SONG is just (:id ID :title ID), so the bare id shows as the title.
-Every built-in inserts nothing at all if its value is missing for the
-current track, so a track with no album, say, just leaves that row out
-rather than showing it empty.  Same per-function error isolation as
-`supersonic-now-playing-animation-functions'.
-
-This is the layout counterpart to that variable and
-`supersonic-now-playing-position-functions': those two decide how a
-handful of tagged fields (the label/art overlay, the duration text, the
-waveform) get redrawn as time or position moves on; this one decides
-which rows exist in the first place, and in what order, each time
-`supersonic-now-playing--render' rebuilds the buffer from scratch.
-Reordering entries reorders the rows; dropping one drops the row;
-adding a function of your own -- a \"Genre:\" row read off SONG, say --
-inserts it alongside the rest.  Cover art, the label/art overlay, the
-standalone waveform row and the transport buttons are not part of this
-list -- they are `supersonic-now-playing-layout-functions''s rows, run
-before this list and configurable in exactly the same way; the split
-between the two is about ordering, not about which one is fixed.
-
-Seven are built in, and make up the default, in the order they have
-always appeared in: `supersonic-now-playing-render-title',
-`-artist', `-album', `-duration' (tags its row so
-`supersonic-now-playing-update-duration-field' can keep patching it as
-playback moves on, wherever reordering puts it),
-`-queue-position' (reads the play queue
-`supersonic-now-playing-fetch-and-render' fetched alongside SONG, not
-SONG itself, so its \"Queue: N/M\" row leaves itself out the same way
-whenever the active backend has no queue to report on), `-format' and
-`-size'."
-  :type '(repeat function)
-  :group 'supersonic)
-
-;; Defined in supersonic-art.el, which requires this file rather than
-;; the other way around (see the Commentary above) -- declared here for
-;; the same reason the now-playing animation functions above are.
-(declare-function supersonic-art-overlay-layer-art "supersonic-art")
-(declare-function supersonic-art-overlay-layer-scrim "supersonic-art")
-(declare-function supersonic-art-overlay-layer-waveform "supersonic-art")
-(declare-function supersonic-art-overlay-layer-text "supersonic-art")
-(declare-function supersonic-art-overlay-layer-text-scroll "supersonic-art")
-
-(defcustom supersonic-art-overlay-layers
-  (list #'supersonic-art-overlay-layer-art
-        #'supersonic-art-overlay-layer-scrim
-        #'supersonic-art-overlay-layer-waveform
-        #'supersonic-art-overlay-layer-text)
-  "Layers composited into `supersonic-art-overlay-propertize's SVG, in order.
-Each is called as (FUNCTION CTX), CTX being the shared layout context
-`supersonic-art-overlay--context' builds once per call -- geometry
-\(scrim height, text baseline, whether a waveform lane is reserved at
-all) is decided there from what is present in this list and passed in,
-not from where in the list a layer happens to sit, so reordering this
-list changes stacking without changing layout.  First in the list
-draws first, so ends up on the bottom; the default order -- art, then
-the scrim, then the waveform lane, then text -- is what always drew,
-before this existed to be configurable.
-
-Reordering this list moves a layer's position in the final image, e.g.
-listing `supersonic-art-overlay-layer-text' ahead of
-`supersonic-art-overlay-layer-waveform' to draw the waveform lane over
-the label rather than below it.  Dropping a layer removes it from the
-image entirely, including the room `supersonic-art-overlay-layer-scrim'
-would otherwise reserve for it -- see `supersonic-art-overlay--context'.
-Adding a function of your own -- a border, a gradient -- draws it
-alongside the rest, reading CTX's `:svg' and whichever other keys it
-needs.
-
-See `supersonic-art-overlay-scroll-layers' for the scrolling variant's
-counterpart, used instead whenever
-`supersonic-now-playing-animate-art-overlay-scroll' is the one drawing."
-  :type '(repeat function)
-  :group 'supersonic)
-
-(defcustom supersonic-art-overlay-scroll-layers
-  (list #'supersonic-art-overlay-layer-art
-        #'supersonic-art-overlay-layer-scrim
-        #'supersonic-art-overlay-layer-waveform
-        #'supersonic-art-overlay-layer-text-scroll)
-  "Layers composited into `supersonic-art-overlay-scroll-propertize's SVG.
-The scrolling variant of `supersonic-art-overlay-layers', used whenever
-`supersonic-now-playing-animate-art-overlay-scroll' is the one drawing
-rather than `supersonic-now-playing-animate-art-overlay' -- everything
-that variable's docstring says about reordering and dropping layers
-applies here identically, the one difference being the last entry:
-`supersonic-art-overlay-layer-text-scroll' instead of
-`-layer-text', which is the one layer function this list draws with
-that the other one has no equivalent of."
-  :type '(repeat function)
-  :group 'supersonic)
-
 (defcustom supersonic-album-list-count 50
   "Number of albums to display in random/newest albums etc."
   :type 'integer
@@ -604,33 +333,6 @@ where TOKEN is a long-lived token created in Music Assistant's web UI,
 under your profile.  `supersonic-music-assistant-token-function' can
 look the token up some other way."
   :type 'string
-  :group 'supersonic)
-
-(declare-function supersonic-music-assistant-auth-source-token "supersonic-music-assistant")
-
-(defcustom supersonic-music-assistant-token-function
-  #'supersonic-music-assistant-auth-source-token
-  "Function returning the token for the Music Assistant server.
-Called with the server, `supersonic-music-assistant-url', once as an
-operation starts, it returns the token, a function returning it, or
-nil if it has none.  The default looks the server up in auth-source.
-
-For a token kept where auth-source cannot find it by host, such as a
-pass entry named for something else:
-
-  (setq supersonic-music-assistant-token-function
-        (lambda (_server) (auth-source-pass-get \='secret \"my/entry\")))
-
-Polling the player's state is an operation too, so while
-`music-assistant' is the backend this is called every
-`supersonic-music-assistant-poll-interval' seconds.  A slow lookup,
-as decrypting that entry is, should be wrapped in `supersonic-cached':
-
-  (setq supersonic-music-assistant-token-function
-        (supersonic-cached
-         (lambda (_server) (auth-source-pass-get \='secret \"my/entry\"))))"
-  :type '(choice (function-item supersonic-music-assistant-auth-source-token)
-                 (function :tag "Other function"))
   :group 'supersonic)
 
 (defcustom supersonic-music-assistant-player nil
