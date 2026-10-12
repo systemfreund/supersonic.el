@@ -26,11 +26,13 @@
 ;; plays on a Subsonic server's jukebox.  Registers itself with the
 ;; facade in `supersonic-playback.el' under the name `music-assistant',
 ;; for the `music-assistant' provider only: the player's queue takes
-;; MA's item URIs, which only that provider hands out.  Opt-in, and
-;; loading it loads the provider too:
+;; MA's item URIs, which only that provider hands out.  Loaded the
+;; first time the backend is used -- see
+;; `supersonic-playback-backend-libraries' -- and loading it loads the
+;; provider too, so selecting both is enough:
 ;;
-;;   (require 'supersonic-music-assistant-player)
-;;   (setq supersonic-playback-backend 'music-assistant)
+;;   (setq supersonic-provider 'music-assistant
+;;         supersonic-playback-backend 'music-assistant)
 ;;
 ;; The player is `supersonic-music-assistant-player', picked with
 ;; `supersonic-music-assistant-select-player' -- or, with none picked

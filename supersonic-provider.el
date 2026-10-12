@@ -54,6 +54,9 @@
 ;; when it is called, and `supersonic-provider-supports-p' lets a caller
 ;; ask first.
 ;;
+;; The providers shipped with supersonic.el are loaded on first use;
+;; see `supersonic-provider-libraries'.
+;;
 ;; This file also hosts the helpers the list buffers wrap their
 ;; refreshes in, since a failed refresh is where the provider says how
 ;; to fix its configuration.
@@ -127,6 +130,24 @@ calling one then reports that.")
 (defvar supersonic-provider--providers (make-hash-table :test #'eq)
   "Map of provider name (a symbol) to that provider's operation alist.")
 
+(defconst supersonic-provider-libraries
+  '((subsonic . supersonic-subsonic)
+    (music-assistant . supersonic-music-assistant))
+  "Alist of each provider shipped with supersonic.el to its feature.
+Requiring the feature registers the provider, so a provider named here
+is loaded the first time it is looked up -- see
+`supersonic-provider--load' -- rather than having to be required up
+front.  A provider not named here still has to be loaded by whoever
+wants it.")
+
+(defun supersonic-provider--load (provider)
+  "Load the file registering PROVIDER, unless it is registered already.
+Does nothing for a PROVIDER not in `supersonic-provider-libraries'."
+  (unless (gethash provider supersonic-provider--providers)
+    (let ((feature (alist-get provider supersonic-provider-libraries)))
+      (when feature
+        (require feature)))))
+
 (defun supersonic-provider-register (name operations)
   "Register NAME as a library provider implementing OPERATIONS.
 NAME is the symbol users select with `supersonic-provider'.
@@ -142,22 +163,42 @@ re-loading a provider file is harmless."
   (puthash name operations supersonic-provider--providers))
 
 (defun supersonic-provider-names ()
-  "Return the names of every provider currently registered."
+  "Return the names of every provider currently registered.
+Loads every provider in `supersonic-provider-libraries' first, so that
+those are among them whether or not anything has used them yet."
+  (dolist (library supersonic-provider-libraries)
+    (supersonic-provider--load (car library)))
   (let (names)
     (maphash (lambda (name _operations) (push name names)) supersonic-provider--providers)
     (nreverse names)))
 
+(defun supersonic-provider-registered-p (provider)
+  "Return non-nil if PROVIDER is registered.
+Loads PROVIDER first if it is in `supersonic-provider-libraries', but
+no other provider -- unlike `supersonic-provider-names', which loads
+them all to list them."
+  (supersonic-provider--load provider)
+  ;; Not the operations themselves: a provider may register none.
+  (not (eq (gethash provider supersonic-provider--providers 'unregistered) 'unregistered)))
+
 (defun supersonic-provider-supports-p (operation &optional provider)
   "Return non-nil if PROVIDER implements OPERATION.
 PROVIDER defaults to the active one, `supersonic-provider'.  Never
-signals, so it is safe to ask from inside an error handler."
-  (and (alist-get operation (gethash (or provider supersonic-provider) supersonic-provider--providers)) t))
+signals, so it is safe to ask from inside an error handler.  A provider
+in `supersonic-provider-libraries' is loaded first, and one whose file
+fails to load counts as unregistered."
+  (let ((provider (or provider supersonic-provider)))
+    (ignore-errors (supersonic-provider--load provider))
+    (and (alist-get operation (gethash provider supersonic-provider--providers)) t)))
 
 (defun supersonic-provider--implementation (operation)
   "Return the active provider's implementation of OPERATION.
+Loads the provider first if it is in `supersonic-provider-libraries'.
 Signals a `user-error' if `supersonic-provider' names a provider that
-was never registered -- typically because the file providing it has
-not been loaded -- or one that does not implement OPERATION."
+is still not registered -- typically a misspelled name, or a provider
+of a package that has not been loaded -- or one that does not implement
+OPERATION."
+  (supersonic-provider--load supersonic-provider)
   (let ((operations (gethash supersonic-provider supersonic-provider--providers)))
     (unless operations
       (user-error "No library provider named `%s' is registered" supersonic-provider))

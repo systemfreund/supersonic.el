@@ -22,8 +22,9 @@
 
 ;; Optional playback backend that plays on the Subsonic server's own
 ;; jukebox (the `jukeboxControl' endpoint), out of the server's
-;; speakers rather than this machine's.  Load it and set
-;; `supersonic-playback-backend' to `jukebox'.
+;; speakers rather than this machine's.  Set
+;; `supersonic-playback-backend' to `jukebox'; this file is loaded on
+;; first use.
 ;;
 ;; The Subsonic API cannot push jukebox state, so `action=get', which
 ;; returns playlist and status in one request, is polled through

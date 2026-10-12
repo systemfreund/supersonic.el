@@ -23,7 +23,8 @@
 ;; The `upnp' playback backend (#63): plays to a UPnP MediaRenderer --
 ;; an AV receiver, a network speaker, a smart TV -- by telling its
 ;; `AVTransport:1' service, over SOAP, which URL to play.  It plays for
-;; any provider that can name a stream URL.  Opt-in, like the jukebox.
+;; any provider that can name a stream URL.  Loaded on first use, like
+;; the jukebox.
 ;;
 ;; Most renderers hold one track at a time, so the queue is kept here
 ;; (#65).  A renderer reports nothing unless subscribed to, which would

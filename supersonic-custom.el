@@ -215,11 +215,11 @@ scroll."
 The symbol a provider registered itself under via
 `supersonic-provider-register': where the artist, album and track
 lists and search results come from, and what the ids in them mean.
-Only `subsonic' is built in; `music-assistant' needs
-`supersonic-music-assistant' loaded first.  Selecting a provider whose
-file has not been loaded is reported when a list buffer is next opened."
+Both `subsonic' and `music-assistant' are loaded the first time they
+are used; see `supersonic-provider-libraries'.  Selecting a provider
+nothing registers is reported when a list buffer is next opened."
   :type '(choice (const :tag "Subsonic-compatible server" subsonic)
-                 (const :tag "Music Assistant server (load supersonic-music-assistant first)" music-assistant)
+                 (const :tag "Music Assistant server" music-assistant)
                  (symbol :tag "Other registered provider"))
   :group 'supersonic)
 
@@ -262,13 +262,21 @@ between is counted on from the last poll."
   "Which playback backend plays what supersonic.el is asked to play.
 The symbol a backend registered itself under via
 `supersonic-playback-register-backend'; every play, enqueue and
-transport command dispatches to it.  Only `mpv' is built in, and
-selecting a backend whose file has not been loaded is reported when a
-playback command is next used.  So is one that cannot play for the
-active `supersonic-provider': mpv plays for any provider that can
-name a stream URL, the jukebox only for `subsonic'.  Switching with
-`supersonic-playback-switch-backend' offers only backends that fit."
-  :type '(choice (const :tag "Local mpv process" mpv) (symbol :tag "Other registered backend"))
+transport command dispatches to it.  The backends shipped with
+supersonic.el -- `mpv', `jukebox', `upnp' and `music-assistant' -- are
+loaded the first time they are used; see
+`supersonic-playback-backend-libraries'.  Selecting a backend nothing
+registers is reported when a playback command is next used.  So is one
+that cannot play for the active `supersonic-provider': mpv and UPnP
+play for any provider that can name a stream URL, the jukebox only for
+`subsonic', a Music Assistant player only for `music-assistant'.
+Switching with `supersonic-playback-switch-backend' offers only
+backends that fit."
+  :type '(choice (const :tag "Local mpv process" mpv)
+                 (const :tag "Subsonic server's jukebox" jukebox)
+                 (const :tag "UPnP/DLNA renderer" upnp)
+                 (const :tag "Music Assistant player" music-assistant)
+                 (symbol :tag "Other registered backend"))
   :group 'supersonic)
 
 (defcustom supersonic-mpv-timeout 0.5

@@ -23,9 +23,10 @@
 ;; The Music Assistant library provider (#58): implements the browse
 ;; operations of the facade in `supersonic-provider.el' against a
 ;; Music Assistant (MA) server, and registers them under the name
-;; `music-assistant'.  Like `supersonic-jukebox.el' it is opt-in:
+;; `music-assistant'.  Nothing in the package requires this file: it
+;; is loaded the first time the provider is used -- see
+;; `supersonic-provider-libraries' -- so selecting it is enough:
 ;;
-;;   (require 'supersonic-music-assistant)
 ;;   (setq supersonic-provider 'music-assistant)
 ;;
 ;; Transport.  MA offers a WebSocket API, which pushes events, and a

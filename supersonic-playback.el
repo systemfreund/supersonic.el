@@ -34,6 +34,9 @@
 ;; A backend also says which providers it plays for, and an
 ;; incompatible pairing is kept from being selected or used; see
 ;; `supersonic-playback-register-backend'.
+;;
+;; The backends shipped with supersonic.el are loaded on first use; see
+;; `supersonic-playback-backend-libraries'.
 
 ;;; Code:
 
@@ -97,6 +100,26 @@ neither has no entry and plays for every provider.")
 None of them plays anything, and refusing them would break the
 now-playing buffer, MPRIS, and switching away from the backend.")
 
+(defconst supersonic-playback-backend-libraries
+  '((mpv . supersonic-mpv)
+    (jukebox . supersonic-jukebox)
+    (upnp . supersonic-upnp)
+    (music-assistant . supersonic-music-assistant-player))
+  "Alist of each backend shipped with supersonic.el to its feature.
+Requiring the feature registers the backend, so a backend named here is
+loaded the first time it is looked up -- see
+`supersonic-playback--load' -- rather than having to be required up
+front.  A backend not named here still has to be loaded by whoever
+wants it.")
+
+(defun supersonic-playback--load (backend)
+  "Load the file registering BACKEND, unless it is registered already.
+Does nothing for a BACKEND not in `supersonic-playback-backend-libraries'."
+  (unless (gethash backend supersonic-playback--backends)
+    (let ((feature (alist-get backend supersonic-playback-backend-libraries)))
+      (when feature
+        (require feature)))))
+
 (defun supersonic-playback-register-backend (name operations &rest compatibility)
   "Register NAME as a playback backend implementing OPERATIONS.
 NAME is the symbol users select with `supersonic-playback-backend'.
@@ -137,7 +160,9 @@ plays for every provider."
   "Return non-nil if BACKEND can play for PROVIDER.
 PROVIDER defaults to the active one, `supersonic-provider'.  Only says
 what BACKEND declared when it registered, and so is nil for a backend
-never registered at all."
+not registered even after loading it from
+`supersonic-playback-backend-libraries'."
+  (supersonic-playback--load backend)
   (let ((provider (or provider supersonic-provider))
         (compatibility (gethash backend supersonic-playback--compatibility)))
     (and (gethash backend supersonic-playback--backends)
@@ -154,11 +179,13 @@ never registered at all."
 
 (defun supersonic-playback--implementation (operation)
   "Return the active backend's implementation of OPERATION.
+Loads the backend first if it is in `supersonic-playback-backend-libraries'.
 Signals a `user-error' if `supersonic-playback-backend' names a backend
-that was never registered -- typically because the file providing it
-has not been loaded -- or one that does not implement OPERATION, or
-one that cannot play for the active provider (unless OPERATION is one
-of `supersonic-playback--unchecked-operations')."
+that is still not registered -- typically a misspelled name, or a
+backend of a package that has not been loaded -- or one that does not
+implement OPERATION, or one that cannot play for the active provider
+\(unless OPERATION is one of `supersonic-playback--unchecked-operations')."
+  (supersonic-playback--load supersonic-playback-backend)
   (let ((operations (gethash supersonic-playback-backend supersonic-playback--backends)))
     (unless operations
       (user-error "No playback backend named `%s' is registered" supersonic-playback-backend))
@@ -174,7 +201,10 @@ of `supersonic-playback--unchecked-operations')."
 
 (defun supersonic-playback-backend-names ()
   "Return the names of every backend currently registered.
-A backend not loaded yet has not registered itself."
+Every backend in `supersonic-playback-backend-libraries' is loaded
+first; a backend of another package is only there once it is loaded."
+  (dolist (library supersonic-playback-backend-libraries)
+    (supersonic-playback--load (car library)))
   (let (names)
     (maphash (lambda (name _operations) (push name names)) supersonic-playback--backends)
     (nreverse names)))
@@ -205,7 +235,7 @@ business, settled before calling this."
   (let ((provider (or provider supersonic-provider)))
     (unless (and (eq provider supersonic-provider) (eq backend supersonic-playback-backend))
       (setf (alist-get supersonic-provider supersonic-playback--last-backend) supersonic-playback-backend)
-      (when (memq supersonic-playback-backend (supersonic-playback-backend-names))
+      (when (gethash supersonic-playback-backend supersonic-playback--backends)
         (supersonic-playback-stop))
       (setq supersonic-provider provider)
       (setq supersonic-playback-backend backend)
