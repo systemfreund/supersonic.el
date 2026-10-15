@@ -1406,12 +1406,12 @@ whose :x0/:x1 tile WIDTH exactly."
 the reach between a bar's RMS and peak extents, but only when there is
 one -- a bucket whose peak does not exceed its RMS (silence, or a
 perfectly flat tone) gets just the one solid rectangle."
-  (let* ((wide (supersonic-waveform-bars (cons (supersonic-tests--bytes '(255)) (supersonic-tests--bytes '(50))) 0 10 8))
-         (flat (supersonic-waveform-bars (cons (supersonic-tests--bytes '(0)) (supersonic-tests--bytes '(0))) 0 10 8))
+  (let* ((wide (cons (supersonic-tests--bytes '(255)) (supersonic-tests--bytes '(50))))
+         (flat (cons (supersonic-tests--bytes '(0)) (supersonic-tests--bytes '(0))))
          (svg-wide (svg-create 10 8))
          (svg-flat (svg-create 10 8)))
-    (supersonic-waveform-svg-bars svg-wide wide 0 8)
-    (supersonic-waveform-svg-bars svg-flat flat 0 8)
+    (supersonic-waveform-svg-bars svg-wide wide 0 10 0 8)
+    (supersonic-waveform-svg-bars svg-flat flat 0 10 0 8)
     (let ((rects-wide (with-temp-buffer
                          (svg-print svg-wide)
                          (how-many "<rect" (point-min) (point-max))))
@@ -1420,6 +1420,27 @@ perfectly flat tone) gets just the one solid rectangle."
                         (how-many "<rect" (point-min) (point-max)))))
       (should (= 2 rects-wide))
       (should (= 1 rects-flat)))))
+
+(ert-deftest supersonic-tests-waveform-svg-bars-follows-progress-with-cached-markup ()
+  "`supersonic-waveform-svg-bars' reuses the envelope's markup as the
+position moves, but still draws the played/unplayed split where it is."
+  (let ((envelope (cons (supersonic-tests--bytes '(0 0)) (supersonic-tests--bytes '(0 0))))
+        (opacities (lambda (svg)
+                     (with-temp-buffer
+                       (svg-print svg)
+                       (goto-char (point-min))
+                       (let (found)
+                         (while (re-search-forward "fill-opacity=\"\\([0-9.]+\\)\"" nil t)
+                           (push (match-string 1) found))
+                         (nreverse found))))))
+    (let ((svg (svg-create 10 8)))
+      (supersonic-waveform-svg-bars svg envelope 0.5 10 0 8)
+      (should (equal '("0.9" "0.4") (funcall opacities svg))))
+    (let ((cached (cdr supersonic-waveform--svg-bars-cache))
+          (svg (svg-create 10 8)))
+      (supersonic-waveform-svg-bars svg envelope 1.0 10 0 8)
+      (should (eq cached (cdr supersonic-waveform--svg-bars-cache)))
+      (should (equal '("0.9" "0.9") (funcall opacities svg))))))
 
 (ert-deftest supersonic-tests-waveform-seek-map-suppresses-drag-region-point-move ()
   "`supersonic-waveform-seek-map' overrides `down-mouse-1' with a no-op.

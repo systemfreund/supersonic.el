@@ -574,22 +574,57 @@ such as `hl-line', shows through."
           (setq x (1+ x)))))
     (create-image (concat (string-to-unibyte (format "P6\n%d %d\n255\n" width height)) buf) 'pbm t :mask 'heuristic)))
 
-(defun supersonic-waveform-svg-bars (svg bars y height)
-  "Draw BARS (see `supersonic-waveform-bars') into SVG as rectangles.
-Y and HEIGHT mark the band BARS was computed for.  Drawn in white,
+(defvar supersonic-waveform--svg-bars-cache nil
+  "((ENVELOPE WIDTH Y HEIGHT) PLAYED . UNPLAYED) as last drawn, or nil.
+PLAYED and UNPLAYED are vectors of each bar's SVG markup in that state,
+so that `supersonic-waveform-svg-bars' only picks between them as the
+position moves.")
+
+(defun supersonic-waveform--svg-bar-markup (bar center opacity)
+  "Return BAR (see `supersonic-waveform-bars') as SVG rectangles at OPACITY.
+CENTER is the y the bar extends out from."
+  (let ((x0 (plist-get bar :x0))
+        (width (- (plist-get bar :x1) (plist-get bar :x0)))
+        (rms-extent (plist-get bar :rms-extent))
+        (peak-extent (plist-get bar :peak-extent))
+        (rect "<rect width=\"%s\" height=\"%s\" x=\"%s\" y=\"%s\" fill-opacity=\"%s\" fill=\"white\"></rect>"))
+    (concat
+     (when (> peak-extent rms-extent)
+       (format rect width (* 2 peak-extent) x0 (- center peak-extent) (* opacity 0.5)))
+     (format rect width (* 2 rms-extent) x0 (- center rms-extent) opacity))))
+
+(defun supersonic-waveform--svg-bars-markup (envelope width y height)
+  "Return (PLAYED . UNPLAYED) markup vectors for ENVELOPE's bars.
+Built once per ENVELOPE (compared with `eq') and band WIDTH x HEIGHT
+at Y, then reused from `supersonic-waveform--svg-bars-cache'."
+  (let ((cached (car supersonic-waveform--svg-bars-cache)))
+    (unless (and (eq envelope (car cached))
+                 (equal (list width y height) (cdr cached)))
+      (let ((bars (supersonic-waveform-bars envelope 0 width height))
+            (center (+ y (/ height 2))))
+        (setq supersonic-waveform--svg-bars-cache
+              (cons (list envelope width y height)
+                    (cons (vconcat (mapcar (lambda (bar) (supersonic-waveform--svg-bar-markup bar center 0.9)) bars))
+                          (vconcat (mapcar (lambda (bar) (supersonic-waveform--svg-bar-markup bar center 0.4)) bars))))))))
+  (cdr supersonic-waveform--svg-bars-cache))
+
+(defun supersonic-waveform-svg-bars (svg envelope progress width y height)
+  "Draw ENVELOPE's bars at PROGRESS into SVG, in the band WIDTH x HEIGHT at Y.
+PROGRESS is as `supersonic-waveform-bars' takes it.  Drawn in white,
 with played and unplayed, RMS and peak told apart by opacity, since
-this goes onto cover art, where a fixed light color reads best."
-  (let ((center (+ y (/ height 2))))
-    (dolist (bar bars)
-      (let* ((x0 (plist-get bar :x0))
-             (width (- (plist-get bar :x1) x0))
-             (rms-extent (plist-get bar :rms-extent))
-             (peak-extent (plist-get bar :peak-extent))
-             (opacity (if (plist-get bar :played) 0.9 0.4)))
-        (when (> peak-extent rms-extent)
-          (svg-rectangle
-           svg x0 (- center peak-extent) width (* 2 peak-extent) :fill "white" :fill-opacity (* opacity 0.5)))
-        (svg-rectangle svg x0 (- center rms-extent) width (* 2 rms-extent) :fill "white" :fill-opacity opacity)))))
+this goes onto cover art, where a fixed light color reads best.
+
+Appended as one string of markup rather than as DOM nodes: this is
+redrawn on every bucket change, and building and printing hundreds of
+nodes each time was most of the cost, and much of the garbage."
+  (let* ((markup (supersonic-waveform--svg-bars-markup envelope width y height))
+         (buckets (length (car markup)))
+         (progress (or progress 0)))
+    (dom-append-child
+     svg
+     (apply #'concat
+            (cl-loop for b below buckets
+                     collect (aref (if (< (/ (float b) buckets) progress) (car markup) (cdr markup)) b))))))
 
 (defvar supersonic-waveform-seek-map
   (let ((map (make-sparse-keymap)))

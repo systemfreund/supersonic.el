@@ -229,8 +229,7 @@ The lane is sized off the art, not `supersonic-waveform-width' and
         (lane-height (plist-get ctx :lane-height)))
     (when waveform
       (supersonic-waveform-svg-bars
-       (plist-get ctx :svg) (supersonic-waveform-bars (car waveform) (cdr waveform) size lane-height)
-       (- size lane-height) lane-height))))
+       (plist-get ctx :svg) (car waveform) (cdr waveform) size (- size lane-height) lane-height))))
 
 (defun supersonic-art-overlay-layer-text (ctx)
   "Draw CTX's text centered in its text row.
