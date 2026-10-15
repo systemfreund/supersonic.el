@@ -588,6 +588,10 @@ bucket, so `supersonic-now-playing-recolor-waveform' redraws only then.")
 Set whether or not it succeeded, so that a failed one is not retried,
 while one skipped for a hidden buffer is still made once it shows.")
 
+(defvar-local supersonic-now-playing--stale-images nil
+  "Alist of FIELD to the image `supersonic-now-playing--update-field' replaced last.
+Each is flushed on FIELD's next update, not when replaced.")
+
 (defun supersonic-now-playing-buffer ()
   "Return the now-playing buffer if it is currently live, else nil."
   (let ((buff (get-buffer supersonic-now-playing-buffer-name)))
@@ -930,10 +934,16 @@ of the buffer each time."
               (delete-region (prop-match-beginning match) (prop-match-end match))
               ;; Every seekbar redraw is a new image, which stays cached
               ;; for `image-cache-eviction-delay' whether shown or not.
-              ;; FRAME t flushes it from every window-system frame, where
+              ;; Flushing STALE right away would free its id for VALUE's
+              ;; image to reuse, and redisplay skips a glyph whose id is
+              ;; unchanged.  So it is flushed one update later instead.
+              ;; FRAME t flushes from every window-system frame, where
               ;; the selected frame may be none.
-              (when (and (eq (car-safe stale) 'image) (fboundp 'image-flush))
-                (image-flush stale t))
+              (let ((previous (alist-get field supersonic-now-playing--stale-images)))
+                (when (and previous (fboundp 'image-flush))
+                  (image-flush previous t)))
+              (setf (alist-get field supersonic-now-playing--stale-images)
+                    (and (eq (car-safe stale) 'image) stale))
               (goto-char (prop-match-beginning match))
               (insert (propertize value 'supersonic-now-playing-field field)))))))))
 

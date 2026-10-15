@@ -8319,6 +8319,21 @@ episode, so only those two entries go; Subsonic keeps them all."
     (should (supersonic-tests--suffix-shown-p 'supersonic-podcast-help "a"))
     (should (supersonic-tests--suffix-shown-p 'supersonic-podcast-episode-help "d"))))
 
+(ert-deftest supersonic-tests-update-field-flushes-replaced-image-one-update-late ()
+  "Flushing an image right as it is replaced frees its id for the new
+image to reuse, and redisplay then skips the unchanged-looking glyph."
+  (let ((flushed nil)
+        (image (lambda (n) (list 'image :type 'svg :data (format "<svg>%d</svg>" n)))))
+    (with-temp-buffer
+      (insert (propertize " " 'supersonic-now-playing-field 'art 'display (funcall image 0)))
+      (cl-letf (((symbol-function 'image-flush) (lambda (spec &optional _frame) (push spec flushed))))
+        (supersonic-now-playing--update-field
+         (current-buffer) 'art (propertize " " 'display (funcall image 1)))
+        (should-not flushed)
+        (supersonic-now-playing--update-field
+         (current-buffer) 'art (propertize " " 'display (funcall image 2)))
+        (should (equal flushed (list (funcall image 0))))))))
+
 (provide 'supersonic-tests)
 
 ;;; supersonic-tests.el ends here
