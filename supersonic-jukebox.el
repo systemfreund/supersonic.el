@@ -20,20 +20,12 @@
 
 ;;; Commentary:
 
-;; Optional playback backend that plays on the Subsonic server's own
-;; jukebox (the `jukeboxControl' endpoint), out of the server's
-;; speakers rather than this machine's.  Load it and set
+;; Playback backend that plays on the Subsonic server's jukebox, out
+;; of the server's speakers.  Load this file and set
 ;; `supersonic-playback-backend' to `jukebox'.
 ;;
-;; The Subsonic API cannot push jukebox state, so `action=get', which
-;; returns playlist and status in one request, is polled through
-;; `supersonic-poller.el'.  Status, queue and liveness answer from what
-;; the latest poll found, and the position is counted on in between.
-;; No server scrobbles jukebox playback itself, so a track change from
-;; one poll to the next is scrobbled here.
-;;
-;; Actions some servers reject, such as `skip' with an `offset'
-;; (Ampache), are sent anyway and the server's error is surfaced.
+;; The jukebox is polled, see `supersonic-poller.el'.  Servers don't
+;; scrobble jukebox playback, so track changes are scrobbled here.
 
 ;;; Code:
 (require 'seq)
@@ -49,17 +41,16 @@
 ;;;
 
 (defun supersonic-jukebox--url (action &optional extra-query)
-  "Build a jukeboxControl.view URL for ACTION, with EXTRA-QUERY appended."
+  "Return the jukeboxControl URL for ACTION with EXTRA-QUERY."
   (supersonic-build-url "/jukeboxControl.view" (cons (cons "action" action) extra-query)))
 
 (aio-defun supersonic-jukebox--request (action &optional extra-query)
-  "Issue jukeboxControl ACTION with EXTRA-QUERY.
-Returns a promise resolving to the parsed \"subsonic-response\" body."
+  "Return a promise resolving to the response to jukeboxControl ACTION.
+EXTRA-QUERY is an alist of further query parameters."
   (aio-await (supersonic-get-json (supersonic-jukebox--url action extra-query))))
 
 (defun supersonic-jukebox--id-query (ids)
-  "Return a query alist with one (\"id\" . ID) pair per id in IDS.
-jukeboxControl's `set' and `add' take one id parameter per song."
+  "Return a query alist with an \"id\" parameter for each of IDS."
   (mapcar (lambda (id) (cons "id" id)) ids))
 
 ;;;
@@ -67,10 +58,8 @@ jukeboxControl's `set' and `add' take one id parameter per song."
 ;;;
 
 (defun supersonic-jukebox--parse-snapshot (playlist polled-at)
-  "Turn PLAYLIST, a parsed jukeboxPlaylist (action=get), into a snapshot plist.
-POLLED-AT is the `float-time' PLAYLIST was received at.  See
-`supersonic-jukebox--poller' for the plist.  \"playing\" is compared
-against t, since `json-read' turns false into the non-nil `:json-false'."
+  "Return the snapshot plist for PLAYLIST, received at POLLED-AT.
+PLAYLIST is a parsed jukeboxPlaylist.  See `supersonic-jukebox--poller'."
   (let* ((entries (assoc-default "entry" playlist))
          (current-index (truncate (or (assoc-default "currentIndex" playlist) -1))))
     (list
@@ -82,24 +71,18 @@ against t, since `json-read' turns false into the non-nil `:json-false'."
      :polled-at polled-at)))
 
 (defun supersonic-jukebox--current-track (snapshot)
-  "Return the supersonic track id SNAPSHOT's `:current-index' points at, or nil.
-nil both when SNAPSHOT itself is nil (no poll has landed yet) and when
-its `:current-index' is -1 (nothing loaded)."
+  "Return the id of SNAPSHOT's current track, or nil if there is none."
   (let ((index (plist-get snapshot :current-index)))
     (and index (>= index 0) (nth index (plist-get snapshot :entries)))))
 
 (defun supersonic-jukebox--summarize (snapshot)
-  "Return what the facade's hooks announce of SNAPSHOT.
-The plist `supersonic-poller-announce' compares: the playing entry's
-track id, whether the jukebox is paused, and the playlist's entries,
-so that an `add' is noticed too."
+  "Return the summary of SNAPSHOT that `supersonic-poller-announce' compares."
   (list :track-id (supersonic-jukebox--current-track snapshot)
         :paused (not (plist-get snapshot :playing))
         :entries (plist-get snapshot :entries)))
 
 (aio-defun supersonic-jukebox--fetch ()
-  "Ask jukeboxControl for its playlist and status, as a fresh snapshot.
-See `supersonic-jukebox--parse-snapshot'."
+  "Return a promise resolving to a snapshot of the jukebox's state."
   (let* ((response (aio-await (supersonic-jukebox--request "get")))
          (polled-at (float-time))
          (playlist (supersonic-recursive-assoc response '("subsonic-response" "jukeboxPlaylist"))))
@@ -114,34 +97,24 @@ See `supersonic-jukebox--parse-snapshot'."
    :summarize #'supersonic-jukebox--summarize
    :description "poll the jukebox"))
 
-;; `defvar', so that re-evaluating this file keeps the poller and with
-;; it what polling found.  After changing the slots of `supersonic-poller',
-;; set this to (supersonic-jukebox--make-poller) by hand before re-evaluating
-;; this file: the old poller no longer fits the new accessors, and
-;; `supersonic-poller-register' below would trip over it.
 (defvar supersonic-jukebox--poller (supersonic-jukebox--make-poller)
-  "Polls the jukebox, and holds what the latest poll found.
-Its snapshot is a plist: `:entries', the supersonic track ids in the
-jukebox's playlist, in order; `:current-index', the 0-based index into
-`:entries' of the playing entry, or -1 for none; `:playing', non-nil if
-the jukebox is actually playing rather than paused; `:position', the
-current track's position in seconds as of `:polled-at', a `float-time'
-timestamp of when this snapshot was taken; `:duration', the current
-track's duration in seconds, or nil if there is no current track or the
-server left it out.")
+  "The poller of the jukebox.
+Its snapshot is a plist of `:entries', the track ids of the playlist;
+`:current-index', the index of the current entry or -1; `:playing';
+`:position' in seconds as of `:polled-at'; and `:duration' of the
+current track, or nil.")
 
 (defun supersonic-jukebox--snapshot ()
-  "Return the jukebox state the latest poll found, or nil before any landed."
+  "Return the jukebox's latest snapshot, or nil."
   (supersonic-poller-snapshot supersonic-jukebox--poller))
 
 (defun supersonic-jukebox--position ()
-  "Return the jukebox's position, counted on from the latest poll.
-See `supersonic-poller-position'."
+  "Return the jukebox's estimated current position."
   (let ((snapshot (supersonic-jukebox--snapshot)))
     (supersonic-poller-position snapshot (plist-get snapshot :playing))))
 
 (defun supersonic-jukebox--poll ()
-  "Return a promise of polling the jukebox; see `supersonic-poller-poll'."
+  "Return a promise of polling the jukebox."
   (supersonic-poller-poll supersonic-jukebox--poller))
 
 (defun supersonic-jukebox-live-p ()
@@ -153,16 +126,16 @@ See `supersonic-poller-position'."
 ;;;
 
 (aio-defun supersonic-jukebox-status (key)
-  "Resolve to the jukebox backend's current KEY, read from the cached snapshot.
-Never issues a request of its own -- see `supersonic-jukebox--poll'."
+  "Return a promise resolving to the jukebox's current KEY.
+The value comes from the latest poll."
   (pcase key
     ('track-id (supersonic-jukebox--current-track (supersonic-jukebox--snapshot)))
     ('position (supersonic-jukebox--position))
     ('paused (not (plist-get (supersonic-jukebox--snapshot) :playing)))))
 
 (aio-defun supersonic-jukebox-queue ()
-  "Resolve to the jukebox's current playlist, read from the cached poll snapshot.
-Never issues a request of its own -- see `supersonic-jukebox--poll'."
+  "Return a promise resolving to the jukebox's playlist.
+The value comes from the latest poll."
   (let ((current-index (plist-get (supersonic-jukebox--snapshot) :current-index)))
     (seq-map-indexed
      (lambda (id index) (list :track-id id :current (eql index current-index)))
@@ -172,9 +145,7 @@ Never issues a request of its own -- see `supersonic-jukebox--poll'."
 ;;; The facade's start/enqueue/toggle-play/next operations
 ;;;
 
-;; The facade fires these and forgets them, so each does its work in an
-;; `aio-defun' helper wrapped in `supersonic--with-async-error-handling':
-;; an error would otherwise reject a promise nobody awaits, and vanish.
+;; Nobody awaits these, so each reports its own errors.
 
 (aio-defun supersonic-jukebox--start (ids)
   "Replace the jukebox playlist with IDS and start playing."
@@ -190,13 +161,8 @@ Never issues a request of its own -- see `supersonic-jukebox--poll'."
   (ignore (supersonic-jukebox--start ids)))
 
 (aio-defun supersonic-jukebox--enqueue (ids)
-  "Append IDS to the jukebox playlist, playing them if nothing is left to play.
-That is, when the playlist was empty or played to its end, which
-Navidrome reports as the last entry, not playing, at position 0.  A
-jukebox stopped partway is left stopped, since `start' would only
-resume that entry.  Polls first, since the cached snapshot may
-be stale.  `skip' does not start a stopped jukebox, hence the `start'
-after it."
+  "Append IDS to the jukebox playlist.
+Start playing them if the playlist was empty or played to its end."
   (supersonic--with-async-error-handling
    nil "enqueue on the jukebox"
    (aio-await (supersonic-jukebox--poll))
@@ -219,8 +185,7 @@ after it."
   (ignore (supersonic-jukebox--enqueue ids)))
 
 (aio-defun supersonic-jukebox--toggle-play ()
-  "Toggle the jukebox between playing and stopped.
-Based on the cached snapshot's `:playing'."
+  "Start or stop the jukebox."
   (supersonic--with-async-error-handling
    nil "toggle jukebox playback"
    (aio-await
@@ -235,10 +200,7 @@ Based on the cached snapshot's `:playing'."
   (ignore (supersonic-jukebox--toggle-play)))
 
 (aio-defun supersonic-jukebox--next ()
-  "Skip the jukebox to the entry after the cached snapshot's current one.
-A no-op past the last entry: `skip' has no bounds of its own, so asking
-it for an out-of-range index there just replays the last entry instead
-of stopping."
+  "Skip the jukebox to the next entry, if there is one."
   (supersonic--with-async-error-handling
    nil "skip to the next jukebox track"
    (let* ((snapshot (supersonic-jukebox--snapshot))
@@ -253,10 +215,7 @@ of stopping."
   (ignore (supersonic-jukebox--next)))
 
 (aio-defun supersonic-jukebox--prev ()
-  "Skip the jukebox to the entry before the cached snapshot's current one.
-jukeboxControl has no \"previous track\" action, only `skip' to an
-index.  A no-op before the first entry: `skip' has no bounds of its
-own, and a negative index replays the last entry."
+  "Skip the jukebox to the previous entry, if there is one."
   (supersonic--with-async-error-handling
    nil "skip to the previous jukebox track"
    (let ((index (1- (or (plist-get (supersonic-jukebox--snapshot) :current-index) -1))))
@@ -269,10 +228,7 @@ own, and a negative index replays the last entry."
   (ignore (supersonic-jukebox--prev)))
 
 (aio-defun supersonic-jukebox--seek (offset)
-  "Seek OFFSET seconds relative to the jukebox's current position.
-jukeboxControl's `skip' only takes an absolute `offset' within the
-track at `index', so this skips to the current index at the counted-on
-position plus OFFSET, no earlier than the start."
+  "Seek OFFSET seconds from the jukebox's current position."
   (supersonic--with-async-error-handling
    nil "seek the jukebox"
    (let* ((index (or (plist-get (supersonic-jukebox--snapshot) :current-index) -1))
@@ -288,9 +244,7 @@ position plus OFFSET, no earlier than the start."
   (ignore (supersonic-jukebox--seek offset)))
 
 (aio-defun supersonic-jukebox--seek-fraction (fraction)
-  "Seek the jukebox to FRACTION (0.0 to 1.0) of the way through the current track.
-`skip' wants seconds, so FRACTION is multiplied by the cached
-`:duration', or by 0 if the server left that out."
+  "Seek the jukebox to FRACTION, between 0.0 and 1.0, of the current track."
   (supersonic--with-async-error-handling
    nil "seek the jukebox"
    (let* ((snapshot (supersonic-jukebox--snapshot))
@@ -303,13 +257,11 @@ position plus OFFSET, no earlier than the start."
    (aio-await (supersonic-poller-finish-seek supersonic-jukebox--poller))))
 
 (defun supersonic-jukebox-seek-fraction (fraction)
-  "Seek to FRACTION (0.0 to 1.0) of the way through the jukebox's current track."
+  "Seek the jukebox to FRACTION, between 0.0 and 1.0, of the current track."
   (ignore (supersonic-jukebox--seek-fraction fraction)))
 
 (aio-defun supersonic-jukebox--stop ()
-  "Stop the jukebox.
-Unlike `supersonic-jukebox--toggle-play', always sends `stop', whatever
-the cached snapshot says."
+  "Stop the jukebox."
   (supersonic--with-async-error-handling
    nil "stop the jukebox"
    (aio-await (supersonic-jukebox--request "stop"))
@@ -321,8 +273,6 @@ the cached snapshot says."
 
 (supersonic-poller-register 'supersonic-jukebox--poller)
 
-;; Only for the `subsonic' provider: only a Subsonic server has a
-;; jukebox, and it takes Subsonic ids.
 (supersonic-playback-register-backend
  'jukebox
  '((start . supersonic-jukebox-start)

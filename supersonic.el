@@ -59,46 +59,32 @@
   (list #'supersonic-now-playing-layout-art
         #'supersonic-now-playing-layout-label
         #'supersonic-now-playing-layout-buttons)
-  "Functions laying out the now-playing buffer's primary rows, in order.
-Each is called as (FUNCTION BUFF SONG), as
-`supersonic-now-playing-render-functions' are, before those.  Each
-built-in inserts its row and any spacing after it, so reordering the
-list reorders the rows, and dropping one drops its row.  A function
-that signals an error is reported and skipped.
+  "Functions inserting the top rows of the now-playing buffer, in order.
+Each is called with BUFF and SONG, like
+`supersonic-now-playing-render-functions', which run after them.
+Errors are reported and the function skipped.  Built in:
 
-Four are built in, the first three making up the default:
-
-- `supersonic-now-playing-layout-art': SONG's cover art, if any.
-- `supersonic-now-playing-layout-label': a placeholder row for the
-  field `supersonic-now-playing-animation-functions' cycles through.
+- `supersonic-now-playing-layout-art': the cover art.
+- `supersonic-now-playing-layout-label': the label row, see
+  `supersonic-now-playing-animation-functions'.
 - `supersonic-now-playing-layout-buttons': the transport buttons.
-- `supersonic-now-playing-layout-waveform': a standalone waveform
-  seekbar, independent of the one in the cover art overlay.
-
-A function of your own can read BUFF's buffer-local state, such as
-`supersonic-now-playing--paused', as the built-ins do."
+- `supersonic-now-playing-layout-waveform': a separate waveform
+  seekbar; not in the default."
   :type '(repeat function)
   :group 'supersonic)
 
 (defcustom supersonic-now-playing-animation-functions (list #'supersonic-now-playing-animate-art-overlay)
-  "Functions run in order on every animation tick to render the buffer.
-Each is called as (FUNCTION BUFF DELTA), DELTA being the real seconds
-elapsed since the last tick, or 0 for an unconditional first paint.  A
-function that signals an error is reported and skipped.
+  "Functions run on every animation frame of the now-playing buffer.
+Each is called with BUFF and DELTA, the seconds since the last frame,
+or 0 for the first.  Errors are reported and the function skipped.
+Built in:
 
-Three are built in:
-
-- `supersonic-now-playing-animate-label': shows the current field of
-  `supersonic-now-playing-cycle-fields' as a label below the art.
-- `supersonic-now-playing-animate-art-overlay' (the default): shows
-  it on the cover art itself.
-- `supersonic-now-playing-animate-art-overlay-scroll': shows every
-  field joined into one line on the art, scrolling it back and forth
-  if it does not fit.
-
-List two of them to show the field in both places.  See
-`supersonic-now-playing-position-functions' for the counterpart driven
-by the playback position."
+- `supersonic-now-playing-animate-label': show the current field of
+  `supersonic-now-playing-cycle-fields' below the cover art.
+- `supersonic-now-playing-animate-art-overlay': show it on the cover
+  art.  The default.
+- `supersonic-now-playing-animate-art-overlay-scroll': show all the
+  fields in one line on the cover art, scrolling if it doesn't fit."
   :type '(repeat function)
   :group 'supersonic)
 
@@ -106,22 +92,17 @@ by the playback position."
   (list #'supersonic-now-playing-update-duration-field
         #'supersonic-now-playing-recolor-waveform
         #'supersonic-now-playing-maybe-fetch-waveform)
-  "Functions run in order whenever the now-playing buffer's position updates.
-Each is called as (FUNCTION BUFF POSITION), POSITION being what the
-active backend reported, on `supersonic-now-playing-interval''s timer
-and right after a seek.  A function that signals an error is reported
-and skipped.
+  "Functions run when the playback position in the now-playing buffer updates.
+Each is called with BUFF and POSITION in seconds, every
+`supersonic-now-playing-interval' seconds and after a seek.  Errors
+are reported and the function skipped.  Built in:
 
-Three are built in, and make up the default:
-
-- `supersonic-now-playing-update-duration-field': redraws the
-  \"Duration:\" line.
-- `supersonic-now-playing-recolor-waveform': redraws the waveform
-  seekbar's played/unplayed split.
-- `supersonic-now-playing-maybe-fetch-waveform': starts waveform
-  generation for the current track, unless already requested.
-
-A function of your own -- synced lyrics, say -- runs alongside them."
+- `supersonic-now-playing-update-duration-field': update the
+  \"Duration:\" row.
+- `supersonic-now-playing-recolor-waveform': update the played part
+  of the waveform.
+- `supersonic-now-playing-maybe-fetch-waveform': compute the
+  waveform of the current track."
   :type '(repeat function)
   :group 'supersonic)
 
@@ -133,20 +114,12 @@ A function of your own -- synced lyrics, say -- runs alongside them."
         #'supersonic-now-playing-render-queue-position
         #'supersonic-now-playing-render-format
         #'supersonic-now-playing-render-size)
-  "Functions laying out the now-playing buffer's informational text rows.
-Each is called as (FUNCTION BUFF SONG), in order, after
-`supersonic-now-playing-layout-functions'.  SONG is the track as
-`supersonic-provider-track' resolved it: `:title', `:artist', `:album',
-`:duration' (seconds), `:track', `:art', `:suffix', `:content-type' and
-`:size' (bytes), each left out when unknown, plus keys of the
-provider's own, such as Subsonic's `:genre'.  Should the lookup fail,
-SONG is just (:id ID :title ID).  A function that signals an error is
-reported and skipped.
-
-The built-ins each leave their row out when its value is missing:
-`supersonic-now-playing-render-title', `-artist', `-album',
-`-duration', `-queue-position', `-format' and `-size'.  A function of
-your own -- a \"Genre:\" row, say -- inserts its row alongside."
+  "Functions inserting the text rows of the now-playing buffer, in order.
+Each is called with BUFF and SONG, the track plist, after
+`supersonic-now-playing-layout-functions'.  SONG may have any keys
+described in `supersonic-provider.el', and keys of the provider's
+own, such as Subsonic's `:genre'.  The built-ins omit their row when
+the value is unknown.  Errors are reported and the function skipped."
   :type '(repeat function)
   :group 'supersonic)
 
@@ -155,32 +128,25 @@ your own -- a \"Genre:\" row, say -- inserts its row alongside."
 ;;;
 
 (defun supersonic--cell-label (cell)
-  "Return the text CELL shows in a tabulated-list row, or nil for an image.
-CELL is a column descriptor as in `tabulated-list-entries'."
+  "Return the text of the tabulated-list CELL, or nil for an image."
   (cond
    ((stringp cell) cell)
-   ;; `tabulated-list-print-col' draws an image over a single space, so the image's real width is unknown here.
-   ;; Supersonic's own art is a `display'-property string in the last column, which is never measured.
+   ;; Drawn over a single space; its real width is unknown.
    ((eq (car cell) 'image) nil)
    (t (car cell))))
 
 (defun supersonic--cell-width (cell)
-  "Return the width in characters CELL takes up in a tabulated-list row.
-CELL is a column descriptor as in `tabulated-list-entries'.  Blind to
-faces; `supersonic--cell-columns' sees them."
+  "Return the width of CELL in characters."
   (let ((label (supersonic--cell-label cell)))
     (if label (string-width label) 1)))
 
 (defun supersonic--pixelwise-p ()
-  "Return non-nil if cells can be measured as drawn, from Emacs 29."
+  "Return non-nil if cells can be measured in pixels (Emacs 29 and later)."
   (fboundp 'string-pixel-width))
 
 (defun supersonic--string-pixel-width (string)
-  "Return the width of STRING in pixels as drawn in the selected window.
-Counts the current buffer's face remappings (e.g. `text-scale-adjust')
-where `string-pixel-width' can, from Emacs 31; only if there are any,
-as that makes measuring several times slower.  Before Emacs 29, which
-lacks it, makes do with STRING's width in characters."
+  "Return the width of STRING in pixels in the selected window.
+Count face remappings where possible.  Before Emacs 29, estimate."
   (if (fboundp 'string-pixel-width)
       (if (and face-remapping-alist (>= (cdr (func-arity 'string-pixel-width)) 2))
           (funcall #'string-pixel-width string (current-buffer))
@@ -188,22 +154,17 @@ lacks it, makes do with STRING's width in characters."
     (* (string-width string) (frame-char-width))))
 
 (defvar-local supersonic--column-pixels nil
-  "Width of a column, in pixels, in the window the list was last fitted to.")
+  "Width of a column in pixels, as of the last fit.")
 
 (defvar-local supersonic--cell-pixels nil
-  "Each cell's width in pixels as drawn, by cell, from the last fit.
-An `eq' hash table filled by `supersonic--cell-columns'.")
+  "Hash table of each cell's width in pixels, as of the last fit.")
 
 (defvar-local supersonic--cut-cells nil
-  "The cells `supersonic--shown-cells' cut down, by cell.
-An `eq' hash table of (PIXELS . SHOWN): SHOWN is the cell cut to fit
-PIXELS.")
+  "Hash table of the cells cut to fit, to (PIXELS . SHOWN).")
 
 (defun supersonic--cell-columns (cell)
-  "Return how many columns CELL takes up as drawn in the selected window.
-Remembers its pixel width in `supersonic--cell-pixels'.  Never less
-than its width in characters, by which `tabulated-list-print' truncates
-it anyway, so a cell in a narrow face is not cut short."
+  "Return the number of columns CELL takes up in the selected window.
+Never less than its width in characters."
   (let ((label (supersonic--cell-label cell)))
     (if (not label)
         1
@@ -213,8 +174,7 @@ it anyway, so a cell in a narrow face is not cut short."
                     supersonic--column-pixels)))))
 
 (defun supersonic--widest-shrinkable-column (widths minimums)
-  "Return the index of the widest of WIDTHS still above its MINIMUMS entry.
-Nil when every column is down to its minimum.  Ties go to the leftmost."
+  "Return the index of the widest of WIDTHS above its MINIMUMS, or nil."
   (cl-loop with widest = nil
            with widest-width = 0
            for width in widths
@@ -225,19 +185,12 @@ Nil when every column is down to its minimum.  Ties go to the leftmost."
            finally return widest))
 
 (defun supersonic--fit-column-widths (format entries available &optional measure)
-  "Return a copy of FORMAT with its widths fitted to ENTRIES.
+  "Return a copy of FORMAT with column widths fitted to ENTRIES.
 FORMAT and ENTRIES are as in `tabulated-list-format' and
-`tabulated-list-entries'.  Every column but the last becomes as wide as
-its widest cell, though never narrower than its header plus room for
-the sort indicator, nor than one column.  The last column, which
-`tabulated-list-print' neither pads nor truncates, keeps its width, as
-the room set aside for it (e.g. for cover art that arrives after the
-first print), so art columns must come last.
-When AVAILABLE, the columns a window line holds, is non-nil and the row
-would not fit into it, the widest columns give way first, down to their
-minimum; `supersonic--print-entry' then draws their cells cut down.
-MEASURE, a function of a cell returning its width in columns, defaults
-to `supersonic--cell-width'."
+`tabulated-list-entries'.  Each column but the last gets as wide as
+its widest cell or header.  If the row is wider than AVAILABLE
+columns, the widest columns shrink first.  MEASURE returns a cell's
+width and defaults to `supersonic--cell-width'."
   (let* ((count (length format))
          (fitted (max 0 (1- count)))
          (minimums
@@ -272,8 +225,7 @@ to `supersonic--cell-width'."
       format))))
 
 (defun supersonic--truncate-to-pixels (string pixels)
-  "Return STRING shortened to fit PIXELS as drawn in the selected window.
-What it leaves out becomes an ellipsis in STRING's face."
+  "Return STRING shortened, with an ellipsis, to fit PIXELS."
   (let ((ellipsis (apply #'propertize (truncate-string-ellipsis) (text-properties-at 0 string))))
     (if (fboundp 'truncate-string-pixelwise)
         ;; From Emacs 31; keeps composed characters whole and counts face remappings.
@@ -289,15 +241,8 @@ What it leaves out becomes an ellipsis in STRING's face."
         fitting))))
 
 (defun supersonic--shown-cells (cols)
-  "Return COLS as drawn: each cell too wide for its column cut down.
-COLS is a vector of cells as in `tabulated-list-entries', left as it
-is; a cut copy is returned only if a cell needs cutting.
-`tabulated-list-print' truncates by characters alone, which leaves a
-cell in a taller or wider face spilling into the next column; this cuts
-by the pixel widths `supersonic--fit-columns' measured, against the
-columns' current widths, so widening one with \\[tabulated-list-widen-current-column]
-shows more again.  Like `tabulated-list-print', it leaves the last
-column alone."
+  "Return COLS with each cell cut down to its column's width in pixels.
+COLS itself is not modified.  The last column is left as is."
   (let ((shown cols))
     (dotimes (n (1- (length tabulated-list-format)))
       (let* ((cell (aref cols n))
@@ -314,31 +259,22 @@ column alone."
     shown))
 
 (defun supersonic--print-entry (id cols)
-  "Insert the entry ID with COLS, cut down to fit, at point.
-The `tabulated-list-printer' of a list fitted by `supersonic--fit-columns'.
-Cutting only what is drawn keeps whole cells in `tabulated-list-entries'
-and on the row, so sorting compares them whole."
+  "Insert the entry ID with COLS at point, cells cut down to fit.
+Used as `tabulated-list-printer'.  The entry keeps the whole cells,
+for sorting."
   (let ((beg (point)))
     (tabulated-list-print-entry id (supersonic--shown-cells cols))
     (put-text-property beg (point) 'tabulated-list-entry cols)))
 
 (defun supersonic--window-columns ()
-  "Return how many columns the selected window's text area holds.
-Columns of the frame's default font, the unit `:align-to' and so
-`tabulated-list-print' place columns in, rather than the buffer's
-possibly text-scaled one.  Leaves out line numbers and the column the
-continuation glyph needs."
+  "Return the number of columns of the selected window's text area.
+In columns of the frame's default font, excluding line numbers."
   (1- (/ (- (window-body-width nil t) (line-number-display-width t)) (frame-char-width))))
 
 (defun supersonic--fit-columns ()
-  "Fit the current tabulated-list buffer's columns to its entries.
-The widths come from `supersonic--fit-column-widths', against the
-window showing the buffer, or else the selected one, where a freshly
-opened buffer is about to be shown.  From Emacs 29, cells are measured
-as drawn there, so faces with their own height or typeface fit too,
-and `supersonic--print-entry' draws those still too wide cut down.
-Also on `tabulated-list-revert-hook', so \\[revert-buffer] refits, e.g.
-after resizing the window."
+  "Fit the column widths of the current tabulated-list buffer to its entries.
+Fit them to the window showing the buffer, or the selected one.  From
+Emacs 29, cells are measured in pixels and cut down where needed."
   (when (> (length tabulated-list-format) 0)
     (let ((buff (current-buffer)))
       (with-selected-window (or (get-buffer-window buff t) (selected-window))
@@ -353,14 +289,13 @@ after resizing the window."
                    (and pixelwise #'supersonic--cell-columns)))
             (when pixelwise
               (setq tabulated-list-printer #'supersonic--print-entry)
-              ;; Cut now, while the window fitted to is selected, rather than wherever the next print happens.
+              ;; Now, while the window fitted to is selected.
               (dolist (entry tabulated-list-entries)
                 (supersonic--shown-cells (cadr entry))))
             (tabulated-list-init-header)))))))
 
 (defun supersonic--print-list (entries)
-  "Show ENTRIES in the current tabulated-list buffer, columns fitted to them.
-ENTRIES is as in `tabulated-list-entries'; see `supersonic--fit-columns'."
+  "Show ENTRIES in the current tabulated-list buffer, with fitted columns."
   (setq tabulated-list-entries entries)
   (supersonic--fit-columns)
   (tabulated-list-print t))
@@ -378,20 +313,15 @@ ENTRIES is as in `tabulated-list-entries'; see `supersonic--fit-columns'."
     (and buff (buffer-live-p buff) buff)))
 
 (defun supersonic-queue-maybe-refresh ()
-  "Refresh the play queue buffer from the active backend, if it is open.
-Called whenever the queue is likely to have changed: after
-starting/enqueueing tracks and whenever the active backend reports a
-track starting or ending."
+  "Refresh the play queue buffer, if it is open."
   (let ((buff (supersonic-queue-buffer)))
     (when buff
       (supersonic-queue-fetch-and-render buff))))
 
 (aio-defun supersonic-queue-parse (entries)
-  "Turn ENTRIES into tabulated-list entries.
-ENTRIES are as resolved by `supersonic-playback-queue'.  Each entry's
-track is looked up through `supersonic-provider-track', all at once,
-unless the entry brings its `:track' along; a failed lookup shows as
-\"?\"."
+  "Return a promise resolving to tabulated-list entries for queue ENTRIES.
+ENTRIES are from `supersonic-playback-queue'.  Tracks are looked up
+unless the entry has them; a failed lookup shows as \"?\"."
   (let* ((pending
           (seq-map-indexed
            (lambda (entry index)
@@ -402,8 +332,7 @@ unless the entry brings its `:track' along; a failed lookup shows as
                      (not (plist-get entry :track))
                      (aio-catch (supersonic-provider-track track-id))))))
            entries)))
-    ;; `dolist' rather than `mapcar', so that `aio-await' stays in this
-    ;; function's own body, where generator.el can transform it.
+    ;; Not `mapcar': `aio-await' must not be inside a lambda.
     (let (rows)
       (dolist (item pending)
         (pcase-let ((`(,index ,track-id ,current ,brought ,promise) item))
@@ -413,7 +342,6 @@ unless the entry brings its `:track' along; a failed lookup shows as
                    ;; Without a track id, the position serves as the row's id.
                    (or track-id (number-to-string index))
                    (vector
-                    ;; A blank rather than "" when not current, so the fitted marker column keeps its width.
                     (if current
                         "▶"
                       " ")
@@ -426,7 +354,7 @@ unless the entry brings its `:track' along; a failed lookup shows as
       (nreverse rows))))
 
 (aio-defun supersonic-queue-fetch-and-render (buff)
-  "Query the active playback backend for its play queue and render it into BUFF."
+  "Show the active backend's play queue in BUFF."
   (when (buffer-live-p buff)
     (let ((entries (aio-await (supersonic-queue-parse (aio-await (supersonic-playback-queue))))))
       (when (buffer-live-p buff)
@@ -434,7 +362,7 @@ unless the entry brings its `:track' along; a failed lookup shows as
           (supersonic--print-list entries))))))
 
 (defun supersonic-queue-refresh ()
-  "Refresh the play queue buffer from the active backend's current play queue."
+  "Refresh the play queue buffer."
   (interactive)
   (supersonic-queue-fetch-and-render (current-buffer)))
 
@@ -445,8 +373,7 @@ unless the entry brings its `:track' along; a failed lookup shows as
   "Keymap for `supersonic-queue-mode'.")
 
 (define-derived-mode supersonic-queue-mode tabulated-list-mode "Supersonic Queue"
-  "Major mode for the play queue opened by `supersonic-show-queue'.
-Mirrors the active backend's play queue, refreshed whenever it may have changed."
+  "Major mode for the play queue buffer, see `supersonic-show-queue'."
   (setq tabulated-list-format [("" 2 nil) ("Title" 40 t) ("Artist" 25 t) ("Album" 25 t)])
   (setq tabulated-list-padding 2)
   (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
@@ -455,7 +382,7 @@ Mirrors the active backend's play queue, refreshed whenever it may have changed.
 
 ;;;###autoload
 (defun supersonic-show-queue ()
-  "Open a buffer showing the active backend's current play queue."
+  "Show the play queue of the active backend."
   (interactive)
   (let ((buff (get-buffer-create supersonic-queue-buffer-name)))
     (with-current-buffer buff
@@ -472,115 +399,75 @@ Mirrors the active backend's play queue, refreshed whenever it may have changed.
   "Name of the buffer used by `supersonic-show-now-playing'.")
 
 (defvar supersonic-now-playing--timer nil
-  "Timer ticking the playback position shown in the now-playing buffer.")
+  "Timer updating the playback position in the now-playing buffer.")
 
 (defvar supersonic-now-playing--animation-timer nil
-  "Timer advancing `supersonic-now-playing-cycle-fields'.
-Only runs while that list is non-nil and a track is playing; see
-`supersonic-now-playing--animation-tick'.")
+  "Timer running `supersonic-now-playing-animation-functions'.")
 
 (defvar supersonic-now-playing--animation-timer-interval nil
-  "Frame interval the animation timer was last started with, or nil.
-A timer's period is fixed, so
-`supersonic-now-playing--start-animation-timer' compares this with
-`supersonic-now-playing-animation-frame-interval' to pick up a change
-made while playing.")
+  "Interval the animation timer was started with, or nil.")
 
 (defvar-local supersonic-now-playing--title nil
-  "Title of the track the now-playing buffer is currently showing, or nil.
-Kept, like `supersonic-now-playing--artist' and
-`supersonic-now-playing--album', for the animation to rotate through.")
+  "Title of the track shown in the now-playing buffer, or nil.")
 
 (defvar-local supersonic-now-playing--artist nil
-  "Artist of the track the now-playing buffer is currently showing, or nil.
-See `supersonic-now-playing--title'.")
+  "Artist of the track shown in the now-playing buffer, or nil.")
 
 (defvar-local supersonic-now-playing--album nil
-  "Album of the track the now-playing buffer is currently showing, or nil.
-See `supersonic-now-playing--title'.")
+  "Album of the track shown in the now-playing buffer, or nil.")
 
 (defvar-local supersonic-now-playing--art-id nil
-  "Cover art id of the track the now-playing buffer is currently showing, or nil.
-Kept for the art overlay to redraw the art with.")
+  "Cover art reference of the track shown in the now-playing buffer, or nil.")
 
 (defvar-local supersonic-now-playing--field-index 0
-  "Index into `supersonic-now-playing-cycle-fields' of the field currently shown.
-Reset to 0, the title, whenever a new track is rendered.")
+  "Index in `supersonic-now-playing-cycle-fields' of the field shown.")
 
 (defvar-local supersonic-now-playing--cycle-elapsed 0
-  "Seconds accumulated toward the next `supersonic-now-playing--advance-field'.
-Real elapsed time, so that fields switch on schedule however unevenly
-the timer fires.  Reset to 0 whenever a new track is rendered.")
+  "Seconds elapsed toward the next switch of the field shown.")
 
 (defvar-local supersonic-now-playing--cycle-tick nil
-  "Animation timestamp as of the last DELTA actually accumulated, or nil.
-Both field-cycling built-ins in `supersonic-now-playing-animation-functions'
-get the same DELTA in a tick; comparing this with
-`supersonic-now-playing--animation-last-time' keeps it from being
-accumulated twice.")
+  "The animation frame whose time was last counted toward the field switch.
+Several animation functions may count the same frame.")
 
 (defvar-local supersonic-now-playing--cycle-changed nil
-  "Whether `supersonic-now-playing--advance-field' last switched the field.
-Cached so a second call within the same tick (see
-`supersonic-now-playing--cycle-tick') answers the same way the first
-one did instead of re-deciding from DELTA already spent.")
+  "Whether the field shown switched in the last counted animation frame.")
 
 (defvar-local supersonic-now-playing--animation-last-time nil
-  "Value of `float-time' at this buffer's last animation tick, or nil.
-For `supersonic-now-playing--animation-tick' to measure real elapsed
-time.  Reset to nil whenever a new track is rendered.")
+  "Time of the last animation frame, or nil.")
 
 (defvar-local supersonic-now-playing--scroll-offset 0
-  "Pixels `supersonic-now-playing-animate-art-overlay-scroll' has scrolled so far.
-0 is the text's left edge, `supersonic-art-scroll-max-offset' its
-right one.  Reset to 0 whenever a new track is rendered.")
+  "Pixels the scrolling label on the cover art is scrolled by.")
 
 (defvar-local supersonic-now-playing--scroll-phase 'pause-start
-  "Where `supersonic-now-playing--advance-scroll' currently is in its bounce.
-One of `pause-start', `forward', `pause-end' and `backward', cycled in
-that order.  Reset to `pause-start' whenever a new track is rendered.")
+  "Phase of the scrolling label.
+One of `pause-start', `forward', `pause-end' and `backward'.")
 
 (defvar-local supersonic-now-playing--scroll-pause-elapsed 0
-  "Seconds accumulated in the current `pause-start' or `pause-end' phase.
-Compared against `supersonic-now-playing-scroll-pause'.")
+  "Seconds elapsed in the current pause of the scrolling label.")
 
 (defvar-local supersonic-now-playing--duration nil
-  "Duration in seconds of the track the now-playing buffer is showing.")
+  "Duration in seconds of the track shown in the now-playing buffer.")
 
 (defvar-local supersonic-now-playing--queue-place nil
-  "Where the now-playing buffer's track sits in the play queue, or nil.
-A (POSITION . TOTAL) pair, POSITION being 1-based; nil when the
-active backend has no queue to report on.")
+  "(POSITION . TOTAL) of the track shown in the play queue, or nil.")
 
 (defvar-local supersonic-now-playing--track-id nil
-  "Id of the track the now-playing buffer is currently showing, or nil.
-Lets a waveform arriving after a track change be discarded.")
+  "Id of the track shown in the now-playing buffer, or nil.")
 
 (defvar-local supersonic-now-playing--paused nil
-  "Whether the now-playing buffer's last render showed playback as paused.
-For `supersonic-now-playing-layout-buttons' to read.")
+  "Non-nil if the now-playing buffer shows playback as paused.")
 
 (defvar-local supersonic-now-playing--position nil
-  "Playback position in seconds as of the now-playing buffer's last update.
-Read by `supersonic-now-playing--show-waveform': a waveform arriving a
-transcode after the render that asked for it must be drawn at the
-current position, not the one from back then.")
+  "Return POSITION and DURATION in seconds, either may be nil, as text.")
 
 (defvar-local supersonic-now-playing--waveform nil
-  "(TRACK-ID . ENVELOPE) for the waveform seekbar currently shown, or nil.
-ENVELOPE lets `supersonic-now-playing-recolor-waveform' recolor the
-seekbar's played/unplayed split every second without asking
-`supersonic-waveform-ensure' again.")
+  "(TRACK-ID . ENVELOPE) of the waveform shown, or nil.")
 
 (defvar-local supersonic-now-playing--waveform-bucket nil
-  "Index of the first unplayed bucket in the seekbar as last drawn, or nil.
-The seekbar only changes once the position crosses into another
-bucket, so `supersonic-now-playing-recolor-waveform' redraws only then.")
+  "Index of the first unplayed bucket of the waveform as drawn, or nil.")
 
 (defvar-local supersonic-now-playing--waveform-requested nil
-  "Non-nil once a waveform fetch has been kicked off for the current track.
-Set whether or not it succeeded, so that a failed one is not retried,
-while one skipped for a hidden buffer is still made once it shows.")
+  "Non-nil once the waveform of the current track was requested.")
 
 (defvar-local supersonic-now-playing--stale-images nil
   "Alist of FIELD to the image last replaced in FIELD.
@@ -593,42 +480,35 @@ update, not when replacing it.")
     (and buff (buffer-live-p buff) buff)))
 
 (defun supersonic-now-playing--start-timer ()
-  "Start ticking the playback position, unless that is already happening."
+  "Start updating the playback position, unless already started."
   (unless supersonic-now-playing--timer
     (setq supersonic-now-playing--timer
           (run-at-time
            supersonic-now-playing-interval supersonic-now-playing-interval #'supersonic-now-playing--tick))))
 
 (defun supersonic-now-playing--stop-timer ()
-  "Stop ticking the playback position."
+  "Stop updating the playback position."
   (when supersonic-now-playing--timer
     (cancel-timer supersonic-now-playing--timer)
     (setq supersonic-now-playing--timer nil)))
 
 (defun supersonic-now-playing--field-value (field)
-  "Return the current buffer's cached value for FIELD (title/artist/album)."
+  "Return the value of FIELD, `title', `artist' or `album'."
   (pcase field
     ('title supersonic-now-playing--title)
     ('artist supersonic-now-playing--artist)
     ('album supersonic-now-playing--album)))
 
 (defun supersonic-now-playing--current-field ()
-  "Return (FIELD . VALUE) for whichever field is currently up to be shown.
-FIELD is what `supersonic-now-playing--field-index' points at in
-`supersonic-now-playing-cycle-fields'; VALUE falls back to the title,
-or \"?\", when the list is empty or the field has no value."
+  "Return (FIELD . VALUE) of the field to show.
+VALUE falls back to the title, or \"?\"."
   (let* ((fields supersonic-now-playing-cycle-fields)
          (field (and fields (nth (mod supersonic-now-playing--field-index (length fields)) fields))))
     (cons (or field 'title) (or (and field (supersonic-now-playing--field-value field)) supersonic-now-playing--title "?"))))
 
 (defun supersonic-now-playing--advance-field (delta)
-  "Advance `supersonic-now-playing--field-index' if DELTA pushes it over.
-DELTA, the real seconds since the last tick, is accumulated in
-`supersonic-now-playing--cycle-elapsed' against
-`supersonic-now-playing-cycle-interval', any remainder kept so that
-switches stay on schedule.  A second call in the same tick does not
-accumulate DELTA again; see `supersonic-now-playing--cycle-tick'.
-Returns non-nil if the field changed this tick."
+  "Count DELTA seconds toward the next field and switch when due.
+Return non-nil if the field switched in this frame."
   (if (equal supersonic-now-playing--cycle-tick supersonic-now-playing--animation-last-time)
       supersonic-now-playing--cycle-changed
     (setq supersonic-now-playing--cycle-tick supersonic-now-playing--animation-last-time)
@@ -642,35 +522,29 @@ Returns non-nil if the field changed this tick."
       supersonic-now-playing--cycle-changed)))
 
 (defun supersonic-now-playing-animate-label (buff delta)
-  "Show BUFF's currently due field as its text label below the cover art.
-DELTA is as `supersonic-now-playing-animation-functions' get it; at 0,
-this always redraws."
+  "Show the current field of BUFF as a label below the cover art.
+DELTA is the seconds since the last frame; 0 always redraws."
   (when (or (= delta 0) (supersonic-now-playing--advance-field delta))
     (supersonic-now-playing--update-field
      buff 'label (propertize (cdr (supersonic-now-playing--current-field)) 'face 'supersonic-now-playing-label))))
 
 (defun supersonic-now-playing--overlay-waveform ()
-  "Return (ENVELOPE . PROGRESS) for the cover art overlay to layer in, or nil.
-Nil until a waveform is cached for the current track.  Whether it is
-drawn is up to `supersonic-art-overlay-layers'/`-scroll-layers'."
+  "Return (ENVELOPE . PROGRESS) of the current waveform, or nil."
   (when supersonic-now-playing--waveform
     (cons
      (cdr supersonic-now-playing--waveform)
      (supersonic-now-playing--progress-ratio supersonic-now-playing--position supersonic-now-playing--duration))))
 
 (defun supersonic-now-playing--maybe-seekable (propertized waveform layers)
-  "Return PROPERTIZED, made clickable-to-seek if LAYERS drew WAVEFORM into it.
-Asks `supersonic-art-overlay-waveform-lane-p', as the overlay's layout
-does, so that the two agree."
+  "Return PROPERTIZED, made seekable by click if LAYERS draw WAVEFORM."
   (if (supersonic-art-overlay-waveform-lane-p waveform layers)
       (supersonic-waveform-seekable (get-text-property 0 'display propertized))
     propertized))
 
 (defun supersonic-now-playing-animate-art-overlay (buff delta)
-  "Layer BUFF's currently due field onto its cover art instead of the side label.
-DELTA is as `supersonic-now-playing-animate-label' takes it.  Falls
-back to that function while there is no cached art.  Also layers in
-the waveform, clickable to seek where a lane was drawn."
+  "Show the current field of BUFF on the cover art, with the waveform.
+DELTA is as in `supersonic-now-playing-animate-label', which is used
+instead while there is no cover art."
   (with-current-buffer buff
     (if (and supersonic-now-playing--art-id
              (supersonic-art-available-p)
@@ -687,21 +561,16 @@ the waveform, clickable to seek where a lane was drawn."
       (supersonic-now-playing-animate-label buff delta))))
 
 (defun supersonic-now-playing--scroll-text ()
-  "Return `supersonic-now-playing-cycle-fields''s values joined into one line.
-Fields without a value are left out; with none at all, the title, or
-\"?\"."
+  "Return the values of `supersonic-now-playing-cycle-fields' joined in one line."
   (let ((values (delq nil (mapcar #'supersonic-now-playing--field-value supersonic-now-playing-cycle-fields))))
     (if values
         (mapconcat #'identity values "   •   ")
       (or supersonic-now-playing--title "?"))))
 
 (defun supersonic-now-playing--advance-scroll (delta max-offset)
-  "Advance the bounce between 0 and MAX-OFFSET by DELTA real seconds.
-Cycles `supersonic-now-playing--scroll-phase' through `pause-start',
-resting at 0 for `supersonic-now-playing-scroll-pause' seconds,
-`forward' at `supersonic-now-playing-scroll-step' pixels per second,
-`pause-end', resting at MAX-OFFSET, and `backward'.  MAX-OFFSET must be
-positive."
+  "Advance the scrolling label by DELTA seconds, between 0 and MAX-OFFSET.
+It rests at either end for `supersonic-now-playing-scroll-pause'
+seconds.  MAX-OFFSET must be positive."
   (pcase supersonic-now-playing--scroll-phase
     ('pause-start
      (setq supersonic-now-playing--scroll-pause-elapsed (+ supersonic-now-playing--scroll-pause-elapsed delta))
@@ -727,12 +596,9 @@ positive."
        (setq supersonic-now-playing--scroll-phase 'pause-start)))))
 
 (defun supersonic-now-playing-animate-art-overlay-scroll (buff delta)
-  "Bounce `supersonic-now-playing-cycle-fields' across BUFF's cover art.
-DELTA is real seconds elapsed since the last animation tick.  Every
-field is joined into one line, drawn once if it fits, and otherwise
-scrolled back and forth; see `supersonic-now-playing--advance-scroll'.
-Falls back to `supersonic-now-playing-animate-label' while there is no
-cached art.  The waveform lane stays put below the scrolling text."
+  "Show all fields of BUFF in one line on the cover art, scrolling if needed.
+DELTA is as in `supersonic-now-playing-animate-label', which is used
+instead while there is no cover art."
   (with-current-buffer buff
     (if (and supersonic-now-playing--art-id
              (supersonic-art-available-p)
@@ -764,9 +630,7 @@ cached art.  The waveform lane stays put below the scrolling text."
       (supersonic-now-playing-animate-label buff delta))))
 
 (defun supersonic-now-playing--start-animation-timer ()
-  "Start rotating `supersonic-now-playing-cycle-fields', unless already running.
-Ticks every `supersonic-now-playing-animation-frame-interval' seconds,
-restarting the timer if that changed since it was started."
+  "Start the animation timer, unless it is running at the current interval."
   (when (and supersonic-now-playing--animation-timer
              (not (equal supersonic-now-playing--animation-timer-interval
                          supersonic-now-playing-animation-frame-interval)))
@@ -779,16 +643,15 @@ restarting the timer if that changed since it was started."
            #'supersonic-now-playing--animation-tick))))
 
 (defun supersonic-now-playing--stop-animation-timer ()
-  "Stop rotating `supersonic-now-playing-cycle-fields'."
+  "Stop the animation timer."
   (when supersonic-now-playing--animation-timer
     (cancel-timer supersonic-now-playing--animation-timer)
     (setq supersonic-now-playing--animation-timer nil)
     (setq supersonic-now-playing--animation-timer-interval nil)))
 
 (defun supersonic-now-playing--stopped-buffer (stop-fn)
-  "Return the live now-playing buffer, or call STOP-FN and return nil.
-Nil, too, when nothing is playing.  STOP-FN stops the calling tick's
-timer."
+  "Return the now-playing buffer, or call STOP-FN and return nil.
+Return nil if nothing is playing, too."
   (let ((buff (supersonic-now-playing-buffer)))
     (if (or (not buff) (not (supersonic-playback-live-p)))
         (progn
@@ -797,11 +660,8 @@ timer."
       buff)))
 
 (defun supersonic-now-playing--run-field-functions (functions buff arg)
-  "Call each of FUNCTIONS as (FUNCTION BUFF ARG), one broken entry at a time.
-For the customizable function lists: an entry that signals an error is
-reported and skipped rather than taking the rest, and the timer
-driving them, down with it.  Then redisplays, if
-`supersonic-now-playing-force-redisplay' says so."
+  "Call each of FUNCTIONS with BUFF and ARG, reporting errors.
+Then redisplay if `supersonic-now-playing-force-redisplay' is non-nil."
   (dolist (function functions)
     (condition-case err
         (funcall function buff arg)
@@ -810,12 +670,8 @@ driving them, down with it.  Then redisplays, if
     (redisplay t)))
 
 (defun supersonic-now-playing--animation-tick ()
-  "Measure real elapsed time and pass it on to the animation functions.
-Runs `supersonic-now-playing-animation-functions' with the real seconds
-since the last tick, as a timer can run late.  Stops once nothing is
-playing.  Skips the functions while the buffer is not on display -- a
-scrolling overlay redraws a whole SVG every tick -- but still records
-the time, so that a hidden stretch does not count as elapsed."
+  "Run `supersonic-now-playing-animation-functions' for one frame.
+Only while the buffer is visible.  Stop once nothing is playing."
   (let ((buff (supersonic-now-playing--stopped-buffer #'supersonic-now-playing--stop-animation-timer)))
     (when buff
       (with-current-buffer buff
@@ -828,17 +684,15 @@ the time, so that a hidden stretch does not count as elapsed."
             (supersonic-now-playing--run-field-functions supersonic-now-playing-animation-functions buff delta)))))))
 
 (defun supersonic-now-playing--tick ()
-  "Update the playback position in the now-playing buffer.
-Asks the active backend rather than counting locally, so that seeks
-and pauses never cause drift.  Stops once there is nothing to update,
-and keeps quiet while the buffer is not on display."
+  "Update the playback position in the now-playing buffer, if visible.
+Stop once nothing is playing."
   (let ((buff (supersonic-now-playing--stopped-buffer #'supersonic-now-playing--stop-timer)))
     (when (and buff (get-buffer-window buff t))
       (supersonic-now-playing--show-position buff))))
 
 (aio-defun supersonic-now-playing--show-position (buff)
-  "Ask the active backend for position and update BUFF accordingly.
-Runs `supersonic-now-playing-position-functions' with it."
+  "Run `supersonic-now-playing-position-functions' in BUFF.
+They get the current position."
   (let ((position (aio-await (supersonic-playback-status 'position))))
     (when (buffer-live-p buff)
       (with-current-buffer buff
@@ -846,17 +700,13 @@ Runs `supersonic-now-playing-position-functions' with it."
       (supersonic-now-playing--run-field-functions supersonic-now-playing-position-functions buff position))))
 
 (defun supersonic-now-playing-maybe-update-position ()
-  "Update the position shown in the now-playing buffer, if it is on display.
-On `supersonic-playback-position-change-hook', so that a seek shows
-right away rather than at the next tick.  Looks up no metadata."
+  "Update the position in the now-playing buffer, if visible."
   (let ((buff (supersonic-now-playing-buffer)))
     (when (and buff (get-buffer-window buff t) (supersonic-playback-live-p))
       (supersonic-now-playing--show-position buff))))
 
 (defun supersonic-now-playing-maybe-refresh ()
-  "Refresh the now-playing buffer from the active backend's state, if it is open.
-Called at the same points as `supersonic-queue-maybe-refresh', plus
-whenever the active backend reports that playback was paused or resumed."
+  "Refresh the now-playing buffer, if it is open."
   (let ((buff (supersonic-now-playing-buffer)))
     (when buff
       (supersonic-now-playing-fetch-and-render buff))))
@@ -868,30 +718,22 @@ whenever the active backend reports that playback was paused or resumed."
     (supersonic-playback-queue-change-hook . supersonic-now-playing-maybe-refresh)
     (supersonic-playback-state-change-hook . supersonic-now-playing-maybe-refresh)
     (supersonic-playback-position-change-hook . supersonic-now-playing-maybe-update-position))
-  "The `supersonic-playback.el' hook entries that keep this file's buffers current.
-Each element is (HOOK . FUNCTION).  Added by
-`supersonic--add-playback-hooks' once there is a play queue or
-now-playing buffer, and removed when the last of them is killed,
-rather than at load time.")
+  "Alist of playback hooks to the functions keeping the buffers current.
+They are added while a queue or now-playing buffer exists.")
 
 (defun supersonic--add-playback-hooks ()
-  "Add `supersonic--playback-hooks', and remove them again with this buffer.
-Called from the play queue and now-playing modes.  Adding is
-idempotent, so every such buffer can call this; the buffer-local
-`kill-buffer-hook' entry takes them off once no such buffer is left."
+  "Add `supersonic--playback-hooks' until no buffer needs them."
   (pcase-dolist (`(,hook . ,fn) supersonic--playback-hooks)
     (add-hook hook fn))
   (add-hook 'kill-buffer-hook #'supersonic--maybe-remove-playback-hooks nil t))
 
 (defun supersonic--remove-playback-hooks ()
-  "Remove every entry of `supersonic--playback-hooks'."
+  "Remove `supersonic--playback-hooks'."
   (pcase-dolist (`(,hook . ,fn) supersonic--playback-hooks)
     (remove-hook hook fn)))
 
 (defun supersonic--maybe-remove-playback-hooks ()
-  "Remove `supersonic--playback-hooks' unless another buffer still needs them.
-Run from `kill-buffer-hook' in a play queue or now-playing buffer, which
-is still live at that point, so it is the other buffers that count."
+  "Remove `supersonic--playback-hooks' unless another buffer needs them."
   (unless (seq-some
            (lambda (buff)
              (and (not (eq buff (current-buffer)))
@@ -901,9 +743,8 @@ is still live at that point, so it is the other buffers that count."
     (supersonic--remove-playback-hooks)))
 
 (defun supersonic-now-playing--insert-field (label value &optional field)
-  "Insert one \"LABEL: VALUE\" metadata row, skipping it if VALUE is nil.
-FIELD, if given, tags VALUE so `supersonic-now-playing--update-field'
-can replace it later without re-rendering the whole buffer."
+  "Insert a \"LABEL: VALUE\" row, unless VALUE is nil.
+FIELD, if non-nil, tags VALUE for `supersonic-now-playing--update-field'."
   (when value
     (insert
      (propertize (format "%-10s" (concat label ":")) 'face 'shadow)
@@ -913,10 +754,7 @@ can replace it later without re-rendering the whole buffer."
      "\n")))
 
 (defun supersonic-now-playing--update-field (buff field value)
-  "Replace the text tagged FIELD in BUFF with VALUE, leaving the rest alone.
-The playback position ticks once a second; re-rendering everything that
-often would rebuild the cover art image and yank point back to the top
-of the buffer each time."
+  "Replace the text tagged FIELD in BUFF with VALUE."
   (when (buffer-live-p buff)
     (with-current-buffer buff
       (save-excursion
@@ -926,13 +764,9 @@ of the buffer each time."
             (let ((inhibit-read-only t)
                   (stale (get-text-property (prop-match-beginning match) 'display)))
               (delete-region (prop-match-beginning match) (prop-match-end match))
-              ;; Every seekbar redraw is a new image, which stays cached
-              ;; for `image-cache-eviction-delay' whether shown or not.
-              ;; Flushing STALE right away would free its id for VALUE's
-              ;; image to reuse, and redisplay skips a glyph whose id is
-              ;; unchanged.  So it is flushed one update later instead.
-              ;; FRAME t flushes from every window-system frame, where
-              ;; the selected frame may be none.
+              ;; Flush replaced images, or they pile up in the image
+              ;; cache.  One update late: flushing now would let the new
+              ;; image reuse the old one's id, and redisplay skip it.
               (let ((previous (alist-get field supersonic-now-playing--stale-images)))
                 (when (and previous (fboundp 'image-flush))
                   (image-flush previous t)))
@@ -942,46 +776,33 @@ of the buffer each time."
               (insert (propertize value 'supersonic-now-playing-field field)))))))))
 
 (defun supersonic-now-playing--field-present-p (buff field)
-  "Return non-nil if BUFF has text tagged FIELD for updates to land in."
+  "Return non-nil if BUFF has text tagged FIELD."
   (with-current-buffer buff
     (and (text-property-any (point-min) (point-max) 'supersonic-now-playing-field field) t)))
 
 (defun supersonic-now-playing--update-waveform-field (buff envelope progress)
-  "Draw ENVELOPE at PROGRESS into BUFF's standalone `waveform' row, if any.
-Checks for the row first, so that the image, costly to build, is not
-built for a layout without one, such as the default."
+  "Draw ENVELOPE at PROGRESS into BUFF's waveform row, if it has one."
   (when (supersonic-now-playing--field-present-p buff 'waveform)
     (supersonic-now-playing--update-field buff 'waveform (supersonic-waveform-propertize envelope progress))))
 
 (defun supersonic-now-playing--progress-ratio (position duration)
-  "Return POSITION/DURATION clamped to 0..1, or 0 if either is unavailable.
-POSITION is made a float first, as two integers would divide down to 0."
+  "Return POSITION divided by DURATION, between 0 and 1, or 0 if unknown."
   (if (and position duration (> duration 0))
       (max 0.0 (min 1.0 (/ (float position) duration)))
     0.0))
 
 (defun supersonic-now-playing--progress-bucket (envelope progress)
-  "Return the index of ENVELOPE's first unplayed bucket at PROGRESS (0..1).
-This is the only thing about the rendered seekbar that PROGRESS
-changes, and what `supersonic-now-playing--waveform-bucket' records."
+  "Return the index of ENVELOPE's first unplayed bucket at PROGRESS."
   (floor (* progress (length (car envelope)))))
 
 (defun supersonic-now-playing-update-duration-field (buff position)
-  "Redraw BUFF's \"Duration:\" line with POSITION as its elapsed side.
-Built into `supersonic-now-playing-position-functions'; POSITION is
-whatever the active backend most recently reported, read there off
-`supersonic-now-playing--show-position'."
+  "Update BUFF's \"Duration:\" row with POSITION."
   (supersonic-now-playing--update-field
    buff 'duration
    (supersonic-now-playing--position position (buffer-local-value 'supersonic-now-playing--duration buff))))
 
 (defun supersonic-now-playing-recolor-waveform (buff position)
-  "Redraw BUFF's waveform seekbar(s) at POSITION.
-No-op until a waveform is showing for the current track, and while the
-played/unplayed split stays in the bucket last drawn.  Otherwise
-patches the standalone `waveform' row, if any, and reruns
-`supersonic-now-playing-animation-functions' with a DELTA of 0, so
-that the art overlay repaints too."
+  "Redraw BUFF's waveform at POSITION if the played part changed."
   (when (buffer-live-p buff)
     (with-current-buffer buff
       (when supersonic-now-playing--waveform
@@ -994,9 +815,7 @@ that the art overlay repaints too."
             (supersonic-now-playing--run-field-functions supersonic-now-playing-animation-functions buff 0)))))))
 
 (defun supersonic-now-playing--insert-button (label command)
-  "Insert a boxed button reading LABEL that runs COMMAND when activated.
-Padded and given `supersonic-now-playing-button', so that it reads as
-a control rather than a link."
+  "Insert a button labeled LABEL running COMMAND."
   (insert-text-button
    (format " %s " label)
    'face 'supersonic-now-playing-button
@@ -1004,11 +823,7 @@ a control rather than a link."
    'follow-link t))
 
 (defun supersonic-now-playing--format-time (seconds longest)
-  "Format SECONDS as a clock string no longer than it has to be.
-LONGEST is the longest value the same line will show, so that a
-position and the duration it counts towards stay the same shape: hours
-only appear once LONGEST reaches an hour, e.g. \"05:01\" for a five
-minute track but \"1:05:01\" once an hour is on the clock."
+  "Return SECONDS as M:SS, or H:MM:SS if LONGEST is an hour or more."
   (let ((seconds (max 0 (truncate (or seconds 0)))))
     (if (>= (or longest 0) 3600)
         (format-seconds "%h:%.2m:%.2s" seconds)
@@ -1039,10 +854,8 @@ minute track but \"1:05:01\" once an hour is on the clock."
       type))))
 
 (defun supersonic-now-playing--art (song)
-  "Return a display string for SONG's cover art, or nil if there is none.
-Expects the art to be cached already, which
-`supersonic-now-playing-fetch-and-render' takes care of before it
-renders."
+  "Return a string displaying SONG's cover art, or nil.
+The art must be cached."
   (let ((art-id (plist-get song :art)))
     (when (and (supersonic-art-available-p)
                art-id
@@ -1050,25 +863,19 @@ renders."
       (supersonic-image-propertize art-id supersonic-now-playing-art-size))))
 
 (defun supersonic-now-playing-render-title (_buff song)
-  "Insert SONG's \"Title:\" row, if it has one.
-Built into `supersonic-now-playing-render-functions'."
+  "Insert SONG's \"Title:\" row, if known."
   (supersonic-now-playing--insert-field "Title" (plist-get song :title)))
 
 (defun supersonic-now-playing-render-artist (_buff song)
-  "Insert SONG's \"Artist:\" row, if it has one.
-Built into `supersonic-now-playing-render-functions'."
+  "Insert SONG's \"Artist:\" row, if known."
   (supersonic-now-playing--insert-field "Artist" (plist-get song :artist)))
 
 (defun supersonic-now-playing-render-album (_buff song)
-  "Insert SONG's \"Album:\" row, if it has one.
-Built into `supersonic-now-playing-render-functions'."
+  "Insert SONG's \"Album:\" row, if known."
   (supersonic-now-playing--insert-field "Album" (plist-get song :album)))
 
 (defun supersonic-now-playing-render-duration (buff _song)
-  "Insert BUFF's \"Duration:\" row, tagged for later updates.
-Reads position and duration off BUFF, as the position is not part of
-SONG.  Tagged `duration', for
-`supersonic-now-playing-update-duration-field' to patch."
+  "Insert BUFF's \"Duration:\" row."
   (supersonic-now-playing--insert-field
    "Duration"
    (supersonic-now-playing--position
@@ -1077,29 +884,23 @@ SONG.  Tagged `duration', for
    'duration))
 
 (defun supersonic-now-playing-render-format (_buff song)
-  "Insert SONG's \"Format:\" row, if it is known.
-Built into `supersonic-now-playing-render-functions'."
+  "Insert SONG's \"Format:\" row, if known."
   (supersonic-now-playing--insert-field "Format" (supersonic-now-playing--format song)))
 
 (defun supersonic-now-playing-render-size (_buff song)
-  "Insert SONG's \"Size:\" row, if it is known.
-Built into `supersonic-now-playing-render-functions'."
+  "Insert SONG's \"Size:\" row, if known."
   (let ((size (plist-get song :size)))
     (supersonic-now-playing--insert-field "Size" (and size (format "%.2f MB" (/ size 1048576.0))))))
 
 (defun supersonic-now-playing-render-queue-position (buff _song)
-  "Insert BUFF's \"Queue:\" row, e.g. \"Queue: 4/19\".
-Reads `supersonic-now-playing--queue-place' off BUFF; left out when
-that is nil."
+  "Insert BUFF's \"Queue:\" row, e.g. \"Queue: 4/19\", if known."
   (let ((place (buffer-local-value 'supersonic-now-playing--queue-place buff)))
     (supersonic-now-playing--insert-field
      "Queue" (and place (format "%d/%d" (car place) (cdr place))))))
 
 (defun supersonic-now-playing--current-queue-place (queue)
-  "Return where QUEUE's current track sits, as a (POSITION . TOTAL) pair.
-QUEUE is as resolved by `supersonic-playback-queue'.  POSITION is the
-1-based index of QUEUE's `:current' entry, TOTAL QUEUE's length; nil
-if there is no current entry."
+  "Return (POSITION . TOTAL) of the current entry in QUEUE, or nil.
+POSITION counts from 1."
   (let ((position 0) found)
     (dolist (entry queue)
       (setq position (1+ position))
@@ -1108,32 +909,23 @@ if there is no current entry."
     (and found (cons found (length queue)))))
 
 (defun supersonic-now-playing-layout-art (_buff song)
-  "Insert SONG's cover art as its own row, if it has any.
-Tagged `art', for the art overlay animations to draw on.  Without this
-row they draw nothing, so drop it only together with switching
-`supersonic-now-playing-animation-functions' to
-`supersonic-now-playing-animate-label'."
+  "Insert SONG's cover art row, if it has cover art.
+The art overlay animations draw on this row."
   (let ((art (supersonic-now-playing--art song)))
     (when art
       (insert (propertize art 'supersonic-now-playing-field 'art) "\n"))))
 
 (defun supersonic-now-playing-layout-waveform (_buff _song)
-  "Insert a placeholder row for the standalone waveform seekbar, if any.
-Nothing when `supersonic-waveform-available-p' is nil.  Independent of
-the waveform in the cover art overlay; filled in by
-`supersonic-now-playing--show-waveform'."
+  "Insert the row of the separate waveform seekbar, if available."
   (when (supersonic-waveform-available-p)
     (insert (propertize " " 'supersonic-now-playing-field 'waveform) "\n")))
 
 (defun supersonic-now-playing-layout-label (_buff _song)
-  "Insert a placeholder row for the animated side label, then a blank line.
-Unconditional: `supersonic-now-playing-animation-functions' fill it
-in, or leave it empty."
+  "Insert the label row and a blank line."
   (insert (propertize " " 'supersonic-now-playing-field 'label) "\n\n"))
 
 (defun supersonic-now-playing-layout-buttons (buff _song)
-  "Insert the transport button row, then a blank line.
-Reads BUFF's `supersonic-now-playing--paused'."
+  "Insert the transport buttons, as BUFF's playback state says, and a blank line."
   (supersonic-now-playing--insert-button "|◀◀" #'supersonic-prev-track)
   (insert "  ")
   (supersonic-now-playing--insert-button
@@ -1150,18 +942,13 @@ Reads BUFF's `supersonic-now-playing--paused'."
   (insert "\n\n"))
 
 (defun supersonic-now-playing--render (buff song paused position track-id &optional queue-place)
-  "Render SONG into BUFF, marked as paused or playing according to PAUSED.
-POSITION is how many seconds into SONG playback currently is.  SONG is
-a track plist, as `supersonic-provider-track' resolves to; if it is
-nil, BUFF shows that nothing is playing.  TRACK-ID is the id of the
-track playing.  QUEUE-PLACE is its (POSITION . TOTAL) in the play
-queue, or nil."
+  "Show SONG in BUFF, or that nothing is playing if SONG is nil.
+PAUSED, POSITION in seconds, TRACK-ID and QUEUE-PLACE, (POSITION
+. TOTAL) or nil, describe the playback state."
   (when (buffer-live-p buff)
     (with-current-buffer buff
       (let* ((inhibit-read-only t)
              (duration (plist-get song :duration))
-             ;; Re-rendering the same track is common -- a pause, a
-             ;; resume, `g' -- and must keep its waveform state.
              (same-track (and track-id (equal track-id supersonic-now-playing--track-id))))
         (setq supersonic-now-playing--paused paused)
         (setq supersonic-now-playing--duration duration)
@@ -1197,8 +984,6 @@ queue, or nil."
           (progn
             (supersonic-now-playing--run-field-functions supersonic-now-playing-layout-functions buff song)
             (supersonic-now-playing--run-field-functions supersonic-now-playing-render-functions buff song)
-            ;; Paint the animated field now rather than at the first tick,
-            ;; even with cycling off.
             (supersonic-now-playing--run-field-functions supersonic-now-playing-animation-functions buff 0)))
         (goto-char (point-min))
         ;; Put back the seekbar `erase-buffer' took.
@@ -1206,9 +991,8 @@ queue, or nil."
           (supersonic-now-playing--show-waveform buff track-id (cdr supersonic-now-playing--waveform)))))))
 
 (aio-defun supersonic-now-playing-fetch-and-render (buff)
-  "Query the active backend for its current track and render it into BUFF.
-A failed metadata lookup shows the bare track id instead.  Errors are
-reported, since nobody awaits this."
+  "Show the current track of the active backend in BUFF.
+If the track can't be looked up, show its id."
   (supersonic--with-async-error-handling
    buff "refresh the now-playing buffer"
    (if (supersonic-playback-live-p)
@@ -1221,9 +1005,7 @@ reported, since nobody awaits this."
                        (list :id track-id :title track-id))))
                (when (and (supersonic-art-available-p) (plist-get song :art))
                  (aio-await (aio-catch (supersonic--fetch-art (plist-get song :art) supersonic-now-playing-art-size))))
-               ;; Fired concurrently and asked for last, so all three are as
-               ;; fresh as possible: the art fetch above can take a while on a
-               ;; cold cache.
+               ;; After the art fetch, which may be slow, so they are current.
                (let* ((position-promise (supersonic-playback-status 'position))
                       (paused-promise (supersonic-playback-status 'paused))
                       (queue-promise (supersonic-playback-queue))
@@ -1237,11 +1019,7 @@ reported, since nobody awaits this."
      (supersonic-now-playing--render buff nil nil nil nil))))
 
 (defun supersonic-now-playing--show-waveform (buff track-id envelope)
-  "Patch BUFF's waveform field to display ENVELOPE for TRACK-ID, if still current.
-For both callbacks of `supersonic-waveform-ensure', and for
-`supersonic-now-playing--render' putting the seekbar back.  The
-played/unplayed split comes from `supersonic-now-playing--position',
-which is current even when ENVELOPE arrives a transcode later."
+  "Show ENVELOPE in BUFF, if TRACK-ID is still its current track."
   (when (and envelope (buffer-live-p buff))
     (with-current-buffer buff
       ;; The buffer may have moved on to another track meanwhile.
@@ -1254,12 +1032,9 @@ which is current even when ENVELOPE arrives a transcode later."
           (supersonic-now-playing--update-waveform-field buff envelope progress))))))
 
 (defun supersonic-now-playing-maybe-fetch-waveform (buff position)
-  "Kick off waveform generation for BUFF's current track, if not already asked.
-POSITION is unused.  Only when waveforms are available, BUFF is on
-display, something would show the waveform -- a standalone row, or
-cover art for the overlay -- and none was requested for this track
-yet; `supersonic-now-playing--tick' tries again once these hold.  The
-seekbar fills in as analysis goes."
+  "Request the waveform of BUFF's current track, unless already requested.
+Only if waveforms are available, BUFF is visible and something shows
+the waveform.  POSITION is ignored."
   (ignore position)
   (let ((track-id (buffer-local-value 'supersonic-now-playing--track-id buff)))
     (when (and (supersonic-waveform-available-p)
@@ -1276,7 +1051,7 @@ seekbar fills in as analysis goes."
        (lambda (envelope) (supersonic-now-playing--show-waveform buff track-id envelope))))))
 
 (defun supersonic-now-playing-refresh ()
-  "Refresh the now-playing buffer from the active backend's current state."
+  "Refresh the now-playing buffer."
   (interactive)
   (supersonic-now-playing-fetch-and-render (current-buffer)))
 
@@ -1293,18 +1068,14 @@ seekbar fills in as analysis goes."
 
 (define-derived-mode supersonic-now-playing-mode special-mode "Supersonic Now Playing"
   "Major mode for the buffer opened by `supersonic-show-now-playing'."
-  ;; Every field update replaces text whose display property is a whole
-  ;; image spec; undo would keep each superseded cover art overlay and
-  ;; seekbar alive, in a buffer nobody edits.
+  ;; Undo would keep every replaced image alive.
   (buffer-disable-undo)
   (supersonic--add-playback-hooks))
 
 ;;;###autoload
 (defun supersonic-show-now-playing ()
-  "Open a buffer showing the track the active backend is currently on.
-The buffer follows the active backend on its own -- track changes,
-pausing and resuming are all reflected without a manual refresh, the
-same way the play queue buffer keeps itself current."
+  "Show the current track of the active backend.
+The buffer updates itself as playback changes."
   (interactive)
   (let ((buff (get-buffer-create supersonic-now-playing-buffer-name)))
     (with-current-buffer buff
@@ -1314,9 +1085,7 @@ same way the play queue buffer keeps itself current."
     (pop-to-buffer-same-window buff)))
 
 (defun supersonic--format-duration (format seconds)
-  "Format SECONDS with `format-seconds' FORMAT, or \"\" if there is no duration.
-Subsonic leaves the duration out, e.g. for a podcast episode not yet
-downloaded, and `format-seconds' signals on nil."
+  "Return SECONDS formatted with `format-seconds' FORMAT, or \"\" if nil."
   (if seconds
       (format-seconds format seconds)
     ""))
@@ -1325,10 +1094,9 @@ downloaded, and `format-seconds' signals on nil."
 ;;; Search
 ;;;
 (defun supersonic-search-rows (results)
-  "Turn search RESULTS into tabulated-list entries.
-RESULTS is as resolved by `supersonic-provider-search'.  Each entry's
-id is (ID . TYPE), TYPE being \"artist\", \"album\" or \"song\", so
-`supersonic-open-search-appropriate-result' knows what ID is an id of."
+  "Return tabulated-list entries for the search RESULTS.
+Each entry's id is (ID . TYPE), TYPE being \"artist\", \"album\" or
+\"song\"."
   (append
    (mapcar
     (lambda (artist)
@@ -1342,7 +1110,7 @@ id is (ID . TYPE), TYPE being \"artist\", \"album\" or \"song\", so
     (plist-get results :tracks))))
 
 (aio-defun supersonic-search-refresh (query buff)
-  "Refresh the list of search results from QUERY into BUFF."
+  "Show the search results for QUERY in BUFF."
   (supersonic--with-async-error-handling
    buff "search"
    (let ((results (aio-await (supersonic-provider-search query))))
@@ -1351,7 +1119,7 @@ id is (ID . TYPE), TYPE being \"artist\", \"album\" or \"song\", so
          (supersonic--print-list (supersonic-search-rows results)))))))
 
 (defun supersonic-open-search-appropriate-result (result)
-  "Opens the RESULT from a search in the appropriate buffer."
+  "Open the search RESULT, an (ID . TYPE)."
   (let ((type (cdr result)))
     (cond
      ((string-equal type "artist")
@@ -1362,7 +1130,7 @@ id is (ID . TYPE), TYPE being \"artist\", \"album\" or \"song\", so
       (supersonic-playback-start (list (car result)))))))
 
 (defun supersonic-open-search-result ()
-  "Open a view of the result from the result at point."
+  "Open the search result at point."
   (interactive)
   (supersonic-open-search-appropriate-result (tabulated-list-get-id)))
 
@@ -1374,7 +1142,7 @@ id is (ID . TYPE), TYPE being \"artist\", \"album\" or \"song\", so
 
 ;;;###autoload
 (defun supersonic-search ()
-  "List supersonic search results."
+  "Search the library and list the results."
   (interactive)
   (let ((new-buff (get-buffer-create "*supersonic-search*")))
     (supersonic--init-list-buffer new-buff #'supersonic-search-mode "Searching...")
@@ -1382,8 +1150,7 @@ id is (ID . TYPE), TYPE being \"artist\", \"album\" or \"song\", so
     (pop-to-buffer-same-window new-buff)))
 
 (define-derived-mode supersonic-search-mode tabulated-list-mode "Supersonic search mode"
-  "Major mode for the result list opened by `supersonic-search'.
-Each row is an artist, album or song; opening one dispatches on which."
+  "Major mode for search results, see `supersonic-search'."
   (setq tabulated-list-format [("Type" 10 t) ("Name" 30 t)])
   (setq tabulated-list-padding 2)
   (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
@@ -1395,14 +1162,11 @@ Each row is an artist, album or song; opening one dispatches on which."
 ;;;
 
 (defun supersonic-get-tracklist-id (id)
-  "Return the ids of the tracks from ID to the end of the current list.
-Plays/enqueues \"this one and everything after it\", which is what both
-`supersonic-play-tracks' and `supersonic-enqueue-tracks' mean by the
-entry at point.  An ID that isn't in the list at all yields nil."
+  "Return the ids of the tracks from ID to the end of the list."
   (mapcar #'car (seq-drop-while (lambda (entry) (not (equal (car entry) id))) tabulated-list-entries)))
 
 (defun supersonic-tracks-rows (tracks)
-  "Turn TRACKS, as resolved by `supersonic-provider-album-tracks', into entries."
+  "Return tabulated-list entries for TRACKS."
   (mapcar
    (lambda (track)
      (list
@@ -1414,11 +1178,11 @@ entry at point.  An ID that isn't in the list at all yields nil."
    tracks))
 
 (aio-defun supersonic-get-album-track-ids (id)
-  "Return the list of track ids for album ID."
+  "Return a promise resolving to the track ids of album ID."
   (mapcar (lambda (track) (plist-get track :id)) (aio-await (supersonic-provider-album-tracks id))))
 
 (aio-defun supersonic-tracks-refresh (id buff)
-  "Refresh the list of tracks from ID into BUFF."
+  "Show the tracks of album ID in BUFF."
   (supersonic--with-async-error-handling
    buff "fetch tracks"
    (let ((tracks (aio-await (supersonic-provider-album-tracks id))))
@@ -1427,12 +1191,12 @@ entry at point.  An ID that isn't in the list at all yields nil."
          (supersonic--print-list (supersonic-tracks-rows tracks)))))))
 
 (defun supersonic-play-tracks ()
-  "Play all the tracks after the point in the list."
+  "Play the track at point and the ones after it."
   (interactive)
   (supersonic-playback-start (supersonic-get-tracklist-id (tabulated-list-get-id))))
 
 (defun supersonic-enqueue-tracks ()
-  "Add all the tracks after the point in the list to the play queue."
+  "Add the track at point and the ones after it to the play queue."
   (interactive)
   (let ((ids (supersonic-get-tracklist-id (tabulated-list-get-id))))
     (supersonic-playback-enqueue ids)
@@ -1446,14 +1210,14 @@ entry at point.  An ID that isn't in the list at all yields nil."
   "Keymap for `supersonic-tracks-mode'.")
 
 (defun supersonic-tracks (id)
-  "Create a buffer with a list of tracks from ID."
+  "Show the tracks of album ID."
   (let ((new-buff (get-buffer-create "*supersonic-tracks*")))
     (supersonic--init-list-buffer new-buff #'supersonic-tracks-mode "Loading tracks...")
     (ignore (supersonic-tracks-refresh id new-buff))
     (pop-to-buffer-same-window new-buff)))
 
 (define-derived-mode supersonic-tracks-mode tabulated-list-mode "Supersonic Tracks"
-  "Major mode for the track list of one album, opened by `supersonic-tracks'."
+  "Major mode for the tracks of an album, see `supersonic-tracks'."
   (setq tabulated-list-format [("Title" 30 t) ("Duration" 10 t) ("Track" 10 t)])
   (setq tabulated-list-padding 2)
   (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
@@ -1464,15 +1228,11 @@ entry at point.  An ID that isn't in the list at all yields nil."
 ;;;
 
 (defun supersonic--arts (items)
-  "Return the `:art' reference of each of ITEMS, in order.
-What `supersonic-get-images' is handed next to the entries made from
-ITEMS: art is looked up by the reference the provider gave, not by
-the item's id."
+  "Return the `:art' references of ITEMS."
   (mapcar (lambda (item) (plist-get item :art)) items))
 
 (defun supersonic-albums-rows (albums)
-  "Turn one artist's ALBUMS into year/name/art tabulated-list entries.
-ALBUMS is as resolved by `supersonic-provider-artist-albums'."
+  "Return tabulated-list entries for an artist's ALBUMS."
   (mapcar
    (lambda (album)
      (list
@@ -1483,8 +1243,7 @@ ALBUMS is as resolved by `supersonic-provider-artist-albums'."
    albums))
 
 (defun supersonic-albums-type-rows (albums)
-  "Turn ALBUMS from across artists into name/artist/art tabulated-list entries.
-ALBUMS is as resolved by `supersonic-provider-album-list'."
+  "Return tabulated-list entries for ALBUMS by various artists."
   (mapcar
    (lambda (album)
      (list
@@ -1495,7 +1254,7 @@ ALBUMS is as resolved by `supersonic-provider-album-list'."
    albums))
 
 (aio-defun supersonic-albums-refresh (id buff)
-  "Refresh the albums list for a given artist ID into BUFF."
+  "Show the albums of artist ID in BUFF."
   (supersonic--with-async-error-handling
    buff "fetch albums"
    (let ((albums (aio-await (supersonic-provider-artist-albums id))))
@@ -1506,7 +1265,7 @@ ALBUMS is as resolved by `supersonic-provider-album-list'."
 
 
 (aio-defun supersonic-albums-refresh-type (type buff)
-  "Refresh the albums list for a given album list TYPE into BUFF.
+  "Show the albums of list TYPE in BUFF.
 TYPE is one of `supersonic-provider-album-list-types'."
   (supersonic--with-async-error-handling
    buff "fetch albums"
@@ -1517,7 +1276,7 @@ TYPE is one of `supersonic-provider-album-list-types'."
          (supersonic-get-images tabulated-list-entries (supersonic--arts albums) 2 buff))))))
 
 (defun supersonic-open-tracks ()
-  "Open a list of tracks at point."
+  "Show the tracks of the album at point."
   (interactive)
   (supersonic-tracks (tabulated-list-get-id)))
 
@@ -1563,9 +1322,8 @@ TYPE is one of `supersonic-provider-album-list-types'."
   (supersonic-albums nil 'newest))
 
 (defun supersonic-albums (&optional id type)
-  "Open a buffer of albums for artist ID or list TYPE.
-TYPE is one of `supersonic-provider-album-list-types'; the name of
-one as a string is accepted too."
+  "Show the albums of artist ID, or of list TYPE.
+TYPE is one of `supersonic-provider-album-list-types', or its name."
   (when (stringp type)
     (setq type (intern type)))
   (cond
@@ -1581,7 +1339,7 @@ one as a string is accepted too."
       (pop-to-buffer-same-window new-buff)))))
 
 (define-derived-mode supersonic-album-type-mode tabulated-list-mode "Supersonic Album List"
-  "Major mode for a list of albums across artists (newest, random, ...)."
+  "Major mode for album lists such as the newest or random albums."
   (setq tabulated-list-format [("Albums" 30 t) ("Artists" 30 t) ("Art" 30 nil)])
   (setq tabulated-list-padding 2)
   (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
@@ -1589,7 +1347,7 @@ one as a string is accepted too."
   (tabulated-list-init-header))
 
 (define-derived-mode supersonic-album-mode tabulated-list-mode "Supersonic Albums"
-  "Major mode for the album list of one artist, opened by `supersonic-albums'."
+  "Major mode for the albums of an artist, see `supersonic-albums'."
   (setq tabulated-list-format [("Year" 5 t) ("Albums" 40 t) ("Art" 30 nil)])
   (setq tabulated-list-padding 2)
   (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
@@ -1600,19 +1358,16 @@ one as a string is accepted too."
 ;;; Artists
 ;;;
 (defun supersonic-open-album ()
-  "Open the albums for the artist at point."
+  "Show the albums of the artist at point."
   (interactive)
   (supersonic-albums (tabulated-list-get-id)))
 
 (defun supersonic-artists-rows (artists)
-  "Turn ARTISTS, as resolved by `supersonic-provider-artists', into entries.
-Each row has the artist's name and a cell for its art, which
-`supersonic-art-fill-visible' fills in -- or which goes unprinted when
-the list has no Art column, see `supersonic-artists-format'."
+  "Return tabulated-list entries for ARTISTS."
   (mapcar (lambda (artist) (list (plist-get artist :id) (vector (or (plist-get artist :name) "") ""))) artists))
 
 (aio-defun supersonic-artists-refresh (buff)
-  "Refresh the list of artists into BUFF."
+  "Show the artists in BUFF."
   (supersonic--with-async-error-handling
    buff "fetch artists"
    (let ((artists (aio-await (supersonic-provider-artists))))
@@ -1623,7 +1378,7 @@ the list has no Art column, see `supersonic-artists-format'."
            (supersonic-art-fill-visible artists 1 supersonic-artist-art-size buff)))))))
 
 (defun supersonic-artists-revert ()
-  "Refresh the artists buffer from the active library provider."
+  "Refresh the artist list."
   (interactive)
   (supersonic-artists-refresh (current-buffer)))
 
@@ -1636,7 +1391,7 @@ the list has no Art column, see `supersonic-artists-format'."
 
 ;;;###autoload
 (defun supersonic-artists ()
-  "List artists."
+  "Show the artists in the library."
   (interactive)
   (let ((new-buff (get-buffer-create "*supersonic-artists*")))
     (supersonic--init-list-buffer new-buff #'supersonic-artist-mode "Loading artists...")
@@ -1645,18 +1400,13 @@ the list has no Art column, see `supersonic-artists-format'."
 
 (defun supersonic-artists-format ()
   "Return the `tabulated-list-format' of the artist list.
-With an Art column only when `supersonic-artist-art-size' is set and
-art can be shown at all (`supersonic-art-available-p'): an empty one
-would still take the room `supersonic--fit-columns' keeps for the last
-column from the names.  The column is as wide as an image of that size
-in the selected frame, the images being fitted into a square of it,
-whatever their proportions."
+It has an Art column only if artist images are shown."
   (if (and supersonic-artist-art-size (supersonic-art-available-p))
       `[("Artist" 30 t) ("Art" ,(max 3 (1+ (ceiling supersonic-artist-art-size (frame-char-width)))) nil)]
     [("Artist" 30 t)]))
 
 (define-derived-mode supersonic-artist-mode tabulated-list-mode "Supersonic Artists"
-  "Major mode for the artist list opened by `supersonic-artists'."
+  "Major mode for the artist list, see `supersonic-artists'."
   (setq tabulated-list-format (supersonic-artists-format))
   (setq tabulated-list-padding 2)
   (setq tabulated-list-use-header-line supersonic-list-use-header-line)
@@ -1667,11 +1417,11 @@ whatever their proportions."
 ;;; Podcasts
 ;;;
 (defun supersonic-podcasts-rows (podcasts)
-  "Turn PODCASTS, as resolved by `supersonic-provider-podcasts', into entries."
+  "Return tabulated-list entries for PODCASTS."
   (mapcar (lambda (channel) (list (plist-get channel :id) (vector (or (plist-get channel :title) "") ""))) podcasts))
 
 (aio-defun supersonic-podcasts-refresh (buff)
-  "Refresh the list of podcasts into BUFF."
+  "Show the podcasts in BUFF."
   (supersonic--with-async-error-handling
    buff "fetch podcasts"
    (let ((podcasts (aio-await (supersonic-provider-podcasts))))
@@ -1682,14 +1432,12 @@ whatever their proportions."
 
 
 (defun supersonic-open-podcast-episodes ()
-  "Open a view of podcasts episodes from the podcast at point."
+  "Show the episodes of the podcast at point."
   (interactive)
   (supersonic-podcast-episodes (tabulated-list-get-id)))
 
 (defun supersonic-add-podcast (url)
-  "Subscribe to the podcast feed at URL.
-Interactively, prompts for URL -- unless the active library provider
-has no podcasts to subscribe to, which is reported before asking."
+  "Subscribe to the podcast feed at URL."
   (interactive
    (progn
      (supersonic-provider-require 'add-podcast)
@@ -1697,7 +1445,7 @@ has no podcasts to subscribe to, which is reported before asking."
   (supersonic--add-podcast url))
 
 (aio-defun supersonic--add-podcast (url)
-  "Subscribe to URL, reporting how that went in the echo area."
+  "Subscribe to the podcast feed at URL, reporting the outcome."
   (supersonic--with-async-error-handling
    nil "add podcast"
    (aio-await (supersonic-provider-add-podcast url))
@@ -1719,7 +1467,7 @@ has no podcasts to subscribe to, which is reported before asking."
 
 ;;;###autoload
 (defun supersonic-podcasts ()
-  "List podcasts."
+  "Show the subscribed podcasts."
   (interactive)
   (supersonic-provider-require 'podcasts)
   (let ((new-buff (get-buffer-create "*supersonic-podcasts*")))
@@ -1728,7 +1476,7 @@ has no podcasts to subscribe to, which is reported before asking."
     (pop-to-buffer-same-window new-buff)))
 
 (define-derived-mode supersonic-podcast-mode tabulated-list-mode "Supersonic Podcasts"
-  "Major mode for the podcast channel list opened by `supersonic-podcasts'."
+  "Major mode for the podcast list, see `supersonic-podcasts'."
   (setq tabulated-list-format [("Podcasts" 30 t) ("Art" 20 nil)])
   (setq tabulated-list-padding 2)
   (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
@@ -1740,8 +1488,7 @@ has no podcasts to subscribe to, which is reported before asking."
 ;;;
 
 (defun supersonic-podcast-episodes-rows (episodes)
-  "Turn podcast EPISODES into tabulated-list entries.
-EPISODES is as resolved by `supersonic-provider-podcast-episodes'."
+  "Return tabulated-list entries for podcast EPISODES."
   (mapcar
    (lambda (episode)
      (list
@@ -1753,12 +1500,12 @@ EPISODES is as resolved by `supersonic-provider-podcast-episodes'."
    episodes))
 
 (defun supersonic-play-podcast ()
-  "Play a podcast episode at point."
+  "Play the podcast episode at point."
   (interactive)
   (supersonic-playback-start (list (tabulated-list-get-id))))
 
 (aio-defun supersonic-podcasts-episode-refresh (id buff)
-  "Refresh the list of podcast episodes for a podcast ID into BUFF."
+  "Show the episodes of podcast ID in BUFF."
   (supersonic--with-async-error-handling
    buff "fetch episodes"
    (let ((episodes (aio-await (supersonic-provider-podcast-episodes id))))
@@ -1767,13 +1514,13 @@ EPISODES is as resolved by `supersonic-provider-podcast-episodes'."
          (supersonic--print-list (supersonic-podcast-episodes-rows episodes)))))))
 
 (defun supersonic-download-podcast-episode ()
-  "Have the library provider download the podcast episode at point."
+  "Have the server download the podcast episode at point."
   (interactive)
   (supersonic-provider-require 'download-podcast-episode)
   (supersonic--download-podcast-episode (tabulated-list-get-id)))
 
 (aio-defun supersonic--download-podcast-episode (id)
-  "Start downloading episode ID, reporting how that went."
+  "Start the download of episode ID, reporting the outcome."
   (supersonic--with-async-error-handling
    nil "download episode"
    (aio-await (supersonic-provider-download-podcast-episode id))
@@ -1795,7 +1542,7 @@ EPISODES is as resolved by `supersonic-provider-podcast-episodes'."
   "Keymap for `supersonic-podcast-episodes-mode'.")
 
 (defun supersonic-podcast-episodes (id)
-  "Open a buffer with a list of podcast episodes from podcast ID."
+  "Show the episodes of podcast ID."
   (supersonic-provider-require 'podcast-episodes)
   (let ((new-buff (get-buffer-create "*supersonic-podcast-episodes*")))
     (supersonic--init-list-buffer new-buff #'supersonic-podcast-episodes-mode "Loading episodes...")
@@ -1803,8 +1550,7 @@ EPISODES is as resolved by `supersonic-provider-podcast-episodes'."
     (pop-to-buffer-same-window new-buff)))
 
 (define-derived-mode supersonic-podcast-episodes-mode tabulated-list-mode "Supersonic Podcast Episodes"
-  "Major mode for one podcast channel's episodes.
-Opened by `supersonic-podcast-episodes'."
+  "Major mode for the episodes of a podcast, see `supersonic-podcast-episodes'."
   (setq tabulated-list-format [("Title" 50 t) ("Duration" 10 t) ("Status" 24 t)])
   (setq tabulated-list-padding 2)
   (add-hook 'tabulated-list-revert-hook #'supersonic--fit-columns nil t)
@@ -1819,15 +1565,11 @@ Opened by `supersonic-podcast-episodes'."
   '(supersonic-artist-mode supersonic-album-mode supersonic-album-type-mode
     supersonic-tracks-mode supersonic-search-mode
     supersonic-podcast-mode supersonic-podcast-episodes-mode)
-  "Major modes of the list buffers showing what a library provider handed out.
-Their entries are that provider's ids, which mean nothing to any
-other, so `supersonic-provider-switch' kills them.  The queue and
-now-playing buffers are not among them: they show what the playback
-backend reports, which the switch stops.")
+  "Major modes of the list buffers showing a provider's items.
+`supersonic-provider-switch' kills these buffers.")
 
 (defun supersonic--kill-provider-list-buffers ()
-  "Kill every buffer whose mode is or derives from a provider list mode.
-The provider list modes are `supersonic--provider-list-modes'."
+  "Kill the buffers in one of `supersonic--provider-list-modes'."
   (dolist (buffer (buffer-list))
     (when (with-current-buffer buffer
             (apply #'derived-mode-p supersonic--provider-list-modes))
@@ -1835,16 +1577,10 @@ The provider list modes are `supersonic--provider-list-modes'."
 
 ;;;###autoload
 (defun supersonic-provider-switch (provider &optional backend)
-  "Make PROVIDER the active library provider, and BACKEND the playback backend.
-Interactively, prompts among the other registered providers.  BACKEND
-nil picks one as `supersonic-playback-backend-for-provider' does,
-prompting only where it must; declining switches nothing.  A PROVIDER
-that is not registered, or a backend that cannot play for it, is
-refused before anything changes.
-
-Whenever the provider changes, playback is stopped and the old
-provider's list buffers are killed: what they hold are the old
-provider's ids."
+  "Make PROVIDER the library provider and BACKEND the playback backend.
+Without BACKEND, choose one with `supersonic-playback-backend-for-provider'.
+If the provider changes, stop playback and kill the list buffers of
+the old provider."
   (interactive
    (let ((providers (mapcar #'symbol-name (remq supersonic-provider (supersonic-provider-names)))))
      (unless providers
@@ -1868,16 +1604,12 @@ provider's ids."
 ;;; Transient
 ;;;
 
-;; `:if' predicates hiding the entries whose command needs an
-;; operation the active provider lacks.  The commands themselves still
-;; say so via `supersonic-provider-require' when called by other means.
+;; Hide the commands the active provider can't serve.
 
 (defun supersonic--offers-p (operation)
-  "Return non-nil if the transient should offer an entry needing OPERATION.
-That is, if the active provider implements it -- or is not registered
-at all, typically because its file is not loaded: hiding every entry
-would then leave no hint why, whereas using one reports that the
-provider is missing."
+  "Return non-nil if the transient should offer commands needing OPERATION.
+That is, if the active provider implements OPERATION or isn't
+registered; in the latter case the command reports the problem."
   (or (not (memq supersonic-provider (supersonic-provider-names)))
       (supersonic-provider-supports-p operation)))
 
@@ -1886,7 +1618,7 @@ provider is missing."
   (supersonic--offers-p 'artists))
 
 (defun supersonic--offer-album-list-p ()
-  "Return non-nil if the transient should offer listing albums across artists."
+  "Return non-nil if the transient should offer album lists."
   (supersonic--offers-p 'album-list))
 
 (defun supersonic--offer-search-p ()
@@ -1898,20 +1630,20 @@ provider is missing."
   (supersonic--offers-p 'podcasts))
 
 (defun supersonic--offer-podcast-episodes-p ()
-  "Return non-nil if the transient should offer opening a podcast's episodes."
+  "Return non-nil if the transient should offer podcast episodes."
   (supersonic--offers-p 'podcast-episodes))
 
 (defun supersonic--offer-add-podcast-p ()
-  "Return non-nil if the transient should offer subscribing to a podcast feed."
+  "Return non-nil if the transient should offer adding a podcast."
   (supersonic--offers-p 'add-podcast))
 
 (defun supersonic--offer-download-podcast-episode-p ()
-  "Return non-nil if the transient should offer downloading a podcast episode."
+  "Return non-nil if the transient should offer downloading an episode."
   (supersonic--offers-p 'download-podcast-episode))
 
 ;;;###autoload (autoload 'supersonic "supersonic" nil t)
 (transient-define-prefix supersonic ()
-  "Help transient for supersonic."
+  "Show the supersonic.el commands."
   [["Supersonic"
     ("a" "Artists" supersonic-artists :if supersonic--offer-artists-p)
     ("e" "Recent Albums" supersonic-recent-albums :if supersonic--offer-album-list-p)
@@ -1931,10 +1663,7 @@ provider is missing."
     ("P" "Switch provider" supersonic-provider-switch)]])
 
 (defun supersonic-unload-function ()
-  "Undo the `supersonic-playback.el' hook entries a queue/now-playing buffer added.
-Called by `unload-feature', which would otherwise leave those hooks
-holding references to functions that no longer exist.  Returns nil so
-`unload-feature' still goes on to remove the definitions itself."
+  "Remove the playback hooks before unloading."
   (supersonic--remove-playback-hooks)
   nil)
 
