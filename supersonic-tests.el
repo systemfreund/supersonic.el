@@ -4363,6 +4363,16 @@ then among `supersonic-provider-names'."
       (should (equal '((:id "ar/1")) (aio-wait-for (supersonic-provider-artists))))
       (should (memq 'lazy (supersonic-provider-names))))))
 
+(ert-deftest supersonic-tests-provider-supports-p-survives-a-failing-load ()
+  "A provider library that fails to load makes
+`supersonic-provider-supports-p' answer nil rather than signal: it is
+asked while reporting other failures."
+  (supersonic-tests--with-lazy-library 'supersonic-tests-lazy-provider
+      (error "Boom")
+    (let ((supersonic-provider-libraries '((lazy . supersonic-tests-lazy-provider)))
+          (inhibit-message t))
+      (should-not (supersonic-provider-supports-p 'artists 'lazy)))))
+
 (ert-deftest supersonic-tests-provider-registered-p-loads-only-what-it-is-asked ()
   "`supersonic-provider-registered-p' loads the provider it is asked
 about and no other, so the transient's predicates do not load every

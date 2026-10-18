@@ -147,7 +147,10 @@ them all to list them."
 PROVIDER defaults to `supersonic-provider'.  A shipped provider is
 loaded first.  Never signals."
   (let ((provider (or provider supersonic-provider)))
-    (ignore-errors (supersonic-provider--load provider))
+    (condition-case err
+        (supersonic-provider--load provider)
+      (error
+       (supersonic--log "Could not load the `%s' provider: %s" provider (error-message-string err))))
     (and (alist-get operation (gethash provider supersonic-provider--providers)) t)))
 
 (defun supersonic-provider--implementation (operation)
