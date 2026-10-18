@@ -3345,12 +3345,10 @@ particular backend."
   "Every `defcustom' belongs to `supersonic-custom.el', unless its default
 is a function of the package, which lives in the file defining the
 function.  See the Commentary of `supersonic-custom.el' for why, and
-`supersonic-tests-options-file-refers-to-nothing-of-the-package'.
-`supersonic-credentials.el' keeps its one option to itself; see its
-Commentary."
+`supersonic-tests-options-file-refers-to-nothing-of-the-package'."
   (dolist (file (supersonic-tests--package-files))
     (let ((name (file-name-nondirectory file)))
-      (unless (member name '("supersonic-custom.el" "supersonic-credentials.el"))
+      (unless (equal name "supersonic-custom.el")
         (let* ((forms (supersonic-tests--file-forms file))
                (defined (mapcar #'cadr
                                 (seq-filter (lambda (form)
@@ -3381,11 +3379,10 @@ dependency running back the other way."
   "Each file requires `supersonic-custom' rather than assuming a load order.
 See `supersonic-tests-user-options-live-in-the-options-file' for why this
 matters -- without it, requiring e.g. just `supersonic-waveform' left
-`supersonic-waveform-buckets' void.  Except `supersonic-credentials',
-which must not require it -- see its Commentary."
+`supersonic-waveform-buckets' void."
   (dolist (file (supersonic-tests--package-files))
     (let ((name (file-name-nondirectory file)))
-      (unless (member name '("supersonic-custom.el" "supersonic-credentials.el"))
+      (unless (equal name "supersonic-custom.el")
         (with-temp-buffer
           (insert-file-contents file)
           (goto-char (point-min))

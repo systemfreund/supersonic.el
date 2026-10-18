@@ -20,31 +20,12 @@
 
 ;;; Commentary:
 
-;; What a playback backend needs when its player reports nothing on
-;; its own and has to be asked, on a timer, what it is doing: the
-;; jukebox in `supersonic-jukebox.el', UPnP renderers in
-;; `supersonic-upnp.el' (#79) and Music Assistant players in
-;; `supersonic-music-assistant-player.el'.  mpv reports every change
-;; itself, and needs none of this.
-;;
-;; A backend describes itself with a `supersonic-poller': how to ask
-;; its player for a fresh snapshot, how to read the current track,
-;; pause state and queue entries off one, and which backend name it
-;; polls for.  The poller keeps the rest: the latest snapshot, whether
-;; the player answered, the poll in flight and the timer.  From there
-;; this file
-;;
-;; - polls, never two at once, marking the backend live or not and
-;;   reporting an outage once (`supersonic-poller-poll');
-;; - runs the facade's hooks and scrobbles for whatever a poll, or the
-;;   backend itself, changed (`supersonic-poller-announce');
-;; - polls on a timer exactly while the backend is the active one
-;;   (`supersonic-poller-register');
-;; - counts the position on between polls (`supersonic-poller-position').
-;;
-;; What differs stays with each backend: how it talks to its player,
-;; how an answer becomes a snapshot, and anything it does on top, such
-;; as the UPnP backend's client-side queue.
+;; Polling for the playback backends whose player reports nothing on
+;; its own: the jukebox, UPnP renderers and Music Assistant players.
+;; A backend describes how to poll its player in a `supersonic-poller';
+;; this file polls on a timer while that backend is active, runs the
+;; playback hooks for what changed, and estimates the position between
+;; polls.
 
 ;;; Code:
 (require 'cl-lib)
@@ -56,37 +37,24 @@
 (cl-defstruct (supersonic-poller
                (:constructor supersonic-poller-create)
                (:copier nil))
-  "A polled playback backend: how it is polled, and what polling found.
-Described by the backend:
+  "A polled playback backend.
+Set by the backend:
 
-`backend', the name `supersonic-playback-backend' has while this one is
-active; `interval', the variable holding the seconds between polls;
-`fetch', a function of no arguments returning a promise of a fresh
-snapshot, a plist the backend makes up but for `:position' and
-`:polled-at', which `supersonic-poller-position' reads; `summarize', a
-function of a snapshot returning a plist (:track-id ID :paused PAUSED
-:entries IDS) of what the facade's hooks announce -- read off the
-snapshot, or off state the backend keeps itself, such as the UPnP
-backend's client-side queue; `description', what a failed poll is
-reported as having failed to do, such as \"poll the jukebox\";
-`on-failure', nil or a function run whenever a poll fails; and
-`on-landed', nil or a function of the previous and the new snapshot,
-run whenever a poll gets an answer, before the facade's hooks.  It may
-return a function of no arguments, which is called once the poll is no
-longer in flight, and whatever promise that returns is awaited.  That
-function has to report its own errors: on a timer's poll, nobody
-awaits the poll's promise.
+- `backend': its name in `supersonic-playback-backend'.
+- `interval': the variable holding the seconds between polls.
+- `fetch': a function returning a promise of a snapshot, a plist with
+  at least `:position' and `:polled-at'.
+- `summarize': a function of a snapshot returning
+  (:track-id ID :paused PAUSED :entries IDS).
+- `description': what a failed poll failed to do, e.g. \"poll the
+  jukebox\".
+- `on-failure': nil or a function run when a poll fails.
+- `on-landed': nil or a function of the previous and new snapshot,
+  run when a poll succeeds.  It may return a function to call once
+  the poll is done, which must report its own errors.
 
-Kept by this file:
-
-`snapshot', the latest poll's, or nil before any landed; `live',
-non-nil if the last poll got an answer; `failing', non-nil once a poll
-failed without a later one succeeding since; `in-flight', a promise
-resolved once the poll in flight is done, or nil; `generation',
-counting how often polling stopped, so that a poll can tell it outlived
-the polling it was sent for; `timer', the poll timer while the backend
-is active; and `announced', what `supersonic-poller-announce' last ran
-the hooks for."
+Kept here: `snapshot', `live', `failing', `in-flight' (a promise),
+`generation' (to ignore stale polls), `timer' and `announced'."
   backend interval fetch summarize description on-failure on-landed
   snapshot live failing in-flight (generation 0) timer announced)
 
@@ -95,29 +63,20 @@ the hooks for."
 ;;;
 
 (defun supersonic-poller--scrobble-track-change (previous-track current-track)
-  "Scrobble PREVIOUS-TRACK as played and CURRENT-TRACK as playing now.
-Either may be nil.  A polled backend never sees the moment a track
-ends, the way mpv's end-file and start-file events show it, so the
-track a poll no longer finds stands in for the one that just finished.
-`supersonic-provider-scrobble' itself checks whether to scrobble."
+  "Scrobble PREVIOUS-TRACK as played and CURRENT-TRACK as now playing.
+Either may be nil.  A polled player doesn't report a track ending, so
+a track that is no longer current counts as played."
   (when previous-track
     (supersonic-provider-scrobble previous-track))
   (when current-track
     (supersonic-provider-scrobble current-track t)))
 
 (defun supersonic-poller-announce (poller &optional went-live)
-  "Run the facade's hooks for whatever changed since POLLER's last ran.
-Compares what POLLER's `summarize' makes of its snapshot with what the
-hooks last ran for: a different track runs the track-change hook, and
-scrobbles; otherwise different entries run the queue-change hook (an
-`add' moves neither the track nor the pause state, see #38), and a
-different pause state the state-change hook.  WENT-LIVE non-nil runs
-the track-change hook regardless, without scrobbling, since a player
-that answers again after an outage is news to whoever showed it gone.
-
-Never runs the position-change hook: a poll cannot tell a seek from a
-position that crept on, so a seek runs it itself, see
-`supersonic-poller-finish-seek'."
+  "Run the playback hooks for what changed since POLLER last announced.
+A new track runs the track-change hook and scrobbles; otherwise a
+changed queue or pause state runs the queue- or state-change hook.
+WENT-LIVE non-nil runs the track-change hook, for a player that
+answers again after an outage."
   (let ((previous (supersonic-poller-announced poller))
         (current (funcall (supersonic-poller-summarize poller) (supersonic-poller-snapshot poller))))
     (setf (supersonic-poller-announced poller) current)
@@ -133,98 +92,67 @@ position that crept on, so a seek runs it itself, see
       (unless (eq (plist-get previous :paused) (plist-get current :paused))
         (run-hooks 'supersonic-playback-state-change-hook))))))
 
-(aio-defun
- supersonic-poller-poll (poller)
- "Poll POLLER's player, keep the snapshot and announce what changed.
-A poll that gets an answer marks the backend live and runs the
-facade's hooks, see `supersonic-poller-announce'; one that does not
-marks it not live, runs POLLER's `on-failure', and the first time in
-an outage also reports the failure and runs the track-change hook, so
-that nothing goes on showing the stale snapshot as current.
-
-Never runs alongside another poll: with one in flight, this waits for
-it and then polls itself, since an action polling for its own effect
-needs a fresh answer, and two polls in flight could land out of order.
-The timer polls through `supersonic-poller--tick', which skips
-instead.  A poll stays in flight until its request settles, which
-`supersonic-request-timeout' bounds.
-
-A poll that gets an answer runs POLLER's `on-landed' before the hooks,
-and whatever function that returns once it is no longer in flight.
-
-Only the player failing to answer counts as a failed poll.  An error
-from a facade hook, `on-failure' or `on-landed' is reported as failing
-to run the playback hooks, and leaves the backend live.  A poll still
-waiting for its answer when polling stops changes nothing once the
-answer arrives, see `supersonic-poller--stop'."
- (while (supersonic-poller-in-flight poller)
-   (aio-await (supersonic-poller-in-flight poller)))
- (let ((done (aio-promise))
-       (generation (supersonic-poller-generation poller))
-       (previous (supersonic-poller-snapshot poller))
-       (was-live (supersonic-poller-live poller))
-       (snapshot nil)
-       (failure nil)
-       (then nil))
-   (setf (supersonic-poller-in-flight poller) done)
-   (unwind-protect
-       (progn
-         (condition-case err
-             (setq snapshot (aio-await (funcall (supersonic-poller-fetch poller))))
-           (error (setq failure err)))
-         (when (eql generation (supersonic-poller-generation poller))
-           (supersonic--with-async-error-handling nil "run the playback hooks"
-             (if failure
-                 (progn
-                   (setf (supersonic-poller-live poller) nil)
-                   (when (supersonic-poller-on-failure poller)
-                     (funcall (supersonic-poller-on-failure poller)))
-                   (unless (supersonic-poller-failing poller)
-                     (setf (supersonic-poller-failing poller) t)
-                     (supersonic--report-async-error (supersonic-poller-description poller) failure)
-                     (run-hooks 'supersonic-playback-track-change-hook)))
-               (setf (supersonic-poller-snapshot poller) snapshot)
-               (setf (supersonic-poller-live poller) t)
-               (setf (supersonic-poller-failing poller) nil)
-               (when (supersonic-poller-on-landed poller)
-                 (setq then (funcall (supersonic-poller-on-landed poller) previous snapshot)))
-               (supersonic-poller-announce poller (not was-live))))))
-     (setf (supersonic-poller-in-flight poller) nil)
-     (aio-resolve done #'ignore))
-   (when then
-     (aio-await (funcall then)))))
+(aio-defun supersonic-poller-poll (poller)
+  "Poll POLLER's player, store the snapshot and announce what changed.
+If the player doesn't answer, mark the backend as not live, run
+`on-failure' and, at the start of an outage, report it.  Wait for a
+poll already in flight first, so polls never overlap.  The answer to
+a poll sent before polling stopped is ignored."
+  (while (supersonic-poller-in-flight poller)
+    (aio-await (supersonic-poller-in-flight poller)))
+  (let ((done (aio-promise))
+        (generation (supersonic-poller-generation poller))
+        (previous (supersonic-poller-snapshot poller))
+        (was-live (supersonic-poller-live poller))
+        (snapshot nil)
+        (failure nil)
+        (then nil))
+    (setf (supersonic-poller-in-flight poller) done)
+    (unwind-protect
+        (progn
+          (condition-case err
+              (setq snapshot (aio-await (funcall (supersonic-poller-fetch poller))))
+            (error (setq failure err)))
+          (when (eql generation (supersonic-poller-generation poller))
+            (supersonic--with-async-error-handling nil "run the playback hooks"
+              (if failure
+                  (progn
+                    (setf (supersonic-poller-live poller) nil)
+                    (when (supersonic-poller-on-failure poller)
+                      (funcall (supersonic-poller-on-failure poller)))
+                    (unless (supersonic-poller-failing poller)
+                      (setf (supersonic-poller-failing poller) t)
+                      (supersonic--report-async-error (supersonic-poller-description poller) failure)
+                      (run-hooks 'supersonic-playback-track-change-hook)))
+                (setf (supersonic-poller-snapshot poller) snapshot)
+                (setf (supersonic-poller-live poller) t)
+                (setf (supersonic-poller-failing poller) nil)
+                (when (supersonic-poller-on-landed poller)
+                  (setq then (funcall (supersonic-poller-on-landed poller) previous snapshot)))
+                (supersonic-poller-announce poller (not was-live))))))
+      (setf (supersonic-poller-in-flight poller) nil)
+      (aio-resolve done #'ignore))
+    (when then
+      (aio-await (funcall then)))))
 
 (defun supersonic-poller--tick (poller)
-  "Poll POLLER's player, unless a poll is still waiting for its answer.
-What POLLER's timer runs.  Skipping keeps a player that stopped
-answering from piling up open connections (#70), and loses nothing:
-the poll in flight is about to report the same state."
+  "Poll POLLER's player unless a poll is already in flight."
   (unless (supersonic-poller-in-flight poller)
     (ignore (supersonic-poller-poll poller))))
 
 (defun supersonic-poller-replace-snapshot (poller snapshot)
-  "Make SNAPSHOT POLLER's latest, as if a poll had found it, and announce it.
-For a backend that knows what its player is about to report before a
-poll can find it -- the UPnP backend, having just loaded a track --
-and wants the facade's hooks to show it now.  See
-`supersonic-poller-announce'."
+  "Make SNAPSHOT POLLER's latest, as if a poll had found it, and announce it."
   (setf (supersonic-poller-snapshot poller) snapshot)
   (supersonic-poller-announce poller))
 
-(aio-defun
- supersonic-poller-finish-seek (poller)
- "Poll POLLER's player for where a seek landed, then say it moved.
-The position-change hook is for the sudden jump of a seek, which only
-whoever asked for the seek can tell apart from a position that crept
-on between polls -- see `supersonic-poller-announce'."
- (aio-await (supersonic-poller-poll poller))
- (run-hooks 'supersonic-playback-position-change-hook))
+(aio-defun supersonic-poller-finish-seek (poller)
+  "Poll POLLER's player after a seek, then run the position-change hook."
+  (aio-await (supersonic-poller-poll poller))
+  (run-hooks 'supersonic-playback-position-change-hook))
 
 (defun supersonic-poller-position (snapshot playing &optional duration)
-  "Return SNAPSHOT's `:position', counted on to now if PLAYING.
-While PLAYING, the time since SNAPSHOT's `:polled-at' is added, so
-the position advances by the second between polls.  Never past
-DURATION, if given.  nil if SNAPSHOT has no position."
+  "Return SNAPSHOT's `:position', advanced to now if PLAYING.
+Never past DURATION, if given.  Return nil if SNAPSHOT has no position."
   (let ((position (plist-get snapshot :position)))
     (when position
       (let ((position (if playing
@@ -239,21 +167,15 @@ DURATION, if given.  nil if SNAPSHOT has no position."
 ;;;
 
 (defun supersonic-poller--start (poller)
-  "Start POLLER's timer, unless it is running, and poll once right away.
-Right away rather than after the first interval, so that the backend
-shows real state as soon as it becomes the active one."
+  "Start POLLER's timer unless it is running, and poll right away."
   (unless (supersonic-poller-timer poller)
     (let ((interval (symbol-value (supersonic-poller-interval poller))))
       (setf (supersonic-poller-timer poller) (run-at-time interval interval #'supersonic-poller--tick poller)))
     (supersonic-poller--tick poller)))
 
 (defun supersonic-poller--stop (poller)
-  "Stop POLLER's timer and forget what polling found.
-So that neither a stale snapshot nor a timer spending requests on a
-player nobody asks about outlives the backend being the active one.
-A poll still in flight is not cancelled, but its answer is dropped:
-otherwise it would mark the backend live again, run the hooks, and
-for UPnP even load the next track, after the user switched away."
+  "Stop POLLER's timer and forget its state.
+The answer to a poll still in flight will be ignored."
   (cl-incf (supersonic-poller-generation poller))
   (when (supersonic-poller-timer poller)
     (cancel-timer (supersonic-poller-timer poller))
@@ -264,31 +186,26 @@ for UPnP even load the next track, after the user switched away."
   (setf (supersonic-poller-announced poller) nil))
 
 (defun supersonic-poller--follow (poller backend)
-  "Poll with POLLER exactly while BACKEND, the one about to be active, is its."
+  "Start POLLER if BACKEND is its backend, stop it otherwise."
   (if (eq backend (supersonic-poller-backend poller))
       (supersonic-poller--start poller)
     (supersonic-poller--stop poller)))
 
 (defvar supersonic-poller--registered nil
-  "Variables holding the poller of a polled backend each.
-Variables rather than the pollers themselves, so that a poller bound
-in their place, by a test say, is the one that follows the backend.")
+  "Variables holding the pollers of the polled backends.")
 
 (defun supersonic-poller--watch-backend (_symbol new-value _operation _where)
-  "Start or stop each registered poller as NEW-VALUE becomes the backend.
-Watches `supersonic-playback-backend'."
+  "Start or stop each registered poller for NEW-VALUE, the new backend."
   (dolist (variable supersonic-poller--registered)
     (supersonic-poller--follow (symbol-value variable) new-value)))
 
-;; `remove-variable-watcher' first so that re-evaluating this file
-;; cannot stack a second watcher.
+;; Removed first so that reloading this file doesn't add it twice.
 (remove-variable-watcher 'supersonic-playback-backend #'supersonic-poller--watch-backend)
 (add-variable-watcher 'supersonic-playback-backend #'supersonic-poller--watch-backend)
 
 (defun supersonic-poller-register (variable)
-  "Poll with the poller in VARIABLE exactly while its backend is active.
-Starts polling right away if it already is, so that a selection made
-before the backend's file was loaded is picked up too."
+  "Poll with the poller in VARIABLE while its backend is active.
+Start polling now if it already is."
   (cl-pushnew variable supersonic-poller--registered)
   (supersonic-poller--follow (symbol-value variable) supersonic-playback-backend))
 

@@ -20,19 +20,17 @@
 
 ;;; Commentary:
 
-;; The single door through which supersonic.el asks for library data.
-;; It is to *where music comes from* what `supersonic-playback.el' is to
-;; *how it gets played*.  A provider -- Subsonic, via
-;; `supersonic-subsonic.el', or Music Assistant, via the opt-in
-;; `supersonic-music-assistant.el' -- registers the functions
-;; implementing a fixed set of operations under a name, and the
-;; `supersonic-provider-*' functions here dispatch to whichever provider
-;; `supersonic-provider' selects.
+;; The library side of supersonic.el: where music comes from, as
+;; `supersonic-playback.el' is how it gets played.  A provider --
+;; Subsonic in `supersonic-subsonic.el', Music Assistant in
+;; `supersonic-music-assistant.el' -- registers functions for the
+;; operations in `supersonic-provider-operations', and the
+;; `supersonic-provider-*' functions call those of the provider
+;; `supersonic-provider' selects.  Operations are optional; see
+;; `supersonic-provider-supports-p'.
 ;;
-;; Every id is an opaque string only the provider that handed it out
-;; knows how to read, such as a Subsonic id or a Music Assistant URI.
-;; Callers pass it back as-is, compare it with `equal', and never build
-;; or parse one.  Every item is a plist in this vocabulary:
+;; Ids are opaque strings: pass them back as they are and compare them
+;; with `equal'.  Items are plists:
 ;;
 ;;   artist  :id :name :art
 ;;   album   :id :name :artist :year :art
@@ -41,22 +39,11 @@
 ;;   podcast :id :title :art
 ;;   episode :id :title :duration :status
 ;;
-;; Only `:id' is guaranteed; any other key may be missing, meaning the
-;; provider does not know it.  `:duration' is in seconds, `:year' and
-;; `:track' are numbers, `:size' is in bytes, and `:art' is an opaque
-;; cover-art reference that need not be the item's own id.  An
-;; episode's `:status' is free text in the provider's own words --
-;; Subsonic's "completed", Music Assistant's "played" -- for display
-;; only, never to be matched on.  A provider may add keys of its own on
-;; top.
+;; Only `:id' is always present.  `:duration' is in seconds, `:size' in
+;; bytes; `:art' is a cover art reference, not necessarily the item's
+;; id; an episode's `:status' is display text.  Providers may add keys.
 ;;
-;; Every operation is optional: one a provider leaves out is reported
-;; when it is called, and `supersonic-provider-supports-p' lets a caller
-;; ask first.
-;;
-;; This file also hosts the helpers the list buffers wrap their
-;; refreshes in, since a failed refresh is where the provider says how
-;; to fix its configuration.
+;; Also here: the error reporting the list buffers use.
 
 ;;; Code:
 
@@ -66,60 +53,40 @@
 
 (defconst supersonic-provider-operations
   '(artists artist-albums album-list album-tracks track search
-    podcasts podcast-episodes add-podcast download-podcast-episode
-    stream-url scrobble cover-art cover-art-url cache-namespace config-hints)
+            podcasts podcast-episodes add-podcast download-podcast-episode
+            stream-url scrobble cover-art cover-art-url cache-namespace config-hints)
   "The library operations a provider can implement.
 All but `scrobble', `cache-namespace' and `config-hints' return a
-promise.
+promise.  Items are plists as described in the Commentary of
+`supersonic-provider.el'.
 
-- `artists' takes no arguments and resolves to a list of artists.
-- `artist-albums' takes an artist id and resolves to that artist's
-  albums.
-- `album-list' takes a TYPE, one of `recent' (recently played),
-  `random' or `newest' (recently added), and a COUNT, and resolves to
-  at most COUNT albums across all artists.  A provider that cannot
-  produce a given TYPE signals a `user-error' saying so.
-- `album-tracks' takes an album id and resolves to its tracks, in
-  album order.
-- `track' takes a track id and resolves to that one track.
-- `search' takes a query string and resolves to a plist of three
-  lists, (:artists ARTISTS :albums ALBUMS :tracks TRACKS).
-- `podcasts' takes no arguments and resolves to every podcast
-  channel subscribed to.
-- `podcast-episodes' takes a channel id and resolves to that
-  channel's episodes.  An episode's `:id' is a track id: it is what
-  gets handed to `supersonic-playback-start' to play it.
-- `add-podcast' takes a feed URL, subscribes to it, and resolves
-  once that is done.
-- `download-podcast-episode' takes an episode id, has the provider
-  fetch the episode so it can be played, and resolves once that has
-  been set in motion.
-- `stream-url' takes a track id and an optional FORMAT plist and
-  resolves to a URL a player can stream that track from.  The URL may
-  carry credentials, so it goes to a subprocess over a pipe or socket,
-  never on a command line.  FORMAT, `(:format EXT :max-bit-rate KBPS)',
-  is a hint a provider may ignore.
-- `scrobble' takes a track id and a NOW-PLAYING flag and reports the
-  track to the provider: as having just started when NOW-PLAYING is
-  non-nil, as having been played otherwise.  Fire and forget: its
-  return value means nothing.
-- `cover-art' takes an `:art' reference and a SIZE in pixels and
-  resolves to the image's bytes, as a unibyte string.  SIZE is a hint
-  only: a provider that cannot scale on its side returns the image as
-  it is, and Emacs scales it for display.
-- `cover-art-url' takes the same ART and SIZE and resolves to a URL
-  the image can be fetched from, for a device that fetches it itself,
-  such as a UPnP renderer.  The URL may carry credentials.
-- `cache-namespace' takes no arguments and returns a string naming
-  the library this provider is connected to, such as a server
-  address.  See `supersonic-provider-cache-name'.
-- `config-hints' takes no arguments and returns a list of strings,
-  each a hint on what to check in this provider's configuration when
-  a request fails.
+- `artists' (): all artists.
+- `artist-albums' (ARTIST-ID): the artist's albums.
+- `album-list' (TYPE COUNT): at most COUNT albums of TYPE, one of
+  `recent', `random' or `newest'.  Signals a `user-error' for a TYPE
+  the provider can't produce.
+- `album-tracks' (ALBUM-ID): the album's tracks, in order.
+- `track' (TRACK-ID): one track.
+- `search' (QUERY): (:artists ARTISTS :albums ALBUMS :tracks TRACKS).
+- `podcasts' (): the subscribed podcast channels.
+- `podcast-episodes' (CHANNEL-ID): the channel's episodes.  An
+  episode's `:id' is a track id.
+- `add-podcast' (URL): subscribe to a feed.
+- `download-podcast-episode' (EPISODE-ID): start downloading it on
+  the server.
+- `stream-url' (TRACK-ID &optional FORMAT): a URL to stream the track
+  from.  FORMAT, (:format EXT :max-bit-rate KBPS), is a hint.
+- `scrobble' (TRACK-ID NOW-PLAYING): report the track as now playing,
+  or as played.  The return value is ignored.
+- `cover-art' (ART SIZE): the image bytes, as a unibyte string.  SIZE
+  in pixels is a hint.
+- `cover-art-url' (ART SIZE): a URL to fetch the image from.
+- `cache-namespace' (): a string naming the connected library, such
+  as the server address.
+- `config-hints' (): strings saying what to check in the
+  configuration when a request fails.
 
-Items are plists in the vocabulary described in the Commentary of
-`supersonic-provider.el'.  A provider may leave operations out;
-calling one then reports that.")
+URLs may carry credentials, so keep them off command lines.")
 
 (defconst supersonic-provider-album-list-types '(recent random newest)
   "The album list types `supersonic-provider-album-list' may be asked for.")
@@ -129,11 +96,9 @@ calling one then reports that.")
 
 (defun supersonic-provider-register (name operations)
   "Register NAME as a library provider implementing OPERATIONS.
-NAME is the symbol users select with `supersonic-provider'.
-OPERATIONS is an alist mapping operation symbols from
-`supersonic-provider-operations' to the functions implementing them.
-Registering a name that is already registered replaces it, so
-re-loading a provider file is harmless."
+NAME is the symbol `supersonic-provider' selects it by.  OPERATIONS is
+an alist of operations from `supersonic-provider-operations' to their
+functions.  Registering NAME again replaces it."
   (dolist (operation operations)
     (unless (memq (car operation) supersonic-provider-operations)
       (error "Unknown provider operation `%s' for provider `%s'" (car operation) name))
@@ -142,22 +107,20 @@ re-loading a provider file is harmless."
   (puthash name operations supersonic-provider--providers))
 
 (defun supersonic-provider-names ()
-  "Return the names of every provider currently registered."
+  "Return the names of the registered providers."
   (let (names)
     (maphash (lambda (name _operations) (push name names)) supersonic-provider--providers)
     (nreverse names)))
 
 (defun supersonic-provider-supports-p (operation &optional provider)
   "Return non-nil if PROVIDER implements OPERATION.
-PROVIDER defaults to the active one, `supersonic-provider'.  Never
-signals, so it is safe to ask from inside an error handler."
+PROVIDER defaults to `supersonic-provider'.  Never signals."
   (and (alist-get operation (gethash (or provider supersonic-provider) supersonic-provider--providers)) t))
 
 (defun supersonic-provider--implementation (operation)
-  "Return the active provider's implementation of OPERATION.
-Signals a `user-error' if `supersonic-provider' names a provider that
-was never registered -- typically because the file providing it has
-not been loaded -- or one that does not implement OPERATION."
+  "Return the active provider's function for OPERATION.
+Signal a `user-error' if the provider isn't registered or doesn't
+implement OPERATION."
   (let ((operations (gethash supersonic-provider supersonic-provider--providers)))
     (unless operations
       (user-error "No library provider named `%s' is registered" supersonic-provider))
@@ -165,8 +128,7 @@ not been loaded -- or one that does not implement OPERATION."
         (user-error "The `%s' provider does not support `%s'" supersonic-provider operation))))
 
 (defun supersonic-provider-require (operation)
-  "Signal a `user-error' unless the active provider implements OPERATION.
-For a command to call before prompting or opening a buffer."
+  "Signal a `user-error' unless the active provider implements OPERATION."
   (supersonic-provider--implementation operation)
   nil)
 
@@ -174,82 +136,66 @@ For a command to call before prompting or opening a buffer."
   "Call the active provider's implementation of OPERATION with ARGS."
   (apply (supersonic-provider--implementation operation) args))
 
-;; Each of these is an `aio-defun' rather than a plain function
-;; returning whatever the implementation returns, so that a provider
-;; that is missing or cannot do OPERATION rejects the promise the
-;; caller awaits instead of signalling synchronously at the call site.
+;; Async so that a missing operation rejects the promise rather than
+;; signaling at the call site.
 
-(aio-defun
- supersonic-provider-artists ()
- "Return a promise resolving to every artist in the active provider's library."
- (aio-await (supersonic-provider--call 'artists)))
+(aio-defun supersonic-provider-artists ()
+  "Return a promise resolving to all artists."
+  (aio-await (supersonic-provider--call 'artists)))
 
-(aio-defun
- supersonic-provider-artist-albums (artist-id)
- "Return a promise resolving to the albums of the artist with ARTIST-ID."
- (aio-await (supersonic-provider--call 'artist-albums artist-id)))
+(aio-defun supersonic-provider-artist-albums (artist-id)
+  "Return a promise resolving to the albums of the artist ARTIST-ID."
+  (aio-await (supersonic-provider--call 'artist-albums artist-id)))
 
-(aio-defun
- supersonic-provider-album-list (type count)
- "Return a promise resolving to at most COUNT albums of list TYPE.
+(aio-defun supersonic-provider-album-list (type count)
+  "Return a promise resolving to at most COUNT albums of list TYPE.
 TYPE is one of `supersonic-provider-album-list-types'."
- (unless (memq type supersonic-provider-album-list-types)
-   (error "Unknown album list type `%s'" type))
- (aio-await (supersonic-provider--call 'album-list type count)))
+  (unless (memq type supersonic-provider-album-list-types)
+    (error "Unknown album list type `%s'" type))
+  (aio-await (supersonic-provider--call 'album-list type count)))
 
-(aio-defun
- supersonic-provider-album-tracks (album-id)
- "Return a promise resolving to the tracks of the album with ALBUM-ID."
- (aio-await (supersonic-provider--call 'album-tracks album-id)))
+(aio-defun supersonic-provider-album-tracks (album-id)
+  "Return a promise resolving to the tracks of the album ALBUM-ID."
+  (aio-await (supersonic-provider--call 'album-tracks album-id)))
 
-(aio-defun
- supersonic-provider-track (track-id)
- "Return a promise resolving to the track with TRACK-ID."
- (aio-await (supersonic-provider--call 'track track-id)))
+(aio-defun supersonic-provider-track (track-id)
+  "Return a promise resolving to the track TRACK-ID."
+  (aio-await (supersonic-provider--call 'track track-id)))
 
-(aio-defun
- supersonic-provider-search (query)
- "Return a promise resolving to the active provider's results for QUERY.
+(aio-defun supersonic-provider-search (query)
+  "Return a promise resolving to the search results for QUERY.
 The result is a plist (:artists ARTISTS :albums ALBUMS :tracks TRACKS)."
- (aio-await (supersonic-provider--call 'search query)))
+  (aio-await (supersonic-provider--call 'search query)))
 
-(aio-defun
- supersonic-provider-podcasts ()
- "Return a promise resolving to every podcast channel subscribed to."
- (aio-await (supersonic-provider--call 'podcasts)))
+(aio-defun supersonic-provider-podcasts ()
+  "Return a promise resolving to the subscribed podcast channels."
+  (aio-await (supersonic-provider--call 'podcasts)))
 
-(aio-defun
- supersonic-provider-podcast-episodes (channel-id)
- "Return a promise resolving to the episodes of podcast channel CHANNEL-ID."
- (aio-await (supersonic-provider--call 'podcast-episodes channel-id)))
+(aio-defun supersonic-provider-podcast-episodes (channel-id)
+  "Return a promise resolving to the episodes of podcast channel CHANNEL-ID."
+  (aio-await (supersonic-provider--call 'podcast-episodes channel-id)))
 
-(aio-defun
- supersonic-provider-add-podcast (url)
- "Return a promise resolving once the podcast feed at URL is subscribed to."
- (aio-await (supersonic-provider--call 'add-podcast url)))
+(aio-defun supersonic-provider-add-podcast (url)
+  "Return a promise resolving once the podcast feed at URL is subscribed."
+  (aio-await (supersonic-provider--call 'add-podcast url)))
 
-(aio-defun
- supersonic-provider-download-podcast-episode (episode-id)
- "Return a promise resolving once EPISODE-ID's download has been started."
- (aio-await (supersonic-provider--call 'download-podcast-episode episode-id)))
+(aio-defun supersonic-provider-download-podcast-episode (episode-id)
+  "Return a promise resolving once the download of EPISODE-ID has started."
+  (aio-await (supersonic-provider--call 'download-podcast-episode episode-id)))
 
-(aio-defun
- supersonic-provider-stream-url (track-id &optional format)
- "Return a promise resolving to a URL to stream the track with TRACK-ID from.
-The URL may carry credentials -- keep it off any subprocess's command
-line.  FORMAT is as `supersonic-provider-operations' documents for
-`stream-url', and is only passed on when non-nil."
- (aio-await
-  (if format
-      (supersonic-provider--call 'stream-url track-id format)
-    (supersonic-provider--call 'stream-url track-id))))
+(aio-defun supersonic-provider-stream-url (track-id &optional format)
+  "Return a promise resolving to a URL to stream the track TRACK-ID from.
+FORMAT is a hint, see `supersonic-provider-operations'.  The URL may
+carry credentials, so keep it off command lines."
+  (aio-await
+   (if format
+       (supersonic-provider--call 'stream-url track-id format)
+     (supersonic-provider--call 'stream-url track-id))))
 
 (defun supersonic-provider-scrobble (track-id &optional now-playing)
   "Scrobble TRACK-ID, as now playing if NOW-PLAYING is non-nil.
-Does nothing unless `supersonic-enable-scrobbling' is set, for a nil
-TRACK-ID, or when the active provider cannot scrobble.  Never signals,
-so as not to break the backend that noticed the track change; a
-failure is reported in the echo area."
+Do nothing unless `supersonic-enable-scrobbling' is non-nil and the
+provider can scrobble.  Errors are reported, not signaled."
   (when (and supersonic-enable-scrobbling track-id (supersonic-provider-supports-p 'scrobble))
     (condition-case err
         (supersonic-provider--call 'scrobble track-id now-playing)
@@ -257,28 +203,21 @@ failure is reported in the echo area."
        (message "[Supersonic] Failed to scrobble: %s" (error-message-string err))))
     nil))
 
-(aio-defun
- supersonic-provider-cover-art (art size)
- "Return a promise resolving to the bytes of cover art ART at about SIZE pixels.
-ART is an item's `:art' reference, never the item's own id."
- (aio-await (supersonic-provider--call 'cover-art art size)))
+(aio-defun supersonic-provider-cover-art (art size)
+  "Return a promise resolving to the bytes of cover art ART at about SIZE pixels.
+ART is an item's `:art' reference."
+  (aio-await (supersonic-provider--call 'cover-art art size)))
 
-(aio-defun
- supersonic-provider-cover-art-url (art size)
- "Return a promise resolving to a URL for cover art ART at about SIZE pixels.
-ART is an item's `:art' reference, never the item's own id.  The URL
-may carry credentials, as `supersonic-provider-stream-url''s may."
- (aio-await (supersonic-provider--call 'cover-art-url art size)))
+(aio-defun supersonic-provider-cover-art-url (art size)
+  "Return a promise resolving to a URL of cover art ART at about SIZE pixels.
+ART is an item's `:art' reference.  The URL may carry credentials."
+  (aio-await (supersonic-provider--call 'cover-art-url art size)))
 
 (defun supersonic-provider-cache-name (id)
-  "Return a file name for ID that is safe, bounded and unique to the library.
-ID is any id or `:art' reference the active provider handed out.
-ID may be a path or URI, so it is hashed, together with the provider's
-`cache-namespace', so that the same ID from two servers names two
-files.  Never signals, since cache lookups happen during rendering."
+  "Return a cache file name for ID, unique to the connected library.
+ID is an id or `:art' reference.  It is hashed with the provider's
+`cache-namespace'.  Never signals."
   (let ((namespace (or (and (supersonic-provider-supports-p 'cache-namespace)
-                            ;; A buggy provider's failure must not break
-                            ;; rendering; it only costs per-server isolation.
                             (condition-case err
                                 (supersonic-provider--call 'cache-namespace)
                               (error
@@ -291,8 +230,7 @@ files.  Never signals, since cache lookups happen during rendering."
 
 (defun supersonic-provider-config-hints ()
   "Return the active provider's configuration hints, a list of strings.
-nil for a provider that has none to give.  Never signals, since this
-is asked while reporting some other failure."
+Never signals."
   (and (supersonic-provider-supports-p 'config-hints)
        (condition-case err
            (supersonic-provider--call 'config-hints)
@@ -305,23 +243,19 @@ is asked while reporting some other failure."
 ;;;
 
 (defun supersonic--log (format-string &rest args)
-  "Log FORMAT-STRING with ARGS to *Messages* without showing it.
-For failures worth a trace but not worth interrupting the user over,
-e.g. a cache file that could not be deleted."
+  "Log FORMAT-STRING with ARGS to *Messages* without showing it."
   (let ((inhibit-message t))
     (apply #'message (concat "[Supersonic] " format-string) args)))
 
 (defun supersonic--report-async-error (description err)
-  "Tell the user that DESCRIPTION failed with ERR via the echo area.
-DESCRIPTION is a short present-tense phrase, e.g. \"fetch tracks\"."
+  "Report in the echo area that DESCRIPTION failed with ERR.
+DESCRIPTION is a phrase like \"fetch tracks\"."
   (message "[Supersonic] Failed to %s: %s" description (error-message-string err)))
 
 (defun supersonic--handle-async-error (buffer description err)
-  "Report that DESCRIPTION failed with ERR, both in BUFFER and the echo area.
-BUFFER is the tabulated-list buffer whose refresh failed; its contents
-are replaced with the error, followed by whatever
-`supersonic-provider-config-hints' the active provider has to offer.
-The same failure is also echoed via `supersonic--report-async-error'."
+  "Report that DESCRIPTION failed with ERR, in BUFFER and the echo area.
+BUFFER's contents are replaced by the error and the provider's
+configuration hints."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
       (let ((inhibit-read-only t)
@@ -335,17 +269,10 @@ The same failure is also echoed via `supersonic--report-async-error'."
   (supersonic--report-async-error description err))
 
 (defmacro supersonic--with-async-error-handling (buff description &rest body)
-  "Run BODY, reporting any error via DESCRIPTION instead of propagating it.
-BUFF, if non-nil, is a tabulated-list buffer whose contents are replaced
-with the error and configuration hints, in addition to an echo-area
-message; if BUFF is nil, only the echo-area message is shown.
-DESCRIPTION is a short present-tense phrase, e.g. \"fetch tracks\",
-combined into \"Failed to DESCRIPTION: ERR\".
-
-Wraps BODY in a `condition-case'.  Safe to use inside an `aio-defun':
-generator.el fully macroexpands a function body -- including calls to
-this macro -- before transforming it, and the `condition-case' this
-expands to is itself transform-aware."
+  "Run BODY, reporting an error instead of signaling it.
+DESCRIPTION is a phrase like \"fetch tracks\".  If BUFF is non-nil,
+the error is also shown in it, see `supersonic--handle-async-error'.
+Usable inside `aio-defun'."
   (declare (indent 2))
   `(condition-case err
        (progn
@@ -356,10 +283,7 @@ expands to is itself transform-aware."
         (supersonic--report-async-error ,description err)))))
 
 (defun supersonic--init-list-buffer (buff mode-fn placeholder)
-  "Ready BUFF as a fresh tabulated-list buffer while an async refresh runs.
-Turns on MODE-FN (a derived tabulated-list mode) and shows PLACEHOLDER
-text (e.g. \"Loading tracks...\") until the refresh that follows
-replaces it with real entries."
+  "Prepare BUFF for an async refresh: turn on MODE-FN and show PLACEHOLDER."
   (with-current-buffer buff
     (setq buffer-read-only nil)
     (erase-buffer)

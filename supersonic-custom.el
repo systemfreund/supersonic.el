@@ -20,16 +20,10 @@
 
 ;;; Commentary:
 
-;; The user options of supersonic.el and their `supersonic' group.
-;; They live here, in a file with no dependencies that every other file
-;; requires, because several are read by more than one file, and so
-;; that requiring any one file defines the options it reads.
-;;
-;; The exception is an option whose default is a function of the
-;; package, such as `supersonic-auth-function': it lives next to that
-;; function, so that this file does not refer back to the files
-;; requiring it.  `supersonic-credentials-cache-expiry' lives with
-;; `supersonic-cached', see `supersonic-credentials.el'.
+;; The user options of supersonic.el.  Every other file requires this
+;; one, so it requires none of them.  Options whose default is a
+;; function of the package, like `supersonic-auth-function', live next
+;; to that function instead.
 
 ;;; Code:
 
@@ -39,13 +33,17 @@
   :group 'external)
 
 (defcustom supersonic-host ""
-  "URL of the supersonic service, e.g. \"http://host:4533\".
-Must match the \"machine\" field of the corresponding authinfo
-entry verbatim, unless `supersonic-auth-function' finds the
-credentials some other way.  May be given without a scheme
-\(\"http://\" or \"https://\"), in which case \"https://\" is
-assumed."
+  "URL of the Subsonic server, e.g. \"https://host:4533\".
+\"https://\" is assumed if no scheme is given.  The default
+`supersonic-auth-function' looks this exact string up as the
+\"machine\" in authinfo."
   :type 'string
+  :group 'supersonic)
+
+(defcustom supersonic-credentials-cache-expiry 3600
+  "Seconds a function made by `supersonic-cached' caches a result.
+`supersonic-forget-credentials' clears the cache earlier."
+  :type 'number
   :group 'supersonic)
 
 (defcustom supersonic-mpv (executable-find "mpv")
@@ -60,8 +58,7 @@ assumed."
 
 (defcustom supersonic-seek-step 10
   "Seconds `supersonic-seek-forward' and `supersonic-seek-back' jump by.
-Either command also takes a numeric prefix argument, which overrides
-this for that one seek."
+A numeric prefix argument overrides it for one seek."
   :type 'number
   :group 'supersonic)
 
@@ -77,55 +74,46 @@ this for that one seek."
 
 (defcustom supersonic-list-art-size 250
   "Height in pixels of the cover art in the album and podcast lists.
-The art is also downloaded at this size, so raising it costs a
-re-download of anything already cached at the old size."
+Art cached at another size is downloaded again."
   :type 'integer
   :group 'supersonic)
 
 (defcustom supersonic-artist-art-size 64
   "Height in pixels of the artist images in the artist list, or nil for none.
-Smaller than `supersonic-list-art-size' because every row of the
-artist list is this high.  A new size means fetching the images again,
-and takes effect for the next artist list opened."
+Art cached at another size is downloaded again."
   :type '(choice (const :tag "No artist images" nil) integer)
   :group 'supersonic)
 
 (defcustom supersonic-list-use-header-line nil
-  "Where the column headers go in supersonic's artist, album and podcast lists.
-Non-nil puts them in the window's header line, pinned as the list
-scrolls; nil puts them in the buffer above the first row, scrolling
-with it.  Takes effect for lists opened afterwards."
+  "Non-nil to show list column headers in the header line.
+The header line stays in place as the list scrolls.  With nil the
+headers are the first line of the buffer.  Applies to lists opened
+afterwards."
   :type 'boolean
   :group 'supersonic)
 
 (defcustom supersonic-now-playing-art-size 500
   "Height in pixels of the cover art in the now-playing buffer.
-The art is also downloaded at this size, so raising it costs a
-re-download of anything already cached at the old size."
+Art cached at another size is downloaded again."
   :type 'integer
   :group 'supersonic)
 
 (defcustom supersonic-art-fetch-concurrency 6
-  "How many cover art downloads may be in flight at the same time.
-A list buffer asks for every row's art at once, which would otherwise
-open one connection per row.  Six is what browsers and
-`url-queue-parallel-processes' settle on per host."
+  "Maximum number of cover art downloads running at the same time."
   :type 'integer
   :group 'supersonic)
 
 (defcustom supersonic-enable-waveform t
-  "Enable a clickable waveform seekbar in the now-playing buffer.
-Requires a graphic frame and the `pbm' image type.  The waveform is
-computed by transcoding the whole track with mpv, so the first time a
-track is shown its seekbar appears a moment later; it is cached
-afterwards."
+  "Non-nil to show a clickable waveform seekbar in the now-playing buffer.
+Needs a graphic frame and mpv.  A track's waveform is computed the
+first time it is shown, which takes a moment, and cached."
   :type 'boolean
   :group 'supersonic)
 
 (defcustom supersonic-waveform-buckets 300
   "Number of peak/RMS samples computed across a track.
-Also the horizontal resolution of the rendered seekbar.  Changing it
-means analysing cached tracks again."
+This is also the horizontal resolution of the seekbar.  Changing it
+recomputes cached waveforms."
   :type 'integer
   :group 'supersonic)
 
@@ -140,68 +128,55 @@ means analysing cached tracks again."
   :group 'supersonic)
 
 (defcustom supersonic-now-playing-interval 1
-  "Seconds between playback position updates in the now-playing buffer.
-Each update is a single query to the active backend, and only runs
-while that buffer is on display.  Independent of the polling backends'
-own intervals: between polls, they count the position on."
+  "Seconds between position updates in the now-playing buffer.
+Updates only run while the buffer is visible."
   :type 'number
   :group 'supersonic)
 
 (defcustom supersonic-now-playing-cycle-fields '(title artist)
-  "Fields `supersonic-now-playing-animation-functions' rotates through.
-A list drawn from `title', `artist' and `album', in the order they
-should cycle; nil pins the display on the track's title.  How often it
-advances is `supersonic-now-playing-cycle-interval'."
+  "Fields the now-playing label cycles through, in order.
+A list of `title', `artist' and `album'; nil shows the title only.
+See `supersonic-now-playing-cycle-interval'."
   :type '(repeat (choice (const title) (const artist) (const album)))
   :group 'supersonic)
 
 (defcustom supersonic-now-playing-cycle-interval 10
-  "Seconds between advances of `supersonic-now-playing-cycle-fields'.
-Only takes effect while that list is non-nil.  Independent of
-`supersonic-now-playing-animation-frame-interval'."
+  "Seconds between switches of the field the now-playing label shows.
+See `supersonic-now-playing-cycle-fields'."
   :type 'number
   :group 'supersonic)
 
 (defcustom supersonic-now-playing-animation-frame-interval 0.2
-  "Seconds between animation timer ticks.
-This is how often `supersonic-now-playing-animation-functions' get a
-chance to redraw, not how often fields switch (that is
-`supersonic-now-playing-cycle-interval').  Lowering it makes the
-scrolling art overlay smoother, not faster."
+  "Seconds between frames of the now-playing animations.
+Lower values make the scrolling label smoother, not faster."
   :type 'number
   :group 'supersonic)
 
 (defcustom supersonic-now-playing-force-redisplay nil
-  "Force a redisplay after every now-playing tick, even off the selected frame.
-Emacs redisplays when it next goes idle, which a frame that is visible
-but not selected can wait long for while Emacs is kept busy.  Turning
-this on forces a `redisplay' on every tick, so updates show up right
-away, at the cost of that overhead."
+  "Non-nil to redisplay after every now-playing update.
+Without it, a visible but unselected frame may only update when Emacs
+is idle."
   :type 'boolean
   :group 'supersonic)
 
 (defcustom supersonic-now-playing-scroll-step 30
-  "Pixels per second `supersonic-now-playing-animate-art-overlay-scroll' advances.
-A speed, so independent of
-`supersonic-now-playing-animation-frame-interval'."
+  "Speed in pixels per second of the scrolling label on the cover art.
+See `supersonic-now-playing-animate-art-overlay-scroll'."
   :type 'number
   :group 'supersonic)
 
 (defcustom supersonic-now-playing-scroll-pause 2
-  "Seconds `supersonic-now-playing-animate-art-overlay-scroll' rests at each end.
-Text wider than the cover art scrolls to its end, rests this long,
-scrolls back, rests again, and repeats.  Text that fits doesn't
-scroll."
+  "Seconds the scrolling label on the cover art rests at either end."
   :type 'number
   :group 'supersonic)
 
 (defcustom supersonic-album-list-count 50
-  "Number of albums to display in random/newest albums etc."
+  "Number of albums shown in the random, newest and recent album lists."
   :type 'integer
   :group 'supersonic)
 
 (defcustom supersonic-browse-by-tags t
-  "Browse by folder or by idv3 tags."
+  "Non-nil to browse by tags, nil to browse by folder."
   :type 'boolean
   :group 'supersonic)
 
@@ -211,63 +186,46 @@ scroll."
   :group 'supersonic)
 
 (defcustom supersonic-provider 'subsonic
-  "Which library provider supersonic.el browses.
-The symbol a provider registered itself under via
-`supersonic-provider-register': where the artist, album and track
-lists and search results come from, and what the ids in them mean.
-Only `subsonic' is built in; `music-assistant' needs
-`supersonic-music-assistant' loaded first.  Selecting a provider whose
-file has not been loaded is reported when a list buffer is next opened."
+  "The library provider supersonic.el browses.
+A symbol registered with `supersonic-provider-register'.  `subsonic'
+is built in; `music-assistant' needs `supersonic-music-assistant'
+loaded."
   :type '(choice (const :tag "Subsonic-compatible server" subsonic)
                  (const :tag "Music Assistant server (load supersonic-music-assistant first)" music-assistant)
                  (symbol :tag "Other registered provider"))
   :group 'supersonic)
 
 (defcustom supersonic-music-assistant-url ""
-  "Address of the server the `music-assistant' provider browses.
-Its scheme, host and port, e.g. \"http://192.168.1.10:8095\".  The
-token is looked up in auth-source with exactly this string as the
-host, so the authinfo line for it reads
+  "URL of the Music Assistant server, e.g. \"http://192.168.1.10:8095\".
+The default `supersonic-music-assistant-token-function' looks the
+token up in auth-source with this exact string as the host:
 
   machine http://192.168.1.10:8095 password TOKEN
 
-where TOKEN is a long-lived token created in Music Assistant's web UI,
-under your profile.  `supersonic-music-assistant-token-function' can
-look the token up some other way."
+Create a long-lived token under your profile in Music Assistant's web UI."
   :type 'string
   :group 'supersonic)
 
 (defcustom supersonic-music-assistant-player nil
   "The Music Assistant player the `music-assistant' backend plays on.
-A plist `(:id ID :name NAME)': ID is the player's id, which is also
-the id of its queue; NAME is its display name, only ever shown to the
-user.
-
-`supersonic-music-assistant-select-player' sets this from the players
-the server has, and saves it if asked to; nil means none is selected."
+A plist (:id ID :name NAME), or nil for none.  Set it with
+`supersonic-music-assistant-select-player'."
   :type '(choice (const :tag "None selected" nil)
                  (plist :options ((:id string) (:name string))))
   :group 'supersonic)
 
 (defcustom supersonic-music-assistant-poll-interval 2
   "Seconds between polls of the Music Assistant player.
-Only while `music-assistant' is the active backend.  Over HTTP, Music
-Assistant reports nothing on its own, so changes, including those from
-other clients, show up within one interval.  The position shown in
-between is counted on from the last poll."
+Changes made elsewhere show up within this interval."
   :type 'number
   :group 'supersonic)
 
 (defcustom supersonic-playback-backend 'mpv
-  "Which playback backend plays what supersonic.el is asked to play.
-The symbol a backend registered itself under via
-`supersonic-playback-register-backend'; every play, enqueue and
-transport command dispatches to it.  Only `mpv' is built in, and
-selecting a backend whose file has not been loaded is reported when a
-playback command is next used.  So is one that cannot play for the
-active `supersonic-provider': mpv plays for any provider that can
-name a stream URL, the jukebox only for `subsonic'.  Switching with
-`supersonic-playback-switch-backend' offers only backends that fit."
+  "The playback backend supersonic.el plays with.
+A symbol registered with `supersonic-playback-register-backend'.
+`mpv' is built in.  Not every backend can play for every
+`supersonic-provider'; `supersonic-playback-switch-backend' offers
+the ones that can."
   :type '(choice (const :tag "Local mpv process" mpv) (symbol :tag "Other registered backend"))
   :group 'supersonic)
 
@@ -277,82 +235,55 @@ name a stream URL, the jukebox only for `subsonic'.  Switching with
   :group 'supersonic)
 
 (defcustom supersonic-request-timeout 10
-  "Seconds to wait for the server to answer a request before giving up.
-Asynchronous `url-retrieve' has no timeout of its own, so without one
-a request the server never answers holds its connection, and with it
-a file descriptor, open for the rest of the session."
+  "Seconds to wait for the server to answer a request before giving up."
   :type 'number
   :group 'supersonic)
 
 (defcustom supersonic-jukebox-poll-interval 3
-  "Seconds between jukeboxControl polls while `jukebox' is the active backend.
-The Subsonic API cannot push the jukebox's state, so it is polled.
-Lower values notice changes from other clients sooner, at the cost of
-one request to the server per interval."
+  "Seconds between polls of the jukebox while `jukebox' is the backend.
+Changes made elsewhere show up within this interval."
   :type 'number
   :group 'supersonic)
 
 (defcustom supersonic-upnp-stream-format nil
-  "What to ask the provider to stream to a UPnP renderer.
-A plist `(:format EXT :max-bit-rate KBPS)', passed as the FORMAT hint
-of `supersonic-provider-stream-url'; either key may be left out, and
-nil, the default, streams whatever the provider would hand mpv.  Many
-cheap renderers cannot decode FLAC or Opus; for those, ask for
-`(:format \"mp3\" :max-bit-rate 320)'.  The
-`protocolInfo' a renderer is told always follows this, so it is never
-promised one format while receiving another."
+  "Format to stream to a UPnP renderer, or nil for the provider's default.
+A plist (:format EXT :max-bit-rate KBPS); either key may be left out.
+Many cheap renderers cannot decode FLAC or Opus; for those, use
+\(:format \"mp3\" :max-bit-rate 320)."
   :type '(choice (const :tag "Whatever the provider serves" nil)
                  (plist :options ((:format string) (:max-bit-rate integer))))
   :group 'supersonic)
 
 (defcustom supersonic-upnp-renderer nil
   "The UPnP renderer the `upnp' backend plays to.
-A plist `(:location URL :udn UDN :name NAME)': LOCATION is the URL of
-the renderer's device description, which is enough to reach it again
-without running discovery; UDN is its unique device name, so that a
-renderer turning up under a different address can still be recognized;
-NAME is its friendly name, only ever shown to the user.
-
-`supersonic-upnp-select-renderer' sets this, by discovery or from a
-description URL entered by hand, and saves it if asked to; nil means
-none is selected."
+A plist (:location URL :udn UDN :name NAME), or nil for none.  URL is
+the renderer's device description, UDN its unique device name.  Set
+it with `supersonic-upnp-select-renderer'."
   :type '(choice (const :tag "None selected" nil)
                  (plist :options ((:location string) (:udn string) (:name string))))
   :group 'supersonic)
 
 (defcustom supersonic-upnp-poll-interval 2
-  "Seconds between polls of the renderer while `upnp' is the active backend.
-A UPnP renderer reports its state only when asked, so changes, and the
-move to the next queued track once one ends, happen within one
-interval.  The position shown in between is counted on from the last
-poll."
+  "Seconds between polls of the renderer while `upnp' is the backend.
+Changes, and the move to the next track, happen within this interval."
   :type 'number
   :group 'supersonic)
 
 (defcustom supersonic-upnp-discovery-timeout 5
   "Seconds to wait for UPnP renderers to answer a discovery search.
-Renderers are told to answer within one second less than this, so
-that a slow one still makes it in time.  The same limit applies to
-fetching each renderer's device description afterwards, so that one
-device that answered but then never serves its description does not
-hold up the rest."
+The same limit applies to fetching each renderer's description."
   :type 'number
   :group 'supersonic)
 
 (defcustom supersonic-upnp-art-size 600
-  "Size in pixels of the cover art a UPnP renderer is pointed at.
-A hint the provider may scale to; a renderer shows it on its own
-display, if it has one."
+  "Size in pixels of the cover art shown on a UPnP renderer."
   :type 'integer
   :group 'supersonic)
 
 (defcustom supersonic-waveform-samplerate 3000
-  "Sample rate in Hz mpv transcodes a track to for waveform analysis.
-Analysis time and memory grow linearly with it: an hour-long podcast
-is about 22 MB at 3000 Hz.  A few hundred samples per bucket already pin a
-peak down, so raising it is unlikely to be visible; lowering it far
-enough flattens short transients.  Changing it means analysing cached
-tracks again."
+  "Sample rate in Hz at which tracks are analysed for the waveform.
+Time and memory grow with it.  Changing it recomputes cached
+waveforms."
   :type 'integer
   :group 'supersonic)
 
@@ -363,28 +294,23 @@ tracks again."
 
 (defface supersonic-now-playing-art-overlay-label
   '((t :weight bold :foreground "white"))
-  "Face for the label drawn onto the cover art itself.
-The text is drawn into an SVG image, so only `:weight', `:family' and
-`:foreground' apply; its size follows `supersonic-now-playing-art-size'."
+  "Face for the label drawn onto the cover art.
+Only `:weight', `:family' and `:foreground' apply."
   :group 'supersonic)
 
 (defface supersonic-now-playing-button
   '((t :box t :height 0.85))
-  "Face for the transport buttons in the now-playing buffer.
-Doesn't inherit `button', which looks like a hyperlink rather than a
-control."
+  "Face for the transport buttons in the now-playing buffer."
   :group 'supersonic)
 
 (defface supersonic-albums-name
   '((t :inherit bold))
-  "Face for album names in *supersonic-albums* and *supersonic-artist-albums*."
+  "Face for album names in the album lists."
   :group 'supersonic)
 
 (defface supersonic-albums-artist
   '((t :inherit supersonic-albums-name))
-  "Face for artist names in *supersonic-albums* and *supersonic-artist-albums*.
-Inherits from `supersonic-albums-name' but can be customized separately
-to distinguish artists from album names."
+  "Face for artist names in the album lists."
   :group 'supersonic)
 
 (provide 'supersonic-custom)
