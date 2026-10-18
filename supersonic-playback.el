@@ -20,23 +20,14 @@
 
 ;;; Commentary:
 
-;; The single door through which every part of supersonic.el asks for
-;; something to be played.  A backend, such as mpv in
-;; `supersonic-mpv.el', registers the functions implementing a fixed set
-;; of playback operations under a name, and the `supersonic-playback-*'
-;; functions here dispatch to whichever backend
-;; `supersonic-playback-backend' selects.
-;;
-;; A backend says that something may have changed by running the hooks
-;; defined here, without payload; whoever is interested pulls what it
-;; needs through `supersonic-playback-status'.
-;;
-;; A backend also says which providers it plays for, and an
-;; incompatible pairing is kept from being selected or used; see
-;; `supersonic-playback-register-backend'.
-;;
-;; The backends shipped with supersonic.el are loaded on first use; see
-;; `supersonic-playback-backend-libraries'.
+;; The playback side of supersonic.el.  A backend, such as mpv in
+;; `supersonic-mpv.el', registers functions for the operations in
+;; `supersonic-playback-operations', and the `supersonic-playback-*'
+;; functions call those of the backend `supersonic-playback-backend'
+;; selects.  Backends run the hooks defined here when something may
+;; have changed; listeners then ask `supersonic-playback-status'.
+;; The backends shipped with supersonic.el are loaded on first use,
+;; see `supersonic-playback-backend-libraries'.
 
 ;;; Code:
 
@@ -49,56 +40,41 @@
 (defconst supersonic-playback-operations
   '(start enqueue toggle-play next prev stop seek seek-fraction live-p status queue)
   "The playback operations a backend can implement.
-`start' and `enqueue' each take a list of supersonic track ids, and
-may finish asynchronously, so a backend reports their failures itself;
-`seek' takes an offset in seconds, which may be negative;
-`seek-fraction' takes a position in the current track as a fraction
-between 0.0 and 1.0; `status' takes one of
-`supersonic-playback-status-keys'; the rest take no arguments.
-`status' and `queue' each return a promise.  A backend may leave
-operations out; calling one then reports that.")
+`start' and `enqueue' take a list of track ids and report their own
+failures.  `seek' takes an offset in seconds, `seek-fraction' a
+fraction of the track between 0.0 and 1.0, `status' one of
+`supersonic-playback-status-keys'.  The others take no arguments.
+`status' and `queue' return promises.")
 
 (defconst supersonic-playback-status-keys '(track-id position paused)
-  "The pieces of current playback state `supersonic-playback-status' answers.
-`track-id' is the supersonic id of whatever is playing, `position' its
-playback position in seconds, and `paused' non-nil if playback is
-paused.")
+  "The keys `supersonic-playback-status' accepts.
+`track-id' is the id of the current track, `position' the position in
+seconds, `paused' non-nil if paused.")
 
 (defvar supersonic-playback-track-change-hook nil
-  "Hook run whenever the identity of what is playing may have changed.
-Run by the active backend, with no payload; a consumer pulls what it
-needs via `supersonic-playback-status'.")
+  "Hook run when the current track may have changed.
+Use `supersonic-playback-status' to get the new state.")
 
 (defvar supersonic-playback-state-change-hook nil
-  "Hook run whenever playback was paused or resumed.
-Only that: a change in the identity of what is playing runs
-`supersonic-playback-track-change-hook' instead.")
+  "Hook run when playback is paused or resumed.")
 
 (defvar supersonic-playback-queue-change-hook nil
-  "Hook run whenever the play queue's entries may have changed.
-Only while what is playing stays the same, e.g. tracks enqueued behind
-it; otherwise `supersonic-playback-track-change-hook' runs instead.  A
-consumer pulls the queue via `supersonic-playback-queue'.")
+  "Hook run when the play queue may have changed but the track has not.
+Use `supersonic-playback-queue' to get the new queue.")
 
 (defvar supersonic-playback-position-change-hook nil
-  "Hook run whenever the playback position jumped rather than crept on.
-Run once a seek has taken effect.  A position that only creeps on is
-re-read on a timer anyway, but waiting for its tick after a seek makes
-a click on the waveform seekbar look like it did not land.")
+  "Hook run when the playback position jumped, after a seek.")
 
 (defvar supersonic-playback--backends (make-hash-table :test #'eq)
-  "Map of backend name (a symbol) to that backend's operation alist.")
+  "Map of backend name to its operation alist.")
 
 (defvar supersonic-playback--compatibility (make-hash-table :test #'eq)
-  "Map of backend name (a symbol) to the providers it can play for.
-Each value is the plist of `:providers' and `:requires' passed to
-`supersonic-playback-register-backend'; a backend registered with
-neither has no entry and plays for every provider.")
+  "Map of backend name to its compatibility plist.
+See `supersonic-playback-register-backend'.  A backend without an
+entry plays for every provider.")
 
 (defconst supersonic-playback--unchecked-operations '(stop live-p status queue)
-  "Operations the active backend answers even for an incompatible provider.
-None of them plays anything, and refusing them would break the
-now-playing buffer, MPRIS, and switching away from the backend.")
+  "Operations allowed even when the backend can't play for the provider.")
 
 (defconst supersonic-playback-backend-libraries
   '((mpv . supersonic-mpv)
@@ -122,24 +98,18 @@ Does nothing for a BACKEND not in `supersonic-playback-backend-libraries'."
 
 (defun supersonic-playback-register-backend (name operations &rest compatibility)
   "Register NAME as a playback backend implementing OPERATIONS.
-NAME is the symbol users select with `supersonic-playback-backend'.
-OPERATIONS is an alist mapping operation symbols from
-`supersonic-playback-operations' to the functions implementing them.
-Registering a name that is already registered replaces it, so
-re-loading a backend file is harmless.
+NAME is the symbol `supersonic-playback-backend' selects it by.
+OPERATIONS is an alist of operations from
+`supersonic-playback-operations' to their functions.  Registering NAME
+again replaces it.
 
-COMPATIBILITY is a plist saying which library providers -- see
-`supersonic-provider' -- the backend can play for:
+COMPATIBILITY is a plist of the providers the backend can play for:
 
-- `:providers', a list of provider names: the backend plays for these
-  and no others.  For a backend tied to one kind of server, such as
-  the Subsonic jukebox.
-- `:requires', a list of operations from
-  `supersonic-provider-operations': the backend plays for any
-  provider implementing them all.  For a backend that only needs to be
-  told where a track is, such as mpv with `stream-url'.
+- `:providers': a list of provider names it plays for.
+- `:requires': a list of `supersonic-provider-operations' a provider
+  must implement, such as `stream-url'.
 
-Given both, a provider must satisfy both.  Given neither, the backend
+With both, a provider must match both.  With neither, the backend
 plays for every provider."
   (dolist (operation operations)
     (unless (memq (car operation) supersonic-playback-operations)
@@ -157,11 +127,9 @@ plays for every provider."
       (remhash name supersonic-playback--compatibility))))
 
 (defun supersonic-playback-compatible-p (backend &optional provider)
-  "Return non-nil if BACKEND can play for PROVIDER.
-PROVIDER defaults to the active one, `supersonic-provider'.  Only says
-what BACKEND declared when it registered, and so is nil for a backend
-not registered even after loading it from
-`supersonic-playback-backend-libraries'."
+  "Return non-nil if BACKEND is registered and can play for PROVIDER.
+PROVIDER defaults to `supersonic-provider'.  A shipped backend is
+loaded first."
   (supersonic-playback--load backend)
   (let ((provider (or provider supersonic-provider))
         (compatibility (gethash backend supersonic-playback--compatibility)))
@@ -178,13 +146,10 @@ not registered even after loading it from
   (user-error "The `%s' playback backend cannot play for the `%s' provider" backend supersonic-provider))
 
 (defun supersonic-playback--implementation (operation)
-  "Return the active backend's implementation of OPERATION.
-Loads the backend first if it is in `supersonic-playback-backend-libraries'.
-Signals a `user-error' if `supersonic-playback-backend' names a backend
-that is still not registered -- typically a misspelled name, or a
-backend of a package that has not been loaded -- or one that does not
-implement OPERATION, or one that cannot play for the active provider
-\(unless OPERATION is one of `supersonic-playback--unchecked-operations')."
+  "Return the active backend's function for OPERATION.
+Load the backend first if it is shipped with supersonic.el.  Signal a
+`user-error' if the backend isn't registered, doesn't implement
+OPERATION, or can't play for the active provider."
   (supersonic-playback--load supersonic-playback-backend)
   (let ((operations (gethash supersonic-playback-backend supersonic-playback--backends)))
     (unless operations
@@ -200,9 +165,8 @@ implement OPERATION, or one that cannot play for the active provider
   (apply (supersonic-playback--implementation operation) args))
 
 (defun supersonic-playback-backend-names ()
-  "Return the names of every backend currently registered.
-Every backend in `supersonic-playback-backend-libraries' is loaded
-first; a backend of another package is only there once it is loaded."
+  "Return the names of the registered backends.
+The backends shipped with supersonic.el are loaded first."
   (dolist (library supersonic-playback-backend-libraries)
     (supersonic-playback--load (car library)))
   (let (names)
@@ -210,28 +174,18 @@ first; a backend of another package is only there once it is loaded."
     (nreverse names)))
 
 (defun supersonic-playback-compatible-backend-names (&optional provider)
-  "Return the names of the registered backends that fit PROVIDER.
-That is, every backend `supersonic-playback-compatible-p' accepts.
-PROVIDER defaults to the active one, `supersonic-provider'."
+  "Return the names of the registered backends that can play for PROVIDER.
+PROVIDER defaults to `supersonic-provider'."
   (seq-filter (lambda (backend) (supersonic-playback-compatible-p backend provider))
               (supersonic-playback-backend-names)))
 
 (defvar supersonic-playback--last-backend nil
-  "Alist of provider name to the backend last active with it this session.
-Kept by `supersonic-playback-select', so that
-`supersonic-playback-backend-for-provider' can return to it.")
+  "Alist of provider to the backend last used with it.")
 
 (defun supersonic-playback-select (backend &optional provider)
-  "Make BACKEND the active backend, and PROVIDER, if given, the active provider.
-Does nothing if neither changes.  Otherwise first stops whatever the
-active backend is playing -- even when only the provider changes,
-since what it has queued are the old provider's ids -- unless that
-backend was never registered and so has nothing to stop.  Remembers
-both the pairing left and the one entered, for
-`supersonic-playback-backend-for-provider'.
-
-Checks nothing: whether BACKEND can play for PROVIDER is the caller's
-business, settled before calling this."
+  "Make BACKEND the active backend, and PROVIDER the active provider.
+PROVIDER defaults to the active one.  If either changes, stop playback
+first.  Doesn't check that BACKEND can play for PROVIDER."
   (let ((provider (or provider supersonic-provider)))
     (unless (and (eq provider supersonic-provider) (eq backend supersonic-playback-backend))
       (setf (alist-get supersonic-provider supersonic-playback--last-backend) supersonic-playback-backend)
@@ -242,13 +196,10 @@ business, settled before calling this."
       (setf (alist-get provider supersonic-playback--last-backend) backend))))
 
 (defun supersonic-playback-backend-for-provider (provider)
-  "Return the backend to play on once PROVIDER is active.
-The active backend, if it can play for PROVIDER -- see
-`supersonic-playback-compatible-p'.  Otherwise the one backend that
-can, or of several, the one last active with PROVIDER; failing both,
-prompts among them.  A provider no backend can play for, and an empty
-answer to the prompt, are refused with a `user-error', so that
-declining leaves everything as it was."
+  "Return the backend to use with PROVIDER.
+This is the active backend if it can play for PROVIDER, else the only
+one that can, else the one last used with PROVIDER, else one the user
+picks.  Signal a `user-error' if there is none."
   (if (supersonic-playback-compatible-p supersonic-playback-backend provider)
       supersonic-playback-backend
     (let ((backends (supersonic-playback-compatible-backend-names provider))
@@ -273,11 +224,8 @@ declining leaves everything as it was."
   (supersonic-playback--call 'start ids))
 
 (defun supersonic-playback-enqueue (ids)
-  "Append IDS to the end of the play queue.
-Whatever is already playing is left undisturbed, and so is a queue
-merely paused or stopped partway through; if there is nothing left to
-play -- the queue is empty or has been played to its end -- playback
-starts on the first of IDS."
+  "Append IDS to the play queue.
+Start playing the first of them if nothing is left to play."
   (supersonic-playback--call 'enqueue ids))
 
 (defun supersonic-playback-toggle-play ()
@@ -293,7 +241,7 @@ starts on the first of IDS."
   (supersonic-playback--call 'prev))
 
 (defun supersonic-playback-stop ()
-  "Stop whatever the active backend currently has playing."
+  "Stop playback."
   (supersonic-playback--call 'stop))
 
 (defun supersonic-playback-seek (offset)
@@ -302,62 +250,45 @@ A negative OFFSET seeks backwards."
   (supersonic-playback--call 'seek offset))
 
 (defun supersonic-playback--seek-step (arg)
-  "Return the number of seconds a seek command called with ARG should move.
-ARG is a raw prefix argument or nil, nil meaning `supersonic-seek-step'.
-The magnitude only: which way the seek goes is the command's business,
-so a negative prefix does not turn a forward seek into a backward one."
+  "Return the seconds a seek command with prefix argument ARG moves by.
+Without ARG, return `supersonic-seek-step'.  The result is never
+negative."
   (if arg
       (abs (prefix-numeric-value arg))
     supersonic-seek-step))
 
 (defun supersonic-playback-seek-fraction (fraction)
-  "Seek to FRACTION of the way through the current track.
-FRACTION is between 0.0 and 1.0, as the waveform seekbar has it; a
-backend seeking in seconds knows the track's duration to convert."
+  "Seek to FRACTION, between 0.0 and 1.0, of the current track."
   (supersonic-playback--call 'seek-fraction fraction))
 
 (defun supersonic-playback-live-p ()
-  "Return non-nil if the active backend currently has playback to report on.
-Synchronous, unlike `supersonic-playback-status': every backend knows
-this locally, so it can serve as a plain guard."
+  "Return non-nil if the active backend has playback to report on."
   (supersonic-playback--call 'live-p))
 
-(aio-defun
- supersonic-playback-status (key)
- "Return a promise resolving to the active backend's current KEY.
-KEY is one of `supersonic-playback-status-keys'.  Resolves to nil when
-nothing is playing, so a caller needs no liveness guard of its own.
-One key per call, since callers want them at different moments: the
-now-playing render asks for the position last, so that it is fresh."
- (unless (memq key supersonic-playback-status-keys)
-   (error "Unknown playback status key `%s'" key))
- (when (supersonic-playback-live-p)
-   (aio-await (supersonic-playback--call 'status key))))
+(aio-defun supersonic-playback-status (key)
+  "Return a promise resolving to the active backend's current KEY.
+KEY is one of `supersonic-playback-status-keys'.  Resolve to nil when
+nothing is playing."
+  (unless (memq key supersonic-playback-status-keys)
+    (error "Unknown playback status key `%s'" key))
+  (when (supersonic-playback-live-p)
+    (aio-await (supersonic-playback--call 'status key))))
 
 (defun supersonic-playback-offer-to-save (variable what name)
-  "Offer to save VARIABLE, just set to the WHAT called NAME, for future sessions.
-For a command selecting the player a backend plays on, such as a UPnP
-renderer: the selection is in effect already, and saving it writes to
-`custom-file', or to the init file without one, which not everyone
-wants touched -- their configuration may set it itself."
+  "Ask whether to save VARIABLE, just set to the WHAT called NAME."
   (if (y-or-n-p (format "Selected %s %s; save it for future sessions? " what name))
       (progn
         (customize-save-variable variable (symbol-value variable))
         (message "Saved %s %s" what name))
     (message "Selected %s %s for this session" what name)))
 
-(aio-defun
- supersonic-playback-queue ()
- "Return a promise resolving to the active backend's current play queue.
-Each entry is a plist with `:track-id', a supersonic track id, and
-`:current', non-nil for whichever entry is currently playing.  A
-backend whose player hands out what it plays along with the queue may
-add `:track', the entry's track as `supersonic-provider-track' would
-resolve it, so that showing the queue need not look each entry up
-again.  Resolves to nil when nothing is live, as
-`supersonic-playback-status' does."
- (when (supersonic-playback-live-p)
-   (aio-await (supersonic-playback--call 'queue))))
+(aio-defun supersonic-playback-queue ()
+  "Return a promise resolving to the play queue.
+Each entry is a plist with `:track-id' and `:current', non-nil for the
+current entry, and possibly `:track', the track plist.  Resolve to nil
+when nothing is playing."
+  (when (supersonic-playback-live-p)
+    (aio-await (supersonic-playback--call 'queue))))
 
 ;;;###autoload
 (defun supersonic-toggle-playing ()
@@ -379,14 +310,9 @@ again.  Resolves to nil when nothing is live, as
 
 ;;;###autoload
 (defun supersonic-playback-switch-backend (backend)
-  "Make BACKEND the active playback backend.
-Interactively, prompts among the registered backends that can play for
-the active provider -- see `supersonic-playback-compatible-p'.  A
-BACKEND that is not registered, or cannot play for the active
-provider, is refused with a `user-error' before anything is stopped.
-
-Stops the backend switched away from first, which a plain `setq' of
-`supersonic-playback-backend' would not.  No queue is carried over."
+  "Make BACKEND the active playback backend, stopping the current one.
+Interactively, offer the backends that can play for the active
+provider.  The queue is not carried over."
   (interactive
    (list
     (intern

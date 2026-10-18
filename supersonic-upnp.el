@@ -20,34 +20,20 @@
 
 ;;; Commentary:
 
-;; The `upnp' playback backend (#63): plays to a UPnP MediaRenderer --
-;; an AV receiver, a network speaker, a smart TV -- by telling its
-;; `AVTransport:1' service, over SOAP, which URL to play.  It plays for
-;; any provider that can name a stream URL.  Loaded on first use, like
-;; the jukebox.
+;; The `upnp' playback backend: plays to a UPnP MediaRenderer, such
+;; as an AV receiver, network speaker or smart TV, by sending it stream
+;; URLs over SOAP.  It works with any provider implementing
+;; `stream-url', and is loaded on first use.  Select the renderer with
+;; `supersonic-upnp-select-renderer'.
 ;;
-;; Most renderers hold one track at a time, so the queue is kept here
-;; (#65).  A renderer reports nothing unless subscribed to, which would
-;; take an HTTP server in Emacs, so it is polled through
-;; `supersonic-poller.el', and a poll that finds the current track
-;; played to its end loads the next one.  So the queue only moves on
-;; while Emacs runs.
+;; Most renderers hold one track at a time, so the queue is kept here.
+;; The renderer is polled, see `supersonic-poller.el', and the next
+;; track is loaded when the current one ends -- so only while Emacs
+;; runs.  Renderers that support it are given the next track in
+;; advance, for gapless playback.
 ;;
-;; Along with the URL, a renderer gets a DIDL-Lite description whose
-;; `protocolInfo' must name the MIME type the URL really serves: cheap
-;; renderers refuse to play, or play noise, otherwise.  When
-;; `supersonic-upnp-stream-format' has the provider transcode, that is
-;; the requested format, not the track's own.
-;;
-;; The stream and cover art URLs carry whatever credentials the
-;; provider puts in them, and are handed to the renderer as they are;
-;; the README says what this exposes.  A URL on `localhost' sends the
-;; renderer looking for the server on itself, which is warned about.
-;;
-;; `supersonic-upnp-select-renderer' (#64) finds renderers with an SSDP
-;; search, and offers only MediaRenderers with an `AVTransport' service.
-;; Where multicast does not get through, a device description URL can
-;; be entered by hand.
+;; The stream and cover art URLs, credentials included, are passed to
+;; the renderer as they are.
 
 ;;; Code:
 (require 'aio)
@@ -62,7 +48,6 @@
 (require 'supersonic-playback)
 (require 'supersonic-poller)
 
-;; fix byte-compiler complaints
 (defvar url-http-response-status)
 (defvar url-http-end-of-headers)
 
@@ -76,63 +61,39 @@
     ("m4a" . "audio/mp4")
     ("wav" . "audio/wav")
     ("raw" . "audio/octet-stream"))
-  "Map of a stream FORMAT's `:format' extension to its MIME content type.
-Separate from a track's `:content-type', which a requested FORMAT
-overrides.  \"raw\" is Subsonic's value for no transcoding, which says
-nothing about the encoding, hence a generic type.")
+  "Alist of stream format extension to MIME type.
+\"raw\" is Subsonic's format for no transcoding.")
 
 (defun supersonic-upnp--content-type (track &optional format)
-  "Return the content type a stream of TRACK, requested with FORMAT, has.
-TRACK is a track plist as `supersonic-provider-track' resolves to.
-FORMAT is the plist `supersonic-provider-stream-url' takes, or nil.
-
-A FORMAT's `:format', what the provider transcodes to, overrides
-TRACK's `:content-type'.  Falls back to a generic type when neither is
-known, rather than guessing."
+  "Return the MIME type of a stream of TRACK requested in FORMAT.
+FORMAT's `:format' takes precedence over TRACK's `:content-type'."
   (or (let ((requested (plist-get format :format)))
         (and requested (cdr (assoc requested supersonic-upnp--content-types))))
       (plist-get track :content-type)
       "application/octet-stream"))
 
 (defconst supersonic-upnp--dlna-flags "01700000000000000000000000000000"
-  "The `DLNA.ORG_FLAGS' every stream is described with.
-Streaming transfer mode, background transfer mode and connection
-stall allowed, in DLNA 1.5 terms: an ordinary HTTP stream, nothing a
-renderer needs to treat specially.")
+  "The `DLNA.ORG_FLAGS' of every stream: an ordinary HTTP stream.")
 
 (defun supersonic-upnp--range-seekable-p (format)
-  "Return non-nil if a stream requested with FORMAT likely serves HTTP ranges.
-Only a guess, for when `supersonic-upnp--probe-ranges' cannot find
-out: a server usually serves the file as it is stored with byte
-ranges, and a transcoded stream without, since its length is not known
-before it has been transcoded.  So only a stream requested without a
-FORMAT hint, or with Subsonic's \"raw\" format and no bit rate to keep
-under, is guessed to be seekable."
+  "Guess whether a stream requested in FORMAT serves byte ranges.
+Servers usually do for untranscoded files only."
   (or (null format)
       (and (equal (plist-get format :format) "raw")
            (not (plist-get format :max-bit-rate)))))
 
 (defun supersonic-upnp--protocol-info (track &optional format seekable)
-  "Return the DIDL `res' element's `protocolInfo' for TRACK and FORMAT.
-See `supersonic-upnp--content-type' for how the content type itself is
-worked out.  Of the four colon-separated fields UPnP defines
-\(protocol, network, content type, additional info\), the last says
-whether the stream can be seeked within, as DLNA's `DLNA.ORG_OP':
-`01' for byte ranges if SEEKABLE is non-nil, and `00' for not at all.
-It matters: LG and Samsung TVs answer `Seek' on a stream that does not
-say `01' with success, and then ignore it."
+  "Return the `protocolInfo' of a stream of TRACK requested in FORMAT.
+SEEKABLE non-nil says the stream serves byte ranges.  Some TVs ignore
+`Seek' on a stream not declared seekable."
   (format "http-get:*:%s:DLNA.ORG_OP=%s;DLNA.ORG_FLAGS=%s"
           (supersonic-upnp--content-type track format)
           (if seekable "01" "00")
           supersonic-upnp--dlna-flags))
 
 (defun supersonic-upnp--ranges-served-p (code headers)
-  "Return what a probe answered with CODE and HEADERS says of byte ranges.
-CODE is the HTTP status code of a `HEAD' request asking for a byte
-range, HEADERS the response's header block.  t if the server served
-the range -- 206 -- or says it serves ranges with `Accept-Ranges:
-bytes'; nil for any other success, since then it does not; and
-`unknown' for a failure, which says nothing either way."
+  "Return whether a range request answered with CODE and HEADERS was served.
+Return t or nil, or `unknown' if the request failed."
   (cond
    ((eql code 206) t)
    ((and (integerp code) (<= 200 code 299))
@@ -141,53 +102,39 @@ bytes'; nil for any other success, since then it does not; and
    (t 'unknown)))
 
 (defun supersonic-upnp--send-probe (url)
-  "Send URL a `HEAD' request for its first two bytes.
-Return the promise `supersonic-url-retrieve' does.  `HEAD', because
-the answer to a range request that is not served is the whole stream
--- a transcoded track, all of it."
+  "Return a promise of the answer to a HEAD request for URL's first bytes."
   (let ((url-request-method "HEAD")
         (url-request-extra-headers '(("Range" . "bytes=0-1"))))
     (supersonic-url-retrieve url)))
 
-(aio-defun
- supersonic-upnp--probe-ranges (url)
- "Return a promise of whether the stream at URL serves byte ranges.
-Resolves to t, nil or `unknown', as `supersonic-upnp--ranges-served-p'
-decides from the answer; to `unknown', too, if there is no answer.
-Whether a server serves ranges depends on the server, and on whether
-it transcodes -- Navidrome serves the stored file with ranges and a
-transcoded stream with `Accept-Ranges: none' -- so it is asked rather
-than assumed."
- (condition-case nil
-     (pcase-let ((`(,status . ,buffer) (aio-await (supersonic-upnp--send-probe url))))
-       (unwind-protect
-           (if (plist-get status :error)
-               'unknown
-             (with-current-buffer buffer
-               (supersonic-upnp--ranges-served-p
-                url-http-response-status
-                (buffer-substring (point-min) (or url-http-end-of-headers (point-max))))))
-         (when (buffer-live-p buffer)
-           (kill-buffer buffer))))
-   (error 'unknown)))
+(aio-defun supersonic-upnp--probe-ranges (url)
+  "Return a promise of whether the stream at URL serves byte ranges.
+Resolve to t, nil or `unknown'."
+  (condition-case nil
+      (pcase-let ((`(,status . ,buffer) (aio-await (supersonic-upnp--send-probe url))))
+        (unwind-protect
+            (if (plist-get status :error)
+                'unknown
+              (with-current-buffer buffer
+                (supersonic-upnp--ranges-served-p
+                 url-http-response-status
+                 (buffer-substring (point-min) (or url-http-end-of-headers (point-max))))))
+          (when (buffer-live-p buffer)
+            (kill-buffer buffer))))
+    (error 'unknown)))
 
-(aio-defun
- supersonic-upnp--seekable-p (url format)
- "Return a promise of whether the stream at URL, asked for in FORMAT, is seekable.
-Probed with `supersonic-upnp--probe-ranges'; where the probe cannot
-tell, guessed from FORMAT with `supersonic-upnp--range-seekable-p'."
- (let ((served (aio-await (supersonic-upnp--probe-ranges url))))
-   (if (eq served 'unknown)
-       (supersonic-upnp--range-seekable-p format)
-     served)))
+(aio-defun supersonic-upnp--seekable-p (url format)
+  "Return a promise of whether the stream at URL, requested in FORMAT, is seekable.
+Ask the server, or guess from FORMAT if that fails."
+  (let ((served (aio-await (supersonic-upnp--probe-ranges url))))
+    (if (eq served 'unknown)
+        (supersonic-upnp--range-seekable-p format)
+      served)))
 
 (defun supersonic-upnp--didl-lite (url track &optional format art-url seekable)
-  "Return a DIDL-Lite XML document describing URL, a stream of TRACK.
-ART-URL, if given, becomes the item's `albumArtURI'.
-FORMAT, as `supersonic-provider-stream-url' takes it, and SEEKABLE
-decide `protocolInfo', see `supersonic-upnp--protocol-info'.  Passed
-with `SetAVTransportURI' and `SetNextAVTransportURI', so a renderer
-with a display can show the track."
+  "Return the DIDL-Lite metadata of URL, a stream of TRACK.
+ART-URL is the cover art URL, or nil.  FORMAT and SEEKABLE are as in
+`supersonic-upnp--protocol-info'."
   (let ((title (or (plist-get track :title) (plist-get track :id) ""))
         (artist (plist-get track :artist))
         (album (plist-get track :album))
@@ -209,20 +156,17 @@ with a display can show the track."
      "</DIDL-Lite>")))
 
 (defvar supersonic-upnp--warned-loopback-hosts nil
-  "Loopback hosts `supersonic-upnp--warn-if-loopback' has warned about.
-Kept so that the warning comes once per host, not with every track.")
+  "Loopback hosts already warned about.")
 
 (defun supersonic-upnp--loopback-host-p (host)
-  "Return non-nil if HOST names this machine itself.
-That is `localhost' or a name under it, any 127.0.0.0/8 address, or
-the IPv6 loopback address, bracketed as `url-host' returns it or not."
+  "Return non-nil if HOST is a loopback address."
   (or (member host '("localhost" "::1" "[::1]"))
       (string-suffix-p ".localhost" host)
       (string-match-p "\\`127\\.[0-9]+\\.[0-9]+\\.[0-9]+\\'" host)))
 
 (defun supersonic-upnp--warn-if-loopback (url)
-  "Warn, once per host, if URL points at this machine's loopback address.
-A renderer resolves such a URL to itself, never reaching the server."
+  "Warn once per host if URL points at a loopback address.
+A renderer would look for the server on itself."
   (let ((host (url-host (url-generic-parse-url url))))
     (when (and host
                (supersonic-upnp--loopback-host-p host)
@@ -235,51 +179,38 @@ A renderer resolves such a URL to itself, never reaching the server."
 set the server address (`supersonic-host' for Subsonic) to one the renderer can reach"
         host)))))
 
-(aio-defun
- supersonic-upnp--item (track-id)
- "Return a promise resolving to what a renderer is told to play TRACK-ID.
-That is a plist (:url URL :metadata DIDL :duration DURATION): the
-stream URL, asked for in `supersonic-upnp-stream-format'; the
-DIDL-Lite document describing it, with cover art where the provider
-can name a URL for it; and the provider's duration, for a renderer
-that reports none.  Whether the stream is seekable is asked of the
-server.  A loopback URL is warned about but returned, as the renderer
-may run on this machine."
- (let* ((format supersonic-upnp-stream-format)
-        (track (aio-await (supersonic-provider-track track-id)))
-        (url (aio-await (supersonic-provider-stream-url track-id format)))
-        (_ (supersonic-upnp--warn-if-loopback url))
-        (art (plist-get track :art))
-        (art-url
-         (and art
-              (supersonic-provider-supports-p 'cover-art-url)
-              (aio-await (supersonic-provider-cover-art-url art supersonic-upnp-art-size))))
-        (seekable (aio-await (supersonic-upnp--seekable-p url format))))
-   (list :url url
-         :metadata (supersonic-upnp--didl-lite url track format art-url seekable)
-         :duration (plist-get track :duration))))
+(aio-defun supersonic-upnp--item (track-id)
+  "Return a promise resolving to what to tell a renderer to play TRACK-ID.
+That is a plist (:url URL :metadata DIDL :duration DURATION)."
+  (let* ((format supersonic-upnp-stream-format)
+         (track (aio-await (supersonic-provider-track track-id)))
+         (url (aio-await (supersonic-provider-stream-url track-id format)))
+         (_ (supersonic-upnp--warn-if-loopback url))
+         (art (plist-get track :art))
+         (art-url
+          (and art
+               (supersonic-provider-supports-p 'cover-art-url)
+               (aio-await (supersonic-provider-cover-art-url art supersonic-upnp-art-size))))
+         (seekable (aio-await (supersonic-upnp--seekable-p url format))))
+    (list :url url
+          :metadata (supersonic-upnp--didl-lite url track format art-url seekable)
+          :duration (plist-get track :duration))))
 
 ;;;
 ;;; Renderer discovery and selection
 ;;;
 
 (defconst supersonic-upnp--ssdp-address [239 255 255 250 1900]
-  "The SSDP multicast group and port, as `set-process-datagram-address' takes it.")
+  "The SSDP multicast address and port.")
 
 (defconst supersonic-upnp--renderer-device-type "urn:schemas-upnp-org:device:MediaRenderer:"
-  "The device type of a MediaRenderer, without its version.
-An SSDP search asks for version 1, which every later version also
-answers to; a device description may name any version.")
+  "The device type of a MediaRenderer, without the version.")
 
 (defconst supersonic-upnp--av-transport-service-type "urn:schemas-upnp-org:service:AVTransport:"
-  "The service type of `AVTransport', without its version.")
+  "The service type of AVTransport, without the version.")
 
 (defun supersonic-upnp--m-search (timeout)
-  "Return an SSDP `M-SEARCH' request for MediaRenderers, for a TIMEOUT search.
-Its `MX' header is how many seconds a device may wait at random before
-answering, so that not all of them answer at once.  One second less
-than TIMEOUT leaves the slowest a second to arrive; the specification
-allows one to five."
+  "Return an SSDP search request for MediaRenderers answering within TIMEOUT."
   (concat
    "M-SEARCH * HTTP/1.1\r\n"
    (format "HOST: %s\r\n" (format-network-address supersonic-upnp--ssdp-address))
@@ -289,10 +220,7 @@ allows one to five."
    "\r\n"))
 
 (defun supersonic-upnp--ssdp-location (response)
-  "Return the `LOCATION' header of SSDP search RESPONSE, or nil.
-That is the URL of the answering device's description.  Header names
-are matched regardless of case, since devices differ in how they
-spell them.  A RESPONSE that is not a `200 OK' has none."
+  "Return the LOCATION header of the SSDP search RESPONSE, or nil."
   (let ((case-fold-search t))
     (and (string-match-p "\\`HTTP/1\\.[01] 200" response)
          (string-match "^location:\\(.*\\)$" response)
@@ -300,17 +228,10 @@ spell them.  A RESPONSE that is not a `200 OK' has none."
            (and (not (string-empty-p location)) location)))))
 
 (defun supersonic-upnp--ssdp-search (timeout)
-  "Return a promise of the description URLs an SSDP search finds.
-Sends one `M-SEARCH' to the multicast group and collects the
-`LOCATION' of every answer that arrives within TIMEOUT seconds, each
-URL once, however often its device answered.
-
-The socket is a datagram server, not a client connected to the
-multicast group: a connected UDP socket only receives from the address
-it is connected to, but answers come by unicast from each device's
-own address."
+  "Return a promise of the description URLs an SSDP search finds in TIMEOUT."
   (let* ((promise (aio-promise))
          (locations nil)
+         ;; A server socket, as answers come from each device's own address.
          (process
           (make-network-process
            :name "supersonic-upnp-ssdp"
@@ -336,9 +257,7 @@ own address."
     promise))
 
 (defun supersonic-upnp--node-text (node)
-  "Return the trimmed text directly inside NODE, or nil if NODE is nil.
-Collected by hand: `dom-text' and `dom-texts' are obsolete as of Emacs
-31.1, but their replacement `dom-inner-text' does not exist in 28.1."
+  "Return the trimmed text directly inside NODE, or nil if NODE is nil."
   (and node (string-trim (apply #'concat (seq-filter #'stringp (dom-children node))))))
 
 (defun supersonic-upnp--child-text (node tag)
@@ -346,14 +265,11 @@ Collected by hand: `dom-text' and `dom-texts' are obsolete as of Emacs
   (supersonic-upnp--node-text (dom-child-by-tag node tag)))
 
 (defun supersonic-upnp--type-p (node tag type)
-  "Return non-nil if NODE's child element TAG names TYPE, of any version.
-TYPE is a device or service type up to and including its last colon."
+  "Return non-nil if NODE's child TAG names TYPE in any version."
   (string-prefix-p type (or (supersonic-upnp--child-text node tag) "")))
 
 (defun supersonic-upnp--av-transport-control-url (device)
-  "Return the relative or absolute control URL of DEVICE's `AVTransport'.
-DEVICE is a `device' element of a device description; nil if it has
-no such service."
+  "Return the AVTransport control URL of DEVICE, or nil."
   (seq-some
    (lambda (service)
      (and (supersonic-upnp--type-p service 'serviceType supersonic-upnp--av-transport-service-type)
@@ -361,16 +277,9 @@ no such service."
    (dom-by-tag (dom-child-by-tag device 'serviceList) 'service)))
 
 (defun supersonic-upnp--parse-description (xml location)
-  "Return the renderer the device description XML, from LOCATION, describes.
+  "Return the renderer described by the device description XML at LOCATION.
 That is a plist (:name NAME :udn UDN :location LOCATION :control-url
-URL), where URL is the `AVTransport' service's control URL made
-absolute.  Relative URLs in a description are relative to its
-`URLBase', if it has one, or else to LOCATION itself.
-
-A description may describe more than one device, the root one
-embedding others.  The first that is a MediaRenderer, of any version,
-with an `AVTransport' service is the renderer; with none, or for XML
-that does not parse, the value is nil."
+URL), or nil if XML describes no MediaRenderer with AVTransport."
   (let* ((root (with-temp-buffer
                  (insert xml)
                  (libxml-parse-xml-region (point-min) (point-max))))
@@ -387,130 +296,94 @@ that does not parse, the value is nil."
                          :control-url (url-expand-file-name control-url base)))))
           (dom-by-tag root 'device)))))
 
-(aio-defun
- supersonic-upnp--describe (location)
- "Return a promise of the renderer whose device description is at LOCATION.
-See `supersonic-upnp--parse-description' for what it resolves to,
-including nil for a device that is not a renderer.  The promise
-rejects if the description cannot be fetched."
- (supersonic-upnp--parse-description (aio-await (supersonic-get-text location)) location))
+(aio-defun supersonic-upnp--describe (location)
+  "Return a promise of the renderer described at LOCATION, or nil."
+  (supersonic-upnp--parse-description (aio-await (supersonic-get-text location)) location))
 
 (defun supersonic-upnp--describe-all (locations)
-  "Start fetching the device descriptions at LOCATIONS, all at once.
-Return a list of promises, one per location, as `aio-catch' wraps
-them.  Each fetch gives up after `supersonic-upnp-discovery-timeout'
-rather than `supersonic-request-timeout', which is about a server
-that is known to be there."
+  "Return promises of the renderers described at LOCATIONS, wrapped by `aio-catch'."
   (let ((supersonic-request-timeout supersonic-upnp-discovery-timeout))
     (mapcar (lambda (location) (aio-catch (supersonic-upnp--describe location))) locations)))
 
-(aio-defun
- supersonic-upnp--discover ()
- "Return a promise of the UPnP renderers on the local network.
-A list of renderers as `supersonic-upnp--parse-description' returns
-them, in the order they answered the SSDP search, each device once.
-
-A device is left out, rather than failing the whole search, if its
-description cannot be fetched or does not describe a renderer that
-can be played to -- whatever else answers a search is not ours to
-judge."
- (let ((pending (supersonic-upnp--describe-all
-                 (aio-await (supersonic-upnp--ssdp-search supersonic-upnp-discovery-timeout))))
-       (renderers nil))
-   (dolist (promise pending)
-     (let* ((outcome (aio-await promise))
-            (renderer (and (eq (car outcome) :success) (cdr outcome))))
-       (when (and renderer
-                  (not (and (plist-get renderer :udn)
-                            (seq-find (lambda (known) (equal (plist-get known :udn) (plist-get renderer :udn)))
-                                      renderers))))
-         (push renderer renderers))))
-   (nreverse renderers)))
+(aio-defun supersonic-upnp--discover ()
+  "Return a promise of the UPnP renderers on the local network."
+  (let ((pending (supersonic-upnp--describe-all
+                  (aio-await (supersonic-upnp--ssdp-search supersonic-upnp-discovery-timeout))))
+        (renderers nil))
+    (dolist (promise pending)
+      (let* ((outcome (aio-await promise))
+             (renderer (and (eq (car outcome) :success) (cdr outcome))))
+        (when (and renderer
+                   (not (and (plist-get renderer :udn)
+                             (seq-find (lambda (known) (equal (plist-get known :udn) (plist-get renderer :udn)))
+                                       renderers))))
+          (push renderer renderers))))
+    (nreverse renderers)))
 
 (defun supersonic-upnp--renderer-label (renderer)
-  "Return how RENDERER is offered for selection.
-Its friendly name, followed by its host, since two renderers of the
-same model often share a name."
+  "Return RENDERER's name and host, for selection."
   (format "%s (%s)"
           (plist-get renderer :name)
           (url-host (url-generic-parse-url (plist-get renderer :location)))))
 
-;; An explicit cookie: the autoloads generator does not know `aio-defun'
-;; and would copy the whole definition, which fails to load without aio.
+;; Explicit, as the autoloads generator doesn't know `aio-defun'.
 ;;;###autoload (autoload 'supersonic-upnp-select-renderer "supersonic-upnp" nil t)
-(aio-defun
- supersonic-upnp-select-renderer (&optional by-url)
- "Select the UPnP renderer to play to.
-Searches the local network for renderers and offers them by name.
-Instead of picking one, the URL of a renderer's device description can
-be entered, for a renderer whose answers do not reach Emacs -- where
-multicast does not get through to it, say.  With prefix argument
-BY-URL, no search is made and only the URL is asked for.
-
-The choice becomes `supersonic-upnp-renderer' for this session, and
-is saved for future ones only if confirmed."
- (interactive "P")
- (supersonic--with-async-error-handling
-  nil "select a UPnP renderer"
-  (let* ((renderers
-          (unless by-url
-            (message "Searching for UPnP renderers...")
-            (aio-await (supersonic-upnp--discover))))
-         (choices (mapcar (lambda (renderer) (cons (supersonic-upnp--renderer-label renderer) renderer)) renderers))
-         (input
-          (string-trim
-           (completing-read (cond
-                             (choices
-                              "UPnP renderer (or description URL): ")
-                             (by-url
-                              "Description URL of the UPnP renderer: ")
-                             (t
-                              "No UPnP renderer found; description URL: "))
-                            choices)))
-         (renderer
-          (or (cdr (assoc input choices))
-              (if (string-match-p "\\`https?://" input)
-                  (or (aio-await (supersonic-upnp--describe input))
-                      (user-error "%s describes no renderer with AVTransport" input))
-                (user-error "\"%s\" is neither a renderer found nor a description URL" input)))))
-    (let ((name (plist-get renderer :name)))
-      (customize-set-variable
-       'supersonic-upnp-renderer (list :location (plist-get renderer :location) :udn (plist-get renderer :udn) :name name))
-      (supersonic-playback-offer-to-save 'supersonic-upnp-renderer "UPnP renderer" name)))))
+(aio-defun supersonic-upnp-select-renderer (&optional by-url)
+  "Select the UPnP renderer to play to.
+Search the network and offer the renderers found.  You can also enter
+the URL of a renderer's device description instead; with prefix
+argument BY-URL, only ask for the URL.  The choice applies to this
+session; you are asked whether to save it."
+  (interactive "P")
+  (supersonic--with-async-error-handling nil "select a UPnP renderer"
+    (let* ((renderers
+            (unless by-url
+              (message "Searching for UPnP renderers...")
+              (aio-await (supersonic-upnp--discover))))
+           (choices (mapcar (lambda (renderer) (cons (supersonic-upnp--renderer-label renderer) renderer)) renderers))
+           (input
+            (string-trim
+             (completing-read (cond
+                               (choices
+                                "UPnP renderer (or description URL): ")
+                               (by-url
+                                "Description URL of the UPnP renderer: ")
+                               (t
+                                "No UPnP renderer found; description URL: "))
+                              choices)))
+           (renderer
+            (or (cdr (assoc input choices))
+                (if (string-match-p "\\`https?://" input)
+                    (or (aio-await (supersonic-upnp--describe input))
+                        (user-error "%s describes no renderer with AVTransport" input))
+                  (user-error "\"%s\" is neither a renderer found nor a description URL" input)))))
+      (let ((name (plist-get renderer :name)))
+        (customize-set-variable
+         'supersonic-upnp-renderer (list :location (plist-get renderer :location) :udn (plist-get renderer :udn) :name name))
+        (supersonic-playback-offer-to-save 'supersonic-upnp-renderer "UPnP renderer" name)))))
 
 ;;;
 ;;; Talking to the renderer's AVTransport service
 ;;;
 
 (defvar supersonic-upnp--control nil
-  "The selected renderer's (LOCATION . CONTROL-URL), as last looked up.
-LOCATION is the `:location' of `supersonic-upnp-renderer' it was
-looked up for, so selecting another renderer invalidates it.  Cleared
-when a poll fails, too, in case the renderer moved to another address
-and its description now names another control URL.")
+  "The selected renderer's (LOCATION . CONTROL-URL), or nil.")
 
-(aio-defun
- supersonic-upnp--control-url ()
- "Return a promise of the selected renderer's `AVTransport' control URL.
-Read from its device description at `supersonic-upnp-renderer''s
-`:location', once per renderer -- see `supersonic-upnp--control'.
-Signals a `user-error' if no renderer is selected."
- (let ((location (plist-get supersonic-upnp-renderer :location)))
-   (unless location
-     (user-error "No UPnP renderer selected; select one with `M-x supersonic-upnp-select-renderer'"))
-   (unless (equal location (car supersonic-upnp--control))
-     (let ((renderer (aio-await (supersonic-upnp--describe location))))
-       (unless renderer
-         (error "%s no longer describes a UPnP renderer with AVTransport" location))
-       (setq supersonic-upnp--control (cons location (plist-get renderer :control-url)))))
-   (cdr supersonic-upnp--control)))
+(aio-defun supersonic-upnp--control-url ()
+  "Return a promise of the selected renderer's AVTransport control URL."
+  (let ((location (plist-get supersonic-upnp-renderer :location)))
+    (unless location
+      (user-error "No UPnP renderer selected; select one with `M-x supersonic-upnp-select-renderer'"))
+    (unless (equal location (car supersonic-upnp--control))
+      (let ((renderer (aio-await (supersonic-upnp--describe location))))
+        (unless renderer
+          (error "%s no longer describes a UPnP renderer with AVTransport" location))
+        (setq supersonic-upnp--control (cons location (plist-get renderer :control-url)))))
+    (cdr supersonic-upnp--control)))
 
 (defun supersonic-upnp--soap-envelope (action arguments)
-  "Return the SOAP envelope invoking `AVTransport' ACTION with ARGUMENTS.
-ARGUMENTS is an alist of argument names and string values, in the
-order the action's specification lists them; `InstanceID' 0, which
-every action takes first, is added in front.  Values are escaped, the
-DIDL-Lite metadata `SetAVTransportURI' carries as much as any other."
+  "Return the SOAP envelope invoking AVTransport ACTION with ARGUMENTS.
+ARGUMENTS is an alist of names and string values, in order."
   (concat
    "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
    "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\""
@@ -526,11 +399,7 @@ DIDL-Lite metadata `SetAVTransportURI' carries as much as any other."
    "</s:Envelope>"))
 
 (defun supersonic-upnp--send (url action envelope)
-  "POST ENVELOPE, invoking ACTION, to control URL.
-Return the promise `supersonic-url-retrieve' does.  A function of its
-own because `url-retrieve' reads the request from dynamic variables,
-and binding those across an `aio-await' is not something an
-`aio-defun' can be trusted with."
+  "Return a promise of the answer to POSTing ENVELOPE, for ACTION, to URL."
   (let ((url-request-method "POST")
         (url-request-data (encode-coding-string envelope 'utf-8))
         (url-request-extra-headers
@@ -538,36 +407,29 @@ and binding those across an `aio-await' is not something an
            ("SOAPACTION" . ,(format "\"%s1#%s\"" supersonic-upnp--av-transport-service-type action)))))
     (supersonic-url-retrieve url)))
 
-(aio-defun
- supersonic-upnp--post (url action envelope)
- "Return a promise of what control URL answers ACTION's ENVELOPE with.
-That is (STATUS . BODY): STATUS as `url-retrieve' reports it, BODY the
-response body as text, or nil if there was none.  An HTTP error is
-not an error here: a renderer refusing an action answers with status
-500 and a SOAP fault in BODY that says why -- see
-`supersonic-upnp--soap-result'."
- (pcase-let ((`(,status . ,buffer) (aio-await (supersonic-upnp--send url action envelope))))
-   (unwind-protect
-       (cons status
-             (with-current-buffer buffer
-               (and (boundp 'url-http-end-of-headers)
-                    url-http-end-of-headers
-                    (decode-coding-string (buffer-substring (1+ url-http-end-of-headers) (point-max)) 'utf-8))))
-     (kill-buffer buffer))))
+(aio-defun supersonic-upnp--post (url action envelope)
+  "Return a promise of (STATUS . BODY) for POSTing ENVELOPE to URL.
+ACTION is the action invoked.  An HTTP error is not signaled."
+  (pcase-let ((`(,status . ,buffer) (aio-await (supersonic-upnp--send url action envelope))))
+    (unwind-protect
+        (cons status
+              (with-current-buffer buffer
+                (and (boundp 'url-http-end-of-headers)
+                     url-http-end-of-headers
+                     (decode-coding-string (buffer-substring (1+ url-http-end-of-headers) (point-max)) 'utf-8))))
+      (kill-buffer buffer))))
 
 (defun supersonic-upnp--parse-body (body)
-  "Return the parsed XML of SOAP response BODY, or nil without one."
+  "Return the parsed XML of the SOAP response BODY, or nil."
   (and body
        (with-temp-buffer
          (insert body)
          (libxml-parse-xml-region (point-min) (point-max)))))
 
 (defun supersonic-upnp--soap-result (action status body)
-  "Return the response element of ACTION from SOAP response BODY.
-STATUS is what `url-retrieve' reported.  A SOAP fault in BODY is
-signalled as an `error' carrying the renderer's own UPnP error
-description and code, rather than as the XML it came in; so is a
-request that got no SOAP answer at all."
+  "Return ACTION's response element in the SOAP response BODY.
+STATUS is the status `url-retrieve' passed.  Signal an error with the
+renderer's reason if it refused."
   (let* ((root (supersonic-upnp--parse-body body))
          (fault (and root (car (dom-by-tag root 'Fault)))))
     (cond
@@ -585,37 +447,25 @@ request that got no SOAP answer at all."
       (error "The UPnP renderer gave no answer to %s" action)))))
 
 (defun supersonic-upnp--fault-code (body)
-  "Return the UPnP error code of the SOAP fault in response BODY, or nil.
-nil, too, for a BODY that is no fault, or no XML at all."
+  "Return the UPnP error code of the SOAP fault in BODY, or nil."
   (let* ((root (supersonic-upnp--parse-body body))
          (fault (and root (car (dom-by-tag root 'Fault))))
          (code (and fault (supersonic-upnp--node-text (car (dom-by-tag fault 'errorCode))))))
     (and code (string-match-p "\\`[0-9]+\\'" code) (string-to-number code))))
 
-(aio-defun
- supersonic-upnp--invoke (action &optional arguments)
- "Invoke `AVTransport' ACTION with ARGUMENTS on the selected renderer.
-Return a promise of its raw answer, (STATUS . BODY) as
-`supersonic-upnp--post' resolves to, for a caller that tells one SOAP
-fault from another; see `supersonic-upnp--soap' for one that does not."
- (let ((url (aio-await (supersonic-upnp--control-url))))
-   (aio-await (supersonic-upnp--post url action (supersonic-upnp--soap-envelope action arguments)))))
+(aio-defun supersonic-upnp--invoke (action &optional arguments)
+  "Return a promise of (STATUS . BODY) for AVTransport ACTION with ARGUMENTS."
+  (let ((url (aio-await (supersonic-upnp--control-url))))
+    (aio-await (supersonic-upnp--post url action (supersonic-upnp--soap-envelope action arguments)))))
 
-(aio-defun
- supersonic-upnp--soap (action &optional arguments)
- "Invoke `AVTransport' ACTION with ARGUMENTS on the selected renderer.
-Return a promise of the action's response element, from which its
-output arguments are read with `supersonic-upnp--child-text'.  See
-`supersonic-upnp--soap-envelope' for ARGUMENTS, and
-`supersonic-upnp--soap-result' for how failures are signalled."
- (pcase-let ((`(,status . ,body) (aio-await (supersonic-upnp--invoke action arguments))))
-   (supersonic-upnp--soap-result action status body)))
+(aio-defun supersonic-upnp--soap (action &optional arguments)
+  "Return a promise of the response element of AVTransport ACTION with ARGUMENTS.
+Signal an error if the renderer refuses."
+  (pcase-let ((`(,status . ,body) (aio-await (supersonic-upnp--invoke action arguments))))
+    (supersonic-upnp--soap-result action status body)))
 
 (defun supersonic-upnp--parse-time (string)
-  "Return the seconds UPnP time STRING stands for.
-STRING is H+:MM:SS, optionally with a fraction of a second.  The
-value is nil for anything else, such as the `NOT_IMPLEMENTED'
-renderers answer for a value they do not track."
+  "Return the seconds of the UPnP time STRING, H:MM:SS, or nil."
   (and string
        (string-match "\\`\\([0-9]+\\):\\([0-9]+\\):\\([0-9]+\\(?:\\.[0-9]+\\)?\\)\\'" string)
        (+ (* 3600 (string-to-number (match-string 1 string)))
@@ -623,7 +473,7 @@ renderers answer for a value they do not track."
           (string-to-number (match-string 3 string)))))
 
 (defun supersonic-upnp--format-time (seconds)
-  "Return SECONDS, rounded and never negative, as UPnP time H:MM:SS."
+  "Return SECONDS as UPnP time, H:MM:SS."
   (let ((seconds (max 0 (round seconds))))
     (format "%d:%02d:%02d" (/ seconds 3600) (% (/ seconds 60) 60) (% seconds 60))))
 
@@ -632,101 +482,65 @@ renderers answer for a value they do not track."
 ;;;
 
 (defvar supersonic-upnp--queue nil
-  "The provider track ids queued to play on the renderer, in order.
-Held here rather than on the renderer, since most renderers hold one
-track at a time.")
+  "The track ids queued to play on the renderer.")
 
 (defvar supersonic-upnp--index nil
-  "Index into `supersonic-upnp--queue' of the track the renderer was given.
-nil before anything was started, and once the queue has been played to
-its end.")
+  "Index in `supersonic-upnp--queue' of the current track, or nil.")
 
 (defvar supersonic-upnp--track-duration nil
-  "Duration in seconds the provider gave for the track the renderer was given.
-For a renderer that reports no duration of its own; see
-`supersonic-upnp--duration'.")
+  "The provider's duration of the current track.")
 
 (defvar supersonic-upnp--user-stopped nil
   "Non-nil if the user stopped playback since the current track was loaded.
-A renderer reports a track that played to its end and one that was
-stopped alike, as `STOPPED'; only the first may move on to the next.")
+Renderers report a track played to its end and a stopped one alike.")
 
 (defvar supersonic-upnp--queue-generation 0
-  "Counts how often `supersonic-upnp--queue' was replaced.
-An index into the queue only means the same entry for as long as this
-stays the same; see `supersonic-upnp--current-p'.")
+  "Counter incremented when `supersonic-upnp--queue' is replaced.")
 
 (defvar supersonic-upnp--current-url nil
-  "The exact URL the renderer was given for the current track, or nil.
-See `supersonic-upnp--lost-p'.")
+  "The URL the renderer was given for the current track, or nil.")
 
 (defvar supersonic-upnp--next nil
-  "What the renderer was told to play after the current track, or nil.
-A plist (:index INDEX :generation GENERATION :url URL :duration
-DURATION): the queue's entry it was given with
-`SetNextAVTransportURI', and the `supersonic-upnp--queue-generation'
-of the queue it is in; the exact URL it was given, which is how a poll
-tells the renderer moved on to it; and the duration the provider gave.
-See `supersonic-upnp--preload-next'.")
+  "Play the next queue entry, if there is one.")
 
 (defvar supersonic-upnp--move-on-wait 2
-  "Seconds to wait for the renderer to move on to the track preloaded next.
-Once a poll finds the current track ended, before loading the next one
-over it; see `supersonic-upnp--advance-unless-moved-on'.")
+  "Seconds to wait for the renderer to start the preloaded next track.")
 
 (defvar supersonic-upnp--gapless nil
-  "Whether the selected renderer takes `SetNextAVTransportURI', if known.
-That is (LOCATION . SUPPORTED), LOCATION being the `:location' of
-`supersonic-upnp-renderer' it was found out for, so that selecting
-another renderer finds out afresh; nil until it was tried.")
+  "(LOCATION . SUPPORTED) for whether the renderer takes a next track, or nil.")
 
 (defconst supersonic-upnp--unsupported-fault-codes '(401 602)
-  "UPnP error codes a renderer refuses an action it does not have with.
-401 is `Invalid Action', 602 `Optional Action Not Implemented'.")
+  "UPnP error codes meaning an action isn't supported.")
 
 (defvar supersonic-upnp--preload-failures nil
-  "How often in a row the selected renderer refused a next track otherwise.
-That is (LOCATION . COUNT), as `supersonic-upnp--gapless'.  Some
-renderers say they have no `SetNextAVTransportURI' other than with
-`supersonic-upnp--unsupported-fault-codes'; see
-`supersonic-upnp--max-preload-failures'.")
+  "(LOCATION . COUNT) of the renderer's refusals in a row of a next track.")
 
 (defconst supersonic-upnp--preload-description "preload the next track on the UPnP renderer"
-  "What failing to preload is reported as having failed to do.
-See `supersonic-upnp--preload-next'.")
+  "What a failed preload is reported as having failed to do.")
 
 (defconst supersonic-upnp--max-preload-failures 3
-  "Refusals in a row after which a renderer counts as not taking a next track.
-See `supersonic-upnp--preload-failures'.")
+  "Refusals in a row after which a renderer counts as taking no next track.")
 
 (defconst supersonic-upnp--end-tolerance 3
-  "Seconds before its duration a track may stop and still count as ended.
-Positions a renderer reports, and the times polls arrive at, are only
-so exact.")
+  "Seconds before its end a track may stop and still count as played.")
 
 (defconst supersonic-upnp--running-states '("PLAYING" "TRANSITIONING")
-  "Transport states in which a renderer is playing, or about to.
-`TRANSITIONING' is a renderer buffering what it was told to play: not
-paused, and pausing it then is not what toggling play means.")
+  "Transport states in which a renderer is playing or about to.")
 
 (defconst supersonic-upnp--ended-states '("STOPPED" "NO_MEDIA_PRESENT")
-  "Transport states a renderer reports once a track played to its end.
-Some stop, some drop the media altogether.")
+  "Transport states of a renderer whose track played to its end.")
 
 (defun supersonic-upnp--current-track ()
-  "Return the track id the renderer was given to play, or nil."
+  "Return the id of the track the renderer was given, or nil."
   (and supersonic-upnp--index (nth supersonic-upnp--index supersonic-upnp--queue)))
 
 (defun supersonic-upnp--current-p (index generation)
-  "Return non-nil if INDEX into the queue of GENERATION is the current entry.
-GENERATION is a `supersonic-upnp--queue-generation'.  For an operation
-that awaited something, to tell whether the user moved to another
-entry, or replaced the queue, in the meantime."
+  "Return non-nil if INDEX in the queue of GENERATION is still current."
   (and (eql index supersonic-upnp--index)
        (eql generation supersonic-upnp--queue-generation)))
 
 (defun supersonic-upnp--state (&optional snapshot)
-  "Return the transport state SNAPSHOT, by default the latest, found."
+  "Return the transport state in SNAPSHOT, by default the latest."
   (plist-get (or snapshot (supersonic-upnp--snapshot)) :state))
 
 (defun supersonic-upnp--playing-p (&optional snapshot)
@@ -734,47 +548,30 @@ entry, or replaced the queue, in the meantime."
   (equal "PLAYING" (supersonic-upnp--state snapshot)))
 
 (defun supersonic-upnp--paused-p (&optional snapshot)
-  "Return non-nil unless SNAPSHOT, by default the latest, finds it running.
-That is, the renderer playing or about to; see
-`supersonic-upnp--running-states'."
+  "Return non-nil unless SNAPSHOT, by default the latest, finds it running."
   (not (member (supersonic-upnp--state snapshot) supersonic-upnp--running-states)))
 
 (defun supersonic-upnp--duration (&optional snapshot)
-  "Return the current track's duration in seconds, or nil if nobody knows it.
-As SNAPSHOT, by default the latest, has the renderer report it, or
-else as the provider gave it, see `supersonic-upnp--track-duration'."
+  "Return the duration of the current track, or nil.
+Take it from SNAPSHOT, by default the latest, or from the provider."
   (or (plist-get (or snapshot (supersonic-upnp--snapshot)) :duration)
       supersonic-upnp--track-duration))
 
 (defun supersonic-upnp--position ()
-  "Return the renderer's playback position, counted on from the latest poll.
-See `supersonic-poller-position'; never past the track's duration."
+  "Return the renderer's estimated current position."
   (let ((snapshot (supersonic-upnp--snapshot)))
     (supersonic-poller-position snapshot (supersonic-upnp--playing-p snapshot) (supersonic-upnp--duration))))
 
 (defun supersonic-upnp--max-poll-gap ()
-  "Return the most seconds two polls may lie apart for a track end to count.
-Enough for one poll in between to have failed, after waiting out
-`supersonic-request-timeout', with `supersonic-upnp--end-tolerance'
-to spare; see `supersonic-upnp--track-ended-p'."
+  "Return the longest time between two polls that detect a track's end."
   (+ (* 2 supersonic-upnp-poll-interval) supersonic-request-timeout supersonic-upnp--end-tolerance))
 
 (defun supersonic-upnp--track-ended-p (previous current)
   "Return non-nil if the track playing in snapshot PREVIOUS ended by CURRENT.
-That is: both are of the same track; PREVIOUS found it playing;
-CURRENT finds it in one of `supersonic-upnp--ended-states', and not
-because the user stopped it; and by CURRENT the track would have
-played to within `supersonic-upnp--end-tolerance' of its duration.
-Without that condition, a track stopped on the renderer's own remote
-would be taken for one played to the end.  Only a track whose
-duration neither the renderer nor the provider knows counts as ended
-whenever it stops.
-
-CURRENT must also come within `supersonic-upnp--max-poll-gap' of
-PREVIOUS.  A renderer that went unreachable mid-track and is back,
-stopped, minutes later was switched off, not played to the end, and
-must not start the next track on its own (#81); one poll lost to a
-network hiccup as the track ends still moves on."
+The track must have stopped near its end, without the user stopping
+it, and CURRENT must follow PREVIOUS within
+`supersonic-upnp--max-poll-gap', so that a renderer switched off
+mid-track doesn't start the next one when it comes back."
   (and previous current
        (not supersonic-upnp--user-stopped)
        (plist-get current :index)
@@ -789,36 +586,27 @@ network hiccup as the track ends still moves on."
                  (- duration supersonic-upnp--end-tolerance))))))
 
 (defun supersonic-upnp--summarize (snapshot)
-  "Return what the facade's hooks announce, with the renderer as SNAPSHOT found it.
-The plist `supersonic-poller-announce' compares: the track the
-renderer was given, whether it is paused, and the queue's entries.
-Only the pause state comes from SNAPSHOT; the rest is kept here, and
-announced whenever it changes, not only after a poll."
+  "Return the summary of SNAPSHOT that `supersonic-poller-announce' compares.
+Only the pause state comes from SNAPSHOT."
   (list :track-id (supersonic-upnp--current-track)
         :paused (supersonic-upnp--paused-p snapshot)
         :entries (copy-sequence supersonic-upnp--queue)))
 
-(aio-defun
- supersonic-upnp--fetch ()
- "Ask the renderer for its transport state and position, as a fresh snapshot.
-See `supersonic-upnp--poller' for what it holds."
- (let* ((index supersonic-upnp--index)
-        (transport (aio-await (supersonic-upnp--soap "GetTransportInfo")))
-        (position (aio-await (supersonic-upnp--soap "GetPositionInfo")))
-        (duration (supersonic-upnp--parse-time (supersonic-upnp--child-text position 'TrackDuration))))
-   (list :state (supersonic-upnp--child-text transport 'CurrentTransportState)
-         :position (supersonic-upnp--parse-time (supersonic-upnp--child-text position 'RelTime))
-         :duration (and duration (> duration 0) duration)
-         :uri (supersonic-upnp--child-text position 'TrackURI)
-         :index index
-         :polled-at (float-time))))
+(aio-defun supersonic-upnp--fetch ()
+  "Return a promise of a snapshot of the renderer's state."
+  (let* ((index supersonic-upnp--index)
+         (transport (aio-await (supersonic-upnp--soap "GetTransportInfo")))
+         (position (aio-await (supersonic-upnp--soap "GetPositionInfo")))
+         (duration (supersonic-upnp--parse-time (supersonic-upnp--child-text position 'TrackDuration))))
+    (list :state (supersonic-upnp--child-text transport 'CurrentTransportState)
+          :position (supersonic-upnp--parse-time (supersonic-upnp--child-text position 'RelTime))
+          :duration (and duration (> duration 0) duration)
+          :uri (supersonic-upnp--child-text position 'TrackURI)
+          :index index
+          :polled-at (float-time))))
 
 (defun supersonic-upnp--moved-on-p (snapshot)
-  "Return non-nil if SNAPSHOT finds the renderer on the track preloaded next.
-That is, on the URL it was given with `SetNextAVTransportURI' after
-the current track, which it moved on to by itself; see
-`supersonic-upnp--preload-next'.  A poll overtaken by a track change
-does not count."
+  "Return non-nil if SNAPSHOT finds the renderer on the preloaded next track."
   (let ((next supersonic-upnp--next))
     (and next
          supersonic-upnp--index
@@ -828,12 +616,7 @@ does not count."
          (equal (plist-get snapshot :uri) (plist-get next :url)))))
 
 (defun supersonic-upnp--adopt-next (snapshot)
-  "Make the track the renderer moved on to by itself current, as SNAPSHOT found it.
-See `supersonic-upnp--moved-on-p'.  SNAPSHOT, the poller's latest, is
-made the new track's, so that the facade's hooks the poll runs next
-announce it -- and scrobble it -- as any other track change.  It is
-changed in place, which only works because it has an `:index' already,
-as every snapshot `supersonic-upnp--fetch' takes does."
+  "Make the preloaded next track current, and SNAPSHOT its snapshot."
   (let ((next supersonic-upnp--next))
     (setq supersonic-upnp--index (plist-get next :index))
     (setq supersonic-upnp--current-url (plist-get next :url))
@@ -843,16 +626,11 @@ as every snapshot `supersonic-upnp--fetch' takes does."
     (setf (plist-get snapshot :index) supersonic-upnp--index)))
 
 (defun supersonic-upnp--gapless-known-p ()
-  "Return non-nil if the selected renderer is known to take a next track."
+  "Return non-nil if the renderer is known to take a next track."
   (equal supersonic-upnp--gapless (cons (plist-get supersonic-upnp-renderer :location) t)))
 
 (defun supersonic-upnp--lost-p (snapshot)
-  "Return non-nil if SNAPSHOT finds a gapless renderer on an unknown URL.
-That is, playing neither the URL it was given for the current track
-nor the one preloaded next.  Such a renderer reports URLs other than
-it was given, so its moving on could not be followed, or it played a
-next track left over from a replaced queue.  Either way, it is better
-left to the poll-driven advance; see `supersonic-upnp--give-up-gapless'."
+  "Return non-nil if SNAPSHOT finds a gapless renderer on an unknown URL."
   (and (supersonic-upnp--gapless-known-p)
        supersonic-upnp--index
        (eql (plist-get snapshot :index) supersonic-upnp--index)
@@ -861,26 +639,17 @@ left to the poll-driven advance; see `supersonic-upnp--give-up-gapless'."
                     (list supersonic-upnp--current-url (plist-get supersonic-upnp--next :url))))))
 
 (defun supersonic-upnp--give-up-gapless ()
-  "Stop giving the selected renderer next tracks, for as long as it is selected.
-Returns a function clearing the one it may still hold, as
-`supersonic-upnp--landed' does."
+  "Stop preloading next tracks on the selected renderer.
+Return a function clearing the next track it may hold."
   (setq supersonic-upnp--gapless (cons (plist-get supersonic-upnp-renderer :location) nil))
   (setq supersonic-upnp--next nil)
   #'supersonic-upnp--clear-next)
 
 (defun supersonic-upnp--landed (previous current)
-  "Return how to move on, now that snapshot CURRENT followed PREVIOUS.
-A renderer that moved on to the track preloaded next has that track
-made current right away, before the facade's hooks run, see
-`supersonic-upnp--adopt-next'; then the one after it is preloaded.
-A renderer playing something it cannot be followed to is given no
-more next tracks, see `supersonic-upnp--lost-p'.  A track in PREVIOUS
-that CURRENT finds ended has the next track loaded, see
-`supersonic-upnp--track-ended-p' -- unless the renderer was given it
-already, and may only be about to move on to it.  That is the value:
-a function doing any of this, or nil.  Decided as the poll that took
-CURRENT lands, but only called once that poll is no longer in flight,
-since loading the next track polls in turn."
+  "Return a function moving on after snapshot CURRENT followed PREVIOUS, or nil.
+Adopt a preloaded next track the renderer moved on to, give up
+preloading if the renderer plays an unknown URL, and load the next
+track if the current one ended."
   (cond
    ((supersonic-upnp--moved-on-p current)
     (supersonic-upnp--adopt-next current)
@@ -895,9 +664,7 @@ since loading the next track polls in turn."
         (lambda () (supersonic-upnp--advance index generation)))))))
 
 (defun supersonic-upnp--forget-control ()
-  "Look the control URL up afresh, after a poll failed.
-In case the renderer moved to another address, and its description
-now names another control URL; see `supersonic-upnp--control'."
+  "Forget the control URL, in case the renderer's address changed."
   (setq supersonic-upnp--control nil))
 
 (defun supersonic-upnp--make-poller ()
@@ -911,408 +678,297 @@ now names another control URL; see `supersonic-upnp--control'."
    :on-failure #'supersonic-upnp--forget-control
    :on-landed #'supersonic-upnp--landed))
 
-;; `defvar', so that re-evaluating this file keeps the poller and with
-;; it what polling found.  After changing the slots of `supersonic-poller',
-;; set this to (supersonic-upnp--make-poller) by hand before re-evaluating
-;; this file: the old poller no longer fits the new accessors, and
-;; `supersonic-poller-register' below would trip over it.
 (defvar supersonic-upnp--poller (supersonic-upnp--make-poller)
-  "Polls the renderer, and holds what the latest poll found.
-Its snapshot is a plist: `:state', the renderer's transport state,
-such as \"PLAYING\" or \"PAUSED_PLAYBACK\"; `:position' and `:duration',
-in seconds, or nil where the renderer did not say; `:uri', the
-`TrackURI' it reports, see `supersonic-upnp--moved-on-p'; `:index', the value
-of `supersonic-upnp--index' when the poll was sent, so that a poll
-that was overtaken by a track change is not taken for the new track's;
-and `:polled-at', the `float-time' it was taken at.
-
-The snapshot is replaced by a `TRANSITIONING' one at position 0
-whenever a track has been loaded, so that the state the previous track
-left the renderer in is never compared with the new track's -- see
-`supersonic-upnp--track-ended-p'.")
+  "The poller of the renderer.
+Its snapshot is a plist of `:state', the transport state;
+`:position' and `:duration' in seconds, or nil; `:uri', the track URL
+the renderer reports; `:index', `supersonic-upnp--index' when the
+poll was sent; and `:polled-at'.")
 
 (defun supersonic-upnp--snapshot ()
-  "Return what the latest poll of the renderer found, or nil before any did.
-See `supersonic-upnp--poller'."
+  "Return the renderer's latest snapshot, or nil."
   (supersonic-poller-snapshot supersonic-upnp--poller))
 
 (defun supersonic-upnp--poll ()
-  "Return a promise of polling the renderer; see `supersonic-poller-poll'.
-When a poll shows that the current track played to its end, the next
-queued track is loaded; see `supersonic-upnp--landed'."
+  "Return a promise of polling the renderer."
   (supersonic-poller-poll supersonic-upnp--poller))
 
 (defun supersonic-upnp-live-p ()
   "Return non-nil if the last poll of the renderer succeeded."
   (supersonic-poller-live supersonic-upnp--poller))
 
-(aio-defun
- supersonic-upnp--ensure-polled ()
- "Poll the renderer unless a poll has found it in its current track.
-For an operation that decides from the latest poll, issued before one
-landed for the current track."
- (unless (and (supersonic-upnp--snapshot)
-              (eql (plist-get (supersonic-upnp--snapshot) :index) supersonic-upnp--index))
-   (aio-await (supersonic-upnp--poll))))
+(aio-defun supersonic-upnp--ensure-polled ()
+  "Poll the renderer unless a poll already found it on the current track."
+  (unless (and (supersonic-upnp--snapshot)
+               (eql (plist-get (supersonic-upnp--snapshot) :index) supersonic-upnp--index))
+    (aio-await (supersonic-upnp--poll))))
 
-(aio-defun
- supersonic-upnp--play ()
- "Tell the renderer to play what it was given, at normal speed."
- (aio-await (supersonic-upnp--soap "Play" '(("Speed" . "1")))))
+(aio-defun supersonic-upnp--play ()
+  "Tell the renderer to play."
+  (aio-await (supersonic-upnp--soap "Play" '(("Speed" . "1")))))
 
 (defconst supersonic-upnp--transition-not-available 701
-  "The UPnP error code of an action the transport's state does not allow.
-The LG TV answers `SetAVTransportURI' with it while paused (#84).")
+  "UPnP error code of an action the transport state doesn't allow.")
 
-(aio-defun
- supersonic-upnp--load (item)
- "Give the renderer ITEM, as `supersonic-upnp--item' resolves to, to play.
-A renderer that will not load anything in the state it is in -- the
-LG TV, while paused -- is stopped and asked once more.  Asking first
-rather than always stopping costs other renderers no extra request.
-
-That stop counts as the user's, see `supersonic-upnp--user-stopped',
-so that a poll landing before the track is loaded does not take it
-for the current track's end, and move on a second time.  If the
-renderer refuses again, it is left stopped, and the current track
-starts over when played again rather than resuming where it paused."
- (let ((arguments `(("CurrentURI" . ,(plist-get item :url)) ("CurrentURIMetaData" . ,(plist-get item :metadata)))))
-   (pcase-let ((`(,status . ,body) (aio-await (supersonic-upnp--invoke "SetAVTransportURI" arguments))))
-     (when (eql (supersonic-upnp--fault-code body) supersonic-upnp--transition-not-available)
-       (setq supersonic-upnp--user-stopped t)
-       (aio-await (supersonic-upnp--soap "Stop"))
-       (pcase-setq `(,status . ,body) (aio-await (supersonic-upnp--invoke "SetAVTransportURI" arguments))))
-     (supersonic-upnp--soap-result "SetAVTransportURI" status body))))
+(aio-defun supersonic-upnp--load (item)
+  "Give the renderer ITEM, from `supersonic-upnp--item', to play.
+If the renderer refuses in its current state, as the LG TV does while
+paused, stop it and try again."
+  (let ((arguments `(("CurrentURI" . ,(plist-get item :url)) ("CurrentURIMetaData" . ,(plist-get item :metadata)))))
+    (pcase-let ((`(,status . ,body) (aio-await (supersonic-upnp--invoke "SetAVTransportURI" arguments))))
+      (when (eql (supersonic-upnp--fault-code body) supersonic-upnp--transition-not-available)
+        (setq supersonic-upnp--user-stopped t)
+        (aio-await (supersonic-upnp--soap "Stop"))
+        (pcase-setq `(,status . ,body) (aio-await (supersonic-upnp--invoke "SetAVTransportURI" arguments))))
+      (supersonic-upnp--soap-result "SetAVTransportURI" status body))))
 
 (defun supersonic-upnp--gapless-p ()
-  "Return non-nil unless the renderer is known not to take a next track.
-See `supersonic-upnp--gapless'; a renderer not tried yet is worth a try."
+  "Return non-nil unless the renderer is known not to take a next track."
   (let ((location (plist-get supersonic-upnp-renderer :location)))
     (or (not (equal location (car supersonic-upnp--gapless)))
         (cdr supersonic-upnp--gapless))))
 
-(aio-defun
- supersonic-upnp--set-next (url metadata)
- "Tell the renderer to play URL, described by METADATA, after the current track.
-Resolves to non-nil if it took it, and to nil if it refused because it
-has no `SetNextAVTransportURI' -- which is remembered, see
-`supersonic-upnp--gapless'.  Any other failure is signalled."
- (let ((location (plist-get supersonic-upnp-renderer :location)))
-   (pcase-let ((`(,status . ,body)
-                (aio-await
-                 (supersonic-upnp--invoke
-                  "SetNextAVTransportURI" `(("NextURI" . ,url) ("NextURIMetaData" . ,metadata))))))
-     (if (memql (supersonic-upnp--fault-code body) supersonic-upnp--unsupported-fault-codes)
-         (progn (setq supersonic-upnp--gapless (cons location nil)) nil)
-       (condition-case err
-           (supersonic-upnp--soap-result "SetNextAVTransportURI" status body)
-         (error
-          (let ((failures (1+ (if (equal location (car supersonic-upnp--preload-failures))
-                                  (cdr supersonic-upnp--preload-failures)
-                                0))))
-            (setq supersonic-upnp--preload-failures (cons location failures))
-            (when (>= failures supersonic-upnp--max-preload-failures)
-              (setq supersonic-upnp--gapless (cons location nil))))
-          (signal (car err) (cdr err))))
-       (setq supersonic-upnp--preload-failures nil)
-       (setq supersonic-upnp--gapless (cons location t))))))
+(aio-defun supersonic-upnp--set-next (url metadata)
+  "Tell the renderer to play URL, described by METADATA, next.
+Resolve to non-nil if it accepted, nil if it doesn't support that.
+Signal other errors."
+  (let ((location (plist-get supersonic-upnp-renderer :location)))
+    (pcase-let ((`(,status . ,body)
+                 (aio-await
+                  (supersonic-upnp--invoke
+                   "SetNextAVTransportURI" `(("NextURI" . ,url) ("NextURIMetaData" . ,metadata))))))
+      (if (memql (supersonic-upnp--fault-code body) supersonic-upnp--unsupported-fault-codes)
+          (progn (setq supersonic-upnp--gapless (cons location nil)) nil)
+        (condition-case err
+            (supersonic-upnp--soap-result "SetNextAVTransportURI" status body)
+          (error
+           (let ((failures (1+ (if (equal location (car supersonic-upnp--preload-failures))
+                                   (cdr supersonic-upnp--preload-failures)
+                                 0))))
+             (setq supersonic-upnp--preload-failures (cons location failures))
+             (when (>= failures supersonic-upnp--max-preload-failures)
+               (setq supersonic-upnp--gapless (cons location nil))))
+           (signal (car err) (cdr err))))
+        (setq supersonic-upnp--preload-failures nil)
+        (setq supersonic-upnp--gapless (cons location t))))))
 
-(aio-defun
- supersonic-upnp--clear-next ()
- "Clear the next track a renderer known to take one may hold, if it can.
-So that it does not play one Emacs no longer expects it to.  Never
-fails; a renderer that cannot be reached will be found so by a poll.
-Nor does it count as the renderer taking a next track, as
-`supersonic-upnp--set-next' would."
- (condition-case nil
-     (aio-await (supersonic-upnp--soap "SetNextAVTransportURI" '(("NextURI" . "") ("NextURIMetaData" . ""))))
-   (error nil)))
+(aio-defun supersonic-upnp--clear-next ()
+  "Clear the renderer's next track, ignoring errors."
+  (condition-case nil
+      (aio-await (supersonic-upnp--soap "SetNextAVTransportURI" '(("NextURI" . "") ("NextURIMetaData" . ""))))
+    (error nil)))
 
-(aio-defun
- supersonic-upnp--preload-next ()
- "Give the renderer the queue's entry after the current one, for gapless playback.
-A renderer that takes `SetNextAVTransportURI' then moves on to it by
-itself when the current track ends, with no gap and no poll to wait
-for; a poll later finds it there, see `supersonic-upnp--moved-on-p'.
-With no entry after the current one, a next track the renderer may
-still hold from before is cleared instead, so that it does not play
-that one again.
+(aio-defun supersonic-upnp--preload-next ()
+  "Give the renderer the next queue entry, for gapless playback.
+Without a next entry, clear the renderer's next track.  Errors are
+ignored, unless `debug-on-error' is non-nil."
+  (let ((index supersonic-upnp--index)
+        (generation supersonic-upnp--queue-generation))
+    (condition-case err
+        (when (and index (supersonic-upnp--gapless-p))
+          (if (< (1+ index) (length supersonic-upnp--queue))
+              (let ((item (aio-await (supersonic-upnp--item (nth (1+ index) supersonic-upnp--queue)))))
+                (when (and (supersonic-upnp--current-p index generation)
+                           (aio-await (supersonic-upnp--set-next (plist-get item :url) (plist-get item :metadata)))
+                           (supersonic-upnp--current-p index generation))
+                  (setq supersonic-upnp--next
+                        (list :index (1+ index) :generation generation
+                              :url (plist-get item :url) :duration (plist-get item :duration)))))
+            (when (supersonic-upnp--gapless-known-p)
+              (aio-await (supersonic-upnp--clear-next)))))
+      (error
+       (when debug-on-error
+         (supersonic--report-async-error supersonic-upnp--preload-description err))
+       (when (supersonic-upnp--gapless-known-p)
+         (aio-await (supersonic-upnp--clear-next)))))))
 
-Never fails: a renderer that does not take a next track, or cannot be
-reached, is left to `supersonic-upnp--advance'; one known to take one
-has whatever it holds cleared.  The error is only shown with
-`debug-on-error' set.  Records nothing if the user moved on, or
-replaced the queue, in the meantime."
- (let ((index supersonic-upnp--index)
-       (generation supersonic-upnp--queue-generation))
-   (condition-case err
-       (when (and index (supersonic-upnp--gapless-p))
-         (if (< (1+ index) (length supersonic-upnp--queue))
-             (let ((item (aio-await (supersonic-upnp--item (nth (1+ index) supersonic-upnp--queue)))))
-               (when (and (supersonic-upnp--current-p index generation)
-                          (aio-await (supersonic-upnp--set-next (plist-get item :url) (plist-get item :metadata)))
-                          (supersonic-upnp--current-p index generation))
-                 (setq supersonic-upnp--next
-                       (list :index (1+ index) :generation generation
-                             :url (plist-get item :url) :duration (plist-get item :duration)))))
-           (when (supersonic-upnp--gapless-known-p)
-             (aio-await (supersonic-upnp--clear-next)))))
-     (error
-      (when debug-on-error
-        (supersonic--report-async-error supersonic-upnp--preload-description err))
-      (when (supersonic-upnp--gapless-known-p)
-        (aio-await (supersonic-upnp--clear-next)))))))
+(aio-defun supersonic-upnp--play-index (index)
+  "Load the queue entry at INDEX on the renderer and play it.
+INDEX only becomes current once the renderer accepted it.  Then
+preload the entry after it."
+  (let ((item (aio-await (supersonic-upnp--item (nth index supersonic-upnp--queue)))))
+    (aio-await (supersonic-upnp--load item))
+    (setq supersonic-upnp--next nil)
+    (aio-await (supersonic-upnp--play))
+    (setq supersonic-upnp--index index)
+    (setq supersonic-upnp--current-url (plist-get item :url))
+    (setq supersonic-upnp--track-duration (plist-get item :duration))
+    (setq supersonic-upnp--user-stopped nil)
+    (supersonic-poller-replace-snapshot
+     supersonic-upnp--poller
+     (list :state "TRANSITIONING" :position 0 :duration nil :index index :polled-at (float-time))))
+  (aio-await (supersonic-upnp--poll))
+  (aio-await (supersonic-upnp--preload-next)))
 
-(aio-defun
- supersonic-upnp--play-index (index)
- "Load the queue's entry at INDEX on the renderer and play it.
-Only once the renderer accepted both does INDEX become current and the
-facade's hooks run -- scrobbling the track, too -- so a renderer that
-cannot be reached, or refuses the track, leaves everything as it was,
-but for a renderer stopped to load it, see `supersonic-upnp--load';
-the error is the caller's to report.  The hooks run before the poll
-that follows, so what shows the track does not lag behind it.  Then
-the entry after it is preloaded, see `supersonic-upnp--preload-next'."
- (let ((item (aio-await (supersonic-upnp--item (nth index supersonic-upnp--queue)))))
-   (aio-await (supersonic-upnp--load item))
-   (setq supersonic-upnp--next nil)
-   (aio-await (supersonic-upnp--play))
-   (setq supersonic-upnp--index index)
-   (setq supersonic-upnp--current-url (plist-get item :url))
-   (setq supersonic-upnp--track-duration (plist-get item :duration))
-   (setq supersonic-upnp--user-stopped nil)
-   (supersonic-poller-replace-snapshot
-    supersonic-upnp--poller
-    (list :state "TRANSITIONING" :position 0 :duration nil :index index :polled-at (float-time))))
- (aio-await (supersonic-upnp--poll))
- (aio-await (supersonic-upnp--preload-next)))
+(aio-defun supersonic-upnp--advance (index generation)
+  "Play the entry after INDEX, which just ended, or stop at the queue's end.
+Do nothing unless INDEX in the queue of GENERATION is still current."
+  (supersonic--with-async-error-handling nil "play the next track on the UPnP renderer"
+    (when (supersonic-upnp--current-p index generation)
+      (if (< (1+ index) (length supersonic-upnp--queue))
+          (aio-await (supersonic-upnp--play-index (1+ index)))
+        (setq supersonic-upnp--index nil)
+        (supersonic-poller-announce supersonic-upnp--poller)))))
 
-(aio-defun
- supersonic-upnp--advance (index generation)
- "Move on from the entry at INDEX, which just played to its end.
-INDEX is into the queue of GENERATION, see `supersonic-upnp--current-p'.
-Plays the entry after it, or, past the end of the queue, leaves
-nothing current.  Does nothing if the user moved to another entry, or
-replaced the queue, in the meantime."
- (supersonic--with-async-error-handling
-  nil "play the next track on the UPnP renderer"
-  (when (supersonic-upnp--current-p index generation)
-    (if (< (1+ index) (length supersonic-upnp--queue))
-        (aio-await (supersonic-upnp--play-index (1+ index)))
-      (setq supersonic-upnp--index nil)
-      (supersonic-poller-announce supersonic-upnp--poller)))))
-
-(aio-defun
- supersonic-upnp--advance-unless-moved-on (index generation)
- "Move on from the entry at INDEX, unless the renderer does so by itself.
-For a track found ended while the renderer holds the next one: a
-renderer may report a stop on its way there.  Loading the next track
-over it would start that track over, and cause the very gap that
-preloading it avoids.  So the renderer is given
-`supersonic-upnp--move-on-wait' seconds, and polled again, which
-makes the next track current if it moved on, see
-`supersonic-upnp--landed'; only otherwise is it loaded, see
-`supersonic-upnp--advance'."
- (aio-await (aio-sleep supersonic-upnp--move-on-wait))
- (aio-await (supersonic-upnp--poll))
- (aio-await (supersonic-upnp--advance index generation)))
+(aio-defun supersonic-upnp--advance-unless-moved-on (index generation)
+  "Move on from INDEX in the queue of GENERATION, unless the renderer did.
+Wait `supersonic-upnp--move-on-wait' seconds for the renderer to start
+the preloaded next track first; loading it again would cause a gap."
+  (aio-await (aio-sleep supersonic-upnp--move-on-wait))
+  (aio-await (supersonic-upnp--poll))
+  (aio-await (supersonic-upnp--advance index generation)))
 
 ;;;
 ;;; The facade's operations
 ;;;
 
-;; As in `supersonic-jukebox.el', each operation the facade fires and
-;; forgets is a plain function around an `aio-defun' that reports its
-;; own failures, which would otherwise reject a promise nobody awaits.
+;; Nobody awaits these, so each reports its own errors.
 
-(aio-defun
- supersonic-upnp-status (key)
- "Resolve to the renderer's current KEY, from the latest poll.
-Never asks the renderer itself; see `supersonic-upnp--poll'."
- (pcase key
-   ('track-id (supersonic-upnp--current-track))
-   ('position (supersonic-upnp--position))
-   ('paused (supersonic-upnp--paused-p))))
+(aio-defun supersonic-upnp-status (key)
+  "Return a promise resolving to the renderer's current KEY.
+The value comes from the latest poll."
+  (pcase key
+    ('track-id (supersonic-upnp--current-track))
+    ('position (supersonic-upnp--position))
+    ('paused (supersonic-upnp--paused-p))))
 
-(aio-defun
- supersonic-upnp-queue ()
- "Resolve to the client-side queue, marking the entry the renderer was given."
- (seq-map-indexed
-  (lambda (id index) (list :track-id id :current (eql index supersonic-upnp--index)))
-  supersonic-upnp--queue))
+(aio-defun supersonic-upnp-queue ()
+  "Return a promise resolving to the queue."
+  (seq-map-indexed
+   (lambda (id index) (list :track-id id :current (eql index supersonic-upnp--index)))
+   supersonic-upnp--queue))
 
-(aio-defun
- supersonic-upnp--start (ids)
- "Replace the queue with IDS and play the first.
-If the renderer does not take the first, the queue stays as it was."
- (supersonic--with-async-error-handling
-  nil "start UPnP playback"
-  (let ((queue supersonic-upnp--queue)
-        (generation supersonic-upnp--queue-generation))
-    (setq supersonic-upnp--queue (copy-sequence ids))
-    (setq supersonic-upnp--queue-generation (1+ generation))
-    (condition-case err
-        (if ids
-            (aio-await (supersonic-upnp--play-index 0))
-          (setq supersonic-upnp--index nil)
-          (supersonic-poller-announce supersonic-upnp--poller))
-      (error
-       (setq supersonic-upnp--queue queue)
-       (setq supersonic-upnp--queue-generation generation)
-       (signal (car err) (cdr err)))))))
+(aio-defun supersonic-upnp--start (ids)
+  "Replace the queue with IDS and play the first.
+If the renderer refuses, keep the old queue."
+  (supersonic--with-async-error-handling nil "start UPnP playback"
+    (let ((queue supersonic-upnp--queue)
+          (generation supersonic-upnp--queue-generation))
+      (setq supersonic-upnp--queue (copy-sequence ids))
+      (setq supersonic-upnp--queue-generation (1+ generation))
+      (condition-case err
+          (if ids
+              (aio-await (supersonic-upnp--play-index 0))
+            (setq supersonic-upnp--index nil)
+            (supersonic-poller-announce supersonic-upnp--poller))
+        (error
+         (setq supersonic-upnp--queue queue)
+         (setq supersonic-upnp--queue-generation generation)
+         (signal (car err) (cdr err)))))))
 
 (defun supersonic-upnp-start (ids)
   "Replace the queue with IDS and start playing them on the renderer."
   (ignore (supersonic-upnp--start ids)))
 
-(aio-defun
- supersonic-upnp--enqueue (ids)
- "Append IDS to the queue, playing the first if nothing is left to play.
-Nothing is left to play before anything was started and once the
-queue has been played to its end.  A queue merely stopped or paused
-partway through is left that way, the same as the jukebox does.  IDS
-stay queued even if the renderer does not take the first of them.
-
-IDS appended after the current track, the last until now, give it a
-next one to preload, see `supersonic-upnp--preload-next'."
- (supersonic--with-async-error-handling
-  nil "enqueue on the UPnP renderer"
-  (let ((length (length supersonic-upnp--queue)))
-    (setq supersonic-upnp--queue (append supersonic-upnp--queue ids))
-    (supersonic-poller-announce supersonic-upnp--poller)
-    (when ids
-      (cond
-       ((null supersonic-upnp--index)
-        (aio-await (supersonic-upnp--play-index length)))
-       ((eql (1+ supersonic-upnp--index) length)
-        (aio-await (supersonic-upnp--preload-next))))))))
+(aio-defun supersonic-upnp--enqueue (ids)
+  "Append IDS to the queue.
+Start playing them if nothing was left to play."
+  (supersonic--with-async-error-handling nil "enqueue on the UPnP renderer"
+    (let ((length (length supersonic-upnp--queue)))
+      (setq supersonic-upnp--queue (append supersonic-upnp--queue ids))
+      (supersonic-poller-announce supersonic-upnp--poller)
+      (when ids
+        (cond
+         ((null supersonic-upnp--index)
+          (aio-await (supersonic-upnp--play-index length)))
+         ((eql (1+ supersonic-upnp--index) length)
+          (aio-await (supersonic-upnp--preload-next))))))))
 
 (defun supersonic-upnp-enqueue (ids)
   "Append IDS to the queue, playing them if nothing is left to play."
   (ignore (supersonic-upnp--enqueue ids)))
 
-(aio-defun
- supersonic-upnp--toggle-play ()
- "Pause the renderer if it is playing, or else play the current track.
-Decided from the latest poll, which is made first if none has landed
-for the current track yet.  A renderer still buffering counts as
-playing.  One that has no media any more -- because another
-application used it in the meantime, say -- gets the current track
-loaded again rather than told to play nothing."
- (supersonic--with-async-error-handling
-  nil "toggle UPnP playback"
-  (when supersonic-upnp--index
-    (aio-await (supersonic-upnp--ensure-polled))
-    (cond
-     ((member (supersonic-upnp--state) supersonic-upnp--running-states)
-      (aio-await (supersonic-upnp--soap "Pause"))
-      (aio-await (supersonic-upnp--poll)))
-     ((member (supersonic-upnp--state) '("PAUSED_PLAYBACK" "STOPPED"))
-      (setq supersonic-upnp--user-stopped nil)
-      (aio-await (supersonic-upnp--play))
-      (aio-await (supersonic-upnp--poll)))
-     (t
-      (aio-await (supersonic-upnp--play-index supersonic-upnp--index)))))))
+(aio-defun supersonic-upnp--toggle-play ()
+  "Pause the renderer if it is playing, else play the current track.
+Load the track again if the renderer has lost it."
+  (supersonic--with-async-error-handling nil "toggle UPnP playback"
+    (when supersonic-upnp--index
+      (aio-await (supersonic-upnp--ensure-polled))
+      (cond
+       ((member (supersonic-upnp--state) supersonic-upnp--running-states)
+        (aio-await (supersonic-upnp--soap "Pause"))
+        (aio-await (supersonic-upnp--poll)))
+       ((member (supersonic-upnp--state) '("PAUSED_PLAYBACK" "STOPPED"))
+        (setq supersonic-upnp--user-stopped nil)
+        (aio-await (supersonic-upnp--play))
+        (aio-await (supersonic-upnp--poll)))
+       (t
+        (aio-await (supersonic-upnp--play-index supersonic-upnp--index)))))))
 
 (defun supersonic-upnp-toggle-play ()
   "Toggle between playing and paused on the renderer."
   (ignore (supersonic-upnp--toggle-play)))
 
-(aio-defun
- supersonic-upnp--next () "Play the queue's next entry, if there is one."
- (supersonic--with-async-error-handling
-  nil "skip to the next track on the UPnP renderer"
-  (when (and supersonic-upnp--index (< (1+ supersonic-upnp--index) (length supersonic-upnp--queue)))
-    (aio-await (supersonic-upnp--play-index (1+ supersonic-upnp--index))))))
+(aio-defun supersonic-upnp--next ()
+  "Play the queue's next entry, if there is one."
+  (supersonic--with-async-error-handling nil "skip to the next track on the UPnP renderer"
+    (when (and supersonic-upnp--index (< (1+ supersonic-upnp--index) (length supersonic-upnp--queue)))
+      (aio-await (supersonic-upnp--play-index (1+ supersonic-upnp--index))))))
 
 (defun supersonic-upnp-next ()
   "Skip to the next track in the queue."
   (ignore (supersonic-upnp--next)))
 
-(aio-defun
- supersonic-upnp--prev ()
- "Play the queue's previous entry, if there is one.
-Once the queue has been played to its end, that is its last entry."
- (supersonic--with-async-error-handling
-  nil "go back to the previous track on the UPnP renderer"
-  (let ((index (if supersonic-upnp--index
-                   (1- supersonic-upnp--index)
-                 (1- (length supersonic-upnp--queue)))))
-    (when (>= index 0)
-      (aio-await (supersonic-upnp--play-index index))))))
+(aio-defun supersonic-upnp--prev ()
+  "Play the previous queue entry, if there is one."
+  (supersonic--with-async-error-handling nil "go back to the previous track on the UPnP renderer"
+    (let ((index (if supersonic-upnp--index
+                     (1- supersonic-upnp--index)
+                   (1- (length supersonic-upnp--queue)))))
+      (when (>= index 0)
+        (aio-await (supersonic-upnp--play-index index))))))
 
 (defun supersonic-upnp-prev ()
   "Go back to the previous track in the queue."
   (ignore (supersonic-upnp--prev)))
 
-(aio-defun
- supersonic-upnp--stop ()
- "Stop the renderer, if it was given anything to play from here.
-Otherwise it is left alone: switching away from the `upnp' backend
-stops it, and that must not stop whatever another application has the
-renderer playing.  The queue and its current entry stay, so that
-playing again starts that entry over."
- (supersonic--with-async-error-handling
-  nil "stop the UPnP renderer"
-  (when supersonic-upnp--index
-    (setq supersonic-upnp--user-stopped t)
-    (aio-await (supersonic-upnp--soap "Stop"))
-    (aio-await (supersonic-upnp--poll)))))
+(aio-defun supersonic-upnp--stop ()
+  "Stop the renderer, if it plays something from here."
+  (supersonic--with-async-error-handling nil "stop the UPnP renderer"
+    (when supersonic-upnp--index
+      (setq supersonic-upnp--user-stopped t)
+      (aio-await (supersonic-upnp--soap "Stop"))
+      (aio-await (supersonic-upnp--poll)))))
 
 (defun supersonic-upnp-stop ()
   "Stop playback on the renderer."
   (ignore (supersonic-upnp--stop)))
 
-(aio-defun
- supersonic-upnp--seek-to (seconds)
- "Seek the renderer to SECONDS into the current track.
-Kept within the track: never before its start, and never past its
-duration, where that is known."
- (let* ((duration (supersonic-upnp--duration))
-        (seconds (max 0 (if duration (min seconds duration) seconds))))
-   (aio-await
-    (supersonic-upnp--soap "Seek" `(("Unit" . "REL_TIME") ("Target" . ,(supersonic-upnp--format-time seconds))))))
- (aio-await (supersonic-poller-finish-seek supersonic-upnp--poller)))
+(aio-defun supersonic-upnp--seek-to (seconds)
+  "Seek the renderer to SECONDS into the current track."
+  (let* ((duration (supersonic-upnp--duration))
+         (seconds (max 0 (if duration (min seconds duration) seconds))))
+    (aio-await
+     (supersonic-upnp--soap "Seek" `(("Unit" . "REL_TIME") ("Target" . ,(supersonic-upnp--format-time seconds))))))
+  (aio-await (supersonic-poller-finish-seek supersonic-upnp--poller)))
 
-(aio-defun
- supersonic-upnp--seek (offset)
- "Seek OFFSET seconds from the renderer's current position.
-`Seek' takes an absolute position, so OFFSET is added to the one
-counted on from the latest poll -- see `supersonic-upnp--position' --
-which is made first if none has landed for the current track yet."
- (supersonic--with-async-error-handling
-  nil "seek on the UPnP renderer"
-  (when supersonic-upnp--index
-    (aio-await (supersonic-upnp--ensure-polled))
-    (aio-await (supersonic-upnp--seek-to (+ (or (supersonic-upnp--position) 0) offset))))))
+(aio-defun supersonic-upnp--seek (offset)
+  "Seek OFFSET seconds from the renderer's current position."
+  (supersonic--with-async-error-handling nil "seek on the UPnP renderer"
+    (when supersonic-upnp--index
+      (aio-await (supersonic-upnp--ensure-polled))
+      (aio-await (supersonic-upnp--seek-to (+ (or (supersonic-upnp--position) 0) offset))))))
 
 (defun supersonic-upnp-seek (offset)
   "Seek OFFSET seconds relative to the current position on the renderer."
   (ignore (supersonic-upnp--seek offset)))
 
-(aio-defun
- supersonic-upnp--seek-fraction (fraction)
- "Seek to FRACTION (0.0 to 1.0) of the way through the current track.
-Multiplied by the track's duration, see `supersonic-upnp--duration';
-a track whose duration nobody knows cannot be seeked this way, which
-is said rather than guessed at."
- (supersonic--with-async-error-handling
-  nil "seek on the UPnP renderer"
-  (when supersonic-upnp--index
-    (aio-await (supersonic-upnp--ensure-polled))
-    (let ((duration (supersonic-upnp--duration)))
-      (unless duration
-        (error "Neither the UPnP renderer nor the provider knows the current track's duration"))
-      (aio-await (supersonic-upnp--seek-to (* fraction duration)))))))
+(aio-defun supersonic-upnp--seek-fraction (fraction)
+  "Seek the renderer to FRACTION, between 0.0 and 1.0, of the current track."
+  (supersonic--with-async-error-handling nil "seek on the UPnP renderer"
+    (when supersonic-upnp--index
+      (aio-await (supersonic-upnp--ensure-polled))
+      (let ((duration (supersonic-upnp--duration)))
+        (unless duration
+          (error "Neither the UPnP renderer nor the provider knows the current track's duration"))
+        (aio-await (supersonic-upnp--seek-to (* fraction duration)))))))
 
 (defun supersonic-upnp-seek-fraction (fraction)
-  "Seek to FRACTION (0.0 to 1.0) of the way through the renderer's track."
+  "Seek the renderer to FRACTION, between 0.0 and 1.0, of the current track."
   (ignore (supersonic-upnp--seek-fraction fraction)))
 
 (supersonic-poller-register 'supersonic-upnp--poller)
 
-;; A renderer fetches what it plays from a URL, so the backend plays
-;; for any provider that can name one.
 (supersonic-playback-register-backend
  'upnp
  '((start . supersonic-upnp-start)

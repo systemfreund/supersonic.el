@@ -1456,12 +1456,12 @@ whose :x0/:x1 tile WIDTH exactly."
 the reach between a bar's RMS and peak extents, but only when there is
 one -- a bucket whose peak does not exceed its RMS (silence, or a
 perfectly flat tone) gets just the one solid rectangle."
-  (let* ((wide (supersonic-waveform-bars (cons (supersonic-tests--bytes '(255)) (supersonic-tests--bytes '(50))) 0 10 8))
-         (flat (supersonic-waveform-bars (cons (supersonic-tests--bytes '(0)) (supersonic-tests--bytes '(0))) 0 10 8))
+  (let* ((wide (cons (supersonic-tests--bytes '(255)) (supersonic-tests--bytes '(50))))
+         (flat (cons (supersonic-tests--bytes '(0)) (supersonic-tests--bytes '(0))))
          (svg-wide (svg-create 10 8))
          (svg-flat (svg-create 10 8)))
-    (supersonic-waveform-svg-bars svg-wide wide 0 8)
-    (supersonic-waveform-svg-bars svg-flat flat 0 8)
+    (supersonic-waveform-svg-bars svg-wide wide 0 10 0 8)
+    (supersonic-waveform-svg-bars svg-flat flat 0 10 0 8)
     (let ((rects-wide (with-temp-buffer
                          (svg-print svg-wide)
                          (how-many "<rect" (point-min) (point-max))))
@@ -1470,6 +1470,27 @@ perfectly flat tone) gets just the one solid rectangle."
                         (how-many "<rect" (point-min) (point-max)))))
       (should (= 2 rects-wide))
       (should (= 1 rects-flat)))))
+
+(ert-deftest supersonic-tests-waveform-svg-bars-follows-progress-with-cached-markup ()
+  "`supersonic-waveform-svg-bars' reuses the envelope's markup as the
+position moves, but still draws the played/unplayed split where it is."
+  (let ((envelope (cons (supersonic-tests--bytes '(0 0)) (supersonic-tests--bytes '(0 0))))
+        (opacities (lambda (svg)
+                     (with-temp-buffer
+                       (svg-print svg)
+                       (goto-char (point-min))
+                       (let (found)
+                         (while (re-search-forward "fill-opacity=\"\\([0-9.]+\\)\"" nil t)
+                           (push (match-string 1) found))
+                         (nreverse found))))))
+    (let ((svg (svg-create 10 8)))
+      (supersonic-waveform-svg-bars svg envelope 0.5 10 0 8)
+      (should (equal '("0.9" "0.4") (funcall opacities svg))))
+    (let ((cached (cdr supersonic-waveform--svg-bars-cache))
+          (svg (svg-create 10 8)))
+      (supersonic-waveform-svg-bars svg envelope 1.0 10 0 8)
+      (should (eq cached (cdr supersonic-waveform--svg-bars-cache)))
+      (should (equal '("0.9" "0.9") (funcall opacities svg))))))
 
 (ert-deftest supersonic-tests-waveform-seek-map-suppresses-drag-region-point-move ()
   "`supersonic-waveform-seek-map' overrides `down-mouse-1' with a no-op.
@@ -3374,12 +3395,10 @@ particular backend."
   "Every `defcustom' belongs to `supersonic-custom.el', unless its default
 is a function of the package, which lives in the file defining the
 function.  See the Commentary of `supersonic-custom.el' for why, and
-`supersonic-tests-options-file-refers-to-nothing-of-the-package'.
-`supersonic-credentials.el' keeps its one option to itself; see its
-Commentary."
+`supersonic-tests-options-file-refers-to-nothing-of-the-package'."
   (dolist (file (supersonic-tests--package-files))
     (let ((name (file-name-nondirectory file)))
-      (unless (member name '("supersonic-custom.el" "supersonic-credentials.el"))
+      (unless (equal name "supersonic-custom.el")
         (let* ((forms (supersonic-tests--file-forms file))
                (defined (mapcar #'cadr
                                 (seq-filter (lambda (form)
@@ -3410,11 +3429,10 @@ dependency running back the other way."
   "Each file requires `supersonic-custom' rather than assuming a load order.
 See `supersonic-tests-user-options-live-in-the-options-file' for why this
 matters -- without it, requiring e.g. just `supersonic-waveform' left
-`supersonic-waveform-buckets' void.  Except `supersonic-credentials',
-which must not require it -- see its Commentary."
+`supersonic-waveform-buckets' void."
   (dolist (file (supersonic-tests--package-files))
     (let ((name (file-name-nondirectory file)))
-      (unless (member name '("supersonic-custom.el" "supersonic-credentials.el"))
+      (unless (equal name "supersonic-custom.el")
         (with-temp-buffer
           (insert-file-contents file)
           (goto-char (point-min))
@@ -8392,6 +8410,21 @@ episode, so only those two entries go; Subsonic keeps them all."
     (should (supersonic-tests--suffix-shown-p 'supersonic "p"))
     (should (supersonic-tests--suffix-shown-p 'supersonic-podcast-help "a"))
     (should (supersonic-tests--suffix-shown-p 'supersonic-podcast-episode-help "d"))))
+
+(ert-deftest supersonic-tests-update-field-flushes-replaced-image-one-update-late ()
+  "Flushing an image right as it is replaced frees its id for the new
+image to reuse, and redisplay then skips the unchanged-looking glyph."
+  (let ((flushed nil)
+        (image (lambda (n) (list 'image :type 'svg :data (format "<svg>%d</svg>" n)))))
+    (with-temp-buffer
+      (insert (propertize " " 'supersonic-now-playing-field 'art 'display (funcall image 0)))
+      (cl-letf (((symbol-function 'image-flush) (lambda (spec &optional _frame) (push spec flushed))))
+        (supersonic-now-playing--update-field
+         (current-buffer) 'art (propertize " " 'display (funcall image 1)))
+        (should-not flushed)
+        (supersonic-now-playing--update-field
+         (current-buffer) 'art (propertize " " 'display (funcall image 2)))
+        (should (equal flushed (list (funcall image 0))))))))
 
 (provide 'supersonic-tests)
 

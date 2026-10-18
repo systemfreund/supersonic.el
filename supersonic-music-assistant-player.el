@@ -20,7 +20,7 @@
 
 ;;; Commentary:
 
-;; The Music Assistant playback backend (#60): plays on one of the
+;; The Music Assistant playback backend: plays on one of the
 ;; Music Assistant (MA) server's own players -- speakers, Chromecasts,
 ;; AirPlay devices, its web player -- the way `supersonic-jukebox.el'
 ;; plays on a Subsonic server's jukebox.  Registers itself with the
@@ -37,7 +37,7 @@
 ;; The player is `supersonic-music-assistant-player', picked with
 ;; `supersonic-music-assistant-select-player' -- or, with none picked
 ;; yet, offered when playing or enqueueing, taking the server's only
-;; player without asking (#93).  A player's queue has the player's id.
+;; player without asking.  A player's queue has the player's id.
 ;;
 ;; MA's HTTP API pushes nothing, so the queue is polled through
 ;; `supersonic-poller.el' while `music-assistant' is the active backend.
@@ -65,27 +65,22 @@
 ;;;
 
 (defun supersonic-music-assistant-player--queue-id ()
-  "Return the id of the selected player's queue.
-Signals a `user-error' saying how to select a player when none is."
+  "Return the id of the selected player's queue, or signal a `user-error'."
   (or (plist-get supersonic-music-assistant-player :id)
       (user-error "No Music Assistant player selected; select one with M-x supersonic-music-assistant-select-player")))
 
 (defun supersonic-music-assistant-player--target ()
-  "Return what a playback command is sent to, as (QUEUE-ID . CONNECTION).
-CONNECTION is as `supersonic-music-assistant--connection' returns it.
-For an operation to call before going asynchronous, so that no player
-selected, or no server set, is reported to the command that asked,
-and anything auth-source asks of the user is asked by that command."
+  "Return (QUEUE-ID . CONNECTION) for the commands of an operation.
+Call it before the first `aio-await', so that errors and prompts
+reach the command."
   (let ((queue-id (supersonic-music-assistant-player--queue-id)))
     (cons queue-id (supersonic-music-assistant--connection))))
 
-(aio-defun
- supersonic-music-assistant-player--send (target command &optional args)
- "Return a promise of the result of running queue COMMAND with ARGS on TARGET.
-TARGET is as returned by `supersonic-music-assistant-player--target';
-its queue id goes with ARGS as `queue_id'."
- (pcase-let ((`(,queue-id . ,connection) target))
-   (aio-await (supersonic-music-assistant--send connection command `(("queue_id" . ,queue-id) ,@args)))))
+(aio-defun supersonic-music-assistant-player--send (target command &optional args)
+  "Return a promise resolving to the result of queue COMMAND with ARGS.
+TARGET is from `supersonic-music-assistant-player--target'."
+  (pcase-let ((`(,queue-id . ,connection) target))
+    (aio-await (supersonic-music-assistant--send connection command `(("queue_id" . ,queue-id) ,@args)))))
 
 ;;;
 ;;; Polling the queue
@@ -94,17 +89,13 @@ its queue id goes with ARGS as `queue_id'."
 (defvar supersonic-music-assistant-player--poller)
 
 (defconst supersonic-music-assistant-player--items-max-age 10
-  "Seconds after which a poll asks for the queue's entries regardless.
-So that what `supersonic-music-assistant-player--items-key' cannot
-tell, an entry moved by another client, shows within that long.")
+  "Seconds after which the queue entries are fetched even if unchanged.")
 
 (defun supersonic-music-assistant-player--items-key (queue)
-  "Return what tells whether QUEUE's entries may have changed since a poll.
-QUEUE is what `player_queues/get' answered.  Its id, the number of
-entries, the ids of the current and the next entry, which are new
-whenever one is queued, and whether it is shuffled.  Only an entry
-moved further down by another client goes unnoticed, for
-`supersonic-music-assistant-player--items-max-age' at most."
+  "Return the parts of QUEUE that change when its entries do.
+QUEUE is a `player_queues/get' result.  Entries moved by another
+client go unnoticed for up to
+`supersonic-music-assistant-player--items-max-age' seconds."
   (list (assoc-default "queue_id" queue)
         (assoc-default "items" queue)
         (assoc-default "queue_item_id" (assoc-default "current_item" queue))
@@ -112,28 +103,19 @@ moved further down by another client goes unnoticed, for
         (assoc-default "shuffle_enabled" queue)))
 
 (defun supersonic-music-assistant-player--entry-id (item)
-  "Return the track id of queue entry ITEM: its media item's URI, or nil."
+  "Return the track id of queue entry ITEM, or nil."
   (assoc-default "uri" (assoc-default "media_item" item)))
 
 (defun supersonic-music-assistant-player--entry-track (item)
-  "Return queue entry ITEM's media item as a facade track plist, or nil.
-An entry carries the whole media item, so the queue buffer need not
-ask `music/item_by_uri' for each entry again."
+  "Return the track plist of queue entry ITEM, or nil."
   (let ((media-item (assoc-default "media_item" item)))
     (and (consp media-item) (supersonic-music-assistant--track media-item))))
 
 (defun supersonic-music-assistant-player--parse-snapshot (queue items polled-at items-polled-at)
-  "Turn QUEUE, as `player_queues/get' answered, into a snapshot plist.
-ITEMS are its entries, in order, as (TRACK-ID . TRACK) each; TRACK is
-the entry's track plist, or nil.  POLLED-AT is a
-`float-time' timestamp of when QUEUE was received, ITEMS-POLLED-AT
-one of when ITEMS were.
-
-The position is `elapsed_time' as of the server's
-`elapsed_time_last_updated', shifted onto the local clock by
-`supersonic-music-assistant--clock-offset', so it is counted on from
-when the server last looked, as MA's own client does.  Never later
-than POLLED-AT."
+  "Return the snapshot plist for QUEUE, a `player_queues/get' result.
+ITEMS are its entries as (TRACK-ID . TRACK).  POLLED-AT is when QUEUE
+was received, ITEMS-POLLED-AT when ITEMS were.  The position is taken
+as of when the server last updated it."
   (let* ((current (assoc-default "current_item" queue))
          (updated (assoc-default "elapsed_time_last_updated" queue))
          (index (assoc-default "current_index" queue)))
@@ -151,47 +133,41 @@ than POLLED-AT."
                          (min (+ updated supersonic-music-assistant--clock-offset) polled-at)
                        polled-at))))
 
-(aio-defun
- supersonic-music-assistant-player--fetch ()
- "Ask the selected player's queue for its state, as a fresh snapshot.
-Its entries are asked for too, unless it has none, or the snapshot
-polled last found the same `supersonic-music-assistant-player--items-key'
-and asked for them less than
-`supersonic-music-assistant-player--items-max-age' seconds ago.  See
-`supersonic-music-assistant-player--parse-snapshot'."
- (pcase-let* ((`(,queue-id . ,connection) (supersonic-music-assistant-player--target))
-              (queue (aio-await (supersonic-music-assistant-player--send
-                                 (cons queue-id connection) "player_queues/get")))
-              (polled-at (float-time))
-              (previous (supersonic-poller-snapshot supersonic-music-assistant-player--poller))
-              (fetch-items (not (and previous
-                                     (equal (plist-get previous :items-key)
-                                            (supersonic-music-assistant-player--items-key queue))
-                                     (numberp (plist-get previous :items-polled-at))
-                                     (< (- polled-at (plist-get previous :items-polled-at))
-                                        supersonic-music-assistant-player--items-max-age)))))
-   (unless (consp queue)
-     (user-error "Music Assistant has no player %s; select one with M-x supersonic-music-assistant-select-player"
-                 (or (plist-get supersonic-music-assistant-player :name) queue-id)))
-   (supersonic-music-assistant-player--parse-snapshot
-    queue
-    (cond
-     ((eql 0 (assoc-default "items" queue))
-      nil)
-     ((not fetch-items)
-      (plist-get previous :items))
-     (t
-      (mapcar (lambda (item)
-                (cons (supersonic-music-assistant-player--entry-id item)
-                      (supersonic-music-assistant-player--entry-track item)))
-              (aio-await (supersonic-music-assistant--all-items
-                          "player_queues/items" `(("queue_id" . ,queue-id)) connection)))))
-    polled-at
-    (if fetch-items polled-at (plist-get previous :items-polled-at)))))
+(aio-defun supersonic-music-assistant-player--fetch ()
+  "Return a promise resolving to a snapshot of the player's queue.
+The entries are only fetched if they may have changed."
+  (pcase-let* ((`(,queue-id . ,connection) (supersonic-music-assistant-player--target))
+               (queue (aio-await (supersonic-music-assistant-player--send
+                                  (cons queue-id connection) "player_queues/get")))
+               (polled-at (float-time))
+               (previous (supersonic-poller-snapshot supersonic-music-assistant-player--poller))
+               (fetch-items (not (and previous
+                                      (equal (plist-get previous :items-key)
+                                             (supersonic-music-assistant-player--items-key queue))
+                                      (numberp (plist-get previous :items-polled-at))
+                                      (< (- polled-at (plist-get previous :items-polled-at))
+                                         supersonic-music-assistant-player--items-max-age)))))
+    (unless (consp queue)
+      (user-error "Music Assistant has no player %s; select one with M-x supersonic-music-assistant-select-player"
+                  (or (plist-get supersonic-music-assistant-player :name) queue-id)))
+    (supersonic-music-assistant-player--parse-snapshot
+     queue
+     (cond
+      ((eql 0 (assoc-default "items" queue))
+       nil)
+      ((not fetch-items)
+       (plist-get previous :items))
+      (t
+       (mapcar (lambda (item)
+                 (cons (supersonic-music-assistant-player--entry-id item)
+                       (supersonic-music-assistant-player--entry-track item)))
+               (aio-await (supersonic-music-assistant--all-items
+                           "player_queues/items" `(("queue_id" . ,queue-id)) connection)))))
+     polled-at
+     (if fetch-items polled-at (plist-get previous :items-polled-at)))))
 
 (defun supersonic-music-assistant-player--summarize (snapshot)
-  "Return what the facade's hooks announce of SNAPSHOT.
-See `supersonic-poller-announce'."
+  "Return the summary of SNAPSHOT that `supersonic-poller-announce' compares."
   (list :track-id (plist-get snapshot :track-id)
         :paused (not (plist-get snapshot :playing))
         :entries (plist-get snapshot :entries)))
@@ -211,30 +187,24 @@ See `supersonic-poller-announce'."
 ;; (supersonic-music-assistant-player--make-poller) by hand before
 ;; re-evaluating this file.
 (defvar supersonic-music-assistant-player--poller (supersonic-music-assistant-player--make-poller)
-  "Polls the selected player's queue, and holds what the latest poll found.
-Its snapshot is a plist: `:items', the queue's entries, in order, as
-\(TRACK-ID . TRACK) each, TRACK being the entry's track plist or nil;
-`:entries', their track ids; `:current-index', the 0-based index into `:entries'
-of the current entry, or nil; `:track-id', the current entry's track
-id; `:playing', non-nil if the player is actually playing; `:ended',
-non-nil if the queue was played to its end; `:position', the current
-entry's position in seconds as of `:polled-at', a `float-time'
-timestamp; `:duration', the current entry's duration in seconds, or
-nil; `:items-key', see `supersonic-music-assistant-player--items-key';
-and `:items-polled-at', when the entries were last asked for.")
+  "The poller of the selected player's queue.
+Its snapshot is a plist of `:items', the entries as (TRACK-ID . TRACK);
+`:entries', their track ids; `:current-index'; `:track-id'; `:playing';
+`:ended', non-nil if the queue was played to its end; `:position' in
+seconds as of `:polled-at'; `:duration'; `:items-key'; and
+`:items-polled-at'.")
 
 (defun supersonic-music-assistant-player--snapshot ()
-  "Return the queue state the latest poll found, or nil before any landed."
+  "Return the player's latest snapshot, or nil."
   (supersonic-poller-snapshot supersonic-music-assistant-player--poller))
 
 (defun supersonic-music-assistant-player--position ()
-  "Return the player's position, counted on from the latest poll.
-See `supersonic-poller-position'."
+  "Return the player's estimated current position."
   (let ((snapshot (supersonic-music-assistant-player--snapshot)))
     (supersonic-poller-position snapshot (plist-get snapshot :playing) (plist-get snapshot :duration))))
 
 (defun supersonic-music-assistant-player--poll ()
-  "Return a promise of polling the player; see `supersonic-poller-poll'."
+  "Return a promise of polling the player."
   (supersonic-poller-poll supersonic-music-assistant-player--poller))
 
 ;;;
@@ -242,28 +212,25 @@ See `supersonic-poller-position'."
 ;;;
 
 (defun supersonic-music-assistant-player-live-p ()
-  "Return non-nil if the last poll of the player got an answer."
+  "Return non-nil if the last poll of the player succeeded."
   (supersonic-poller-live supersonic-music-assistant-player--poller))
 
-(aio-defun
- supersonic-music-assistant-player-status (key)
- "Resolve to the player's current KEY, read from what the latest poll found."
- (pcase key
-   ('track-id (plist-get (supersonic-music-assistant-player--snapshot) :track-id))
-   ('position (supersonic-music-assistant-player--position))
-   ('paused (not (plist-get (supersonic-music-assistant-player--snapshot) :playing)))))
+(aio-defun supersonic-music-assistant-player-status (key)
+  "Return a promise resolving to the player's current KEY."
+  (pcase key
+    ('track-id (plist-get (supersonic-music-assistant-player--snapshot) :track-id))
+    ('position (supersonic-music-assistant-player--position))
+    ('paused (not (plist-get (supersonic-music-assistant-player--snapshot) :playing)))))
 
-(aio-defun
- supersonic-music-assistant-player-queue ()
- "Resolve to the player's queue, read from what the latest poll found.
-Each entry brings its `:track' along, as the poll found it."
- (let* ((snapshot (supersonic-music-assistant-player--snapshot))
-        (current-index (plist-get snapshot :current-index)))
-   (seq-map-indexed
-    (lambda (item index)
-      (append (list :track-id (car item) :current (eql index current-index))
-              (and (cdr item) (list :track (cdr item)))))
-    (plist-get snapshot :items))))
+(aio-defun supersonic-music-assistant-player-queue ()
+  "Return a promise resolving to the player's queue."
+  (let* ((snapshot (supersonic-music-assistant-player--snapshot))
+         (current-index (plist-get snapshot :current-index)))
+    (seq-map-indexed
+     (lambda (item index)
+       (append (list :track-id (car item) :current (eql index current-index))
+               (and (cdr item) (list :track (cdr item)))))
+     (plist-get snapshot :items))))
 
 ;;;
 ;;; The facade's playing operations
@@ -273,21 +240,18 @@ Each entry brings its `:track' along, as the poll found it."
 ;; the player and the connection before handing the work to an
 ;; `aio-defun' that reports its own errors, as the jukebox's do.
 
-(aio-defun
- supersonic-music-assistant-player--run (target description command &optional args)
- "Run queue COMMAND with ARGS on TARGET, then poll for its effect.
-A failure is reported as failing to DESCRIPTION."
- (supersonic--with-async-error-handling nil description
-   (aio-await (supersonic-music-assistant-player--send target command args))
-   (aio-await (supersonic-music-assistant-player--poll))))
+(aio-defun supersonic-music-assistant-player--run (target description command &optional args)
+  "Run queue COMMAND with ARGS on TARGET, then poll.
+Report a failure as failing to DESCRIPTION."
+  (supersonic--with-async-error-handling nil description
+    (aio-await (supersonic-music-assistant-player--send target command args))
+    (aio-await (supersonic-music-assistant-player--poll))))
 
 (defun supersonic-music-assistant-player--with-chosen-target (description sole-format action)
-  "Call ACTION with what a command playing or enqueueing is sent to.
-With no player selected, offers one first, as
-`supersonic-music-assistant-player--choose' does with SOLE-FORMAT,
-then calls ACTION, so the command need not be repeated.  A failure to
-choose is reported as failing to DESCRIPTION.  Only for a command the
-user ran, as it may prompt."
+  "Call ACTION with the target of a play command.
+If no player is selected, let the user choose one first, see
+`supersonic-music-assistant-player--choose' for SOLE-FORMAT.  Report
+a failure as failing to DESCRIPTION."
   (let ((connection (supersonic-music-assistant--connection))
         (queue-id (plist-get supersonic-music-assistant-player :id)))
     (ignore
@@ -296,9 +260,7 @@ user ran, as it may prompt."
        (supersonic-music-assistant-player--choose-then connection description sole-format action)))))
 
 (defun supersonic-music-assistant-player-start (ids)
-  "Replace the player's queue with IDS and start playing.
-With no player selected, offers one first; see
-`supersonic-music-assistant-player--with-chosen-target'."
+  "Replace the player's queue with IDS and start playing."
   (supersonic-music-assistant-player--with-chosen-target
    "play on the Music Assistant player" "Playing on %s"
    (lambda (target)
@@ -307,38 +269,29 @@ With no player selected, offers one first; see
       "player_queues/play_media"
       `(("media" . ,(vconcat ids)) ("option" . "replace"))))))
 
-(aio-defun
- supersonic-music-assistant-player--enqueue (target ids)
- "Add IDS to the queue of TARGET, playing them if nothing is left to play.
-MA's `add' never starts playback, so this also asks the queue to play
-when it was empty or had been played to its end, as
-`supersonic-playback-enqueue' promises.  An ended queue has already
-moved on to the first of IDS by then, so playing starts there.  A
-queue merely stopped partway through is left stopped.  Polls first
-rather than trusting the latest poll, which may be a few seconds old.
-A server older than MA's `ended' flag looks merely stopped once its
-queue has ended, and is left so."
- (supersonic--with-async-error-handling nil "enqueue on the Music Assistant player"
-   (aio-await (supersonic-music-assistant-player--poll))
-   (let* ((snapshot (supersonic-music-assistant-player--snapshot))
-          (idle (or (null (plist-get snapshot :entries)) (plist-get snapshot :ended))))
-     (aio-await (supersonic-music-assistant-player--send
-                 target "player_queues/play_media"
-                 `(("media" . ,(vconcat ids)) ("option" . "add"))))
-     (when idle
-       (aio-await (supersonic-music-assistant-player--send target "player_queues/play"))))
-   (aio-await (supersonic-music-assistant-player--poll))))
+(aio-defun supersonic-music-assistant-player--enqueue (target ids)
+  "Add IDS to the queue of TARGET.
+Start playing if the queue was empty or played to its end."
+  (supersonic--with-async-error-handling nil "enqueue on the Music Assistant player"
+    (aio-await (supersonic-music-assistant-player--poll))
+    (let* ((snapshot (supersonic-music-assistant-player--snapshot))
+           (idle (or (null (plist-get snapshot :entries)) (plist-get snapshot :ended))))
+      (aio-await (supersonic-music-assistant-player--send
+                  target "player_queues/play_media"
+                  `(("media" . ,(vconcat ids)) ("option" . "add"))))
+      (when idle
+        (aio-await (supersonic-music-assistant-player--send target "player_queues/play"))))
+    (aio-await (supersonic-music-assistant-player--poll))))
 
 (defun supersonic-music-assistant-player-enqueue (ids)
-  "Add IDS to the player's queue, playing them if nothing is left to play.
-With no player selected, offers one first; see
-`supersonic-music-assistant-player--with-chosen-target'."
+  "Add IDS to the player's queue.
+Start playing if the queue was empty or played to its end."
   (supersonic-music-assistant-player--with-chosen-target
    "enqueue on the Music Assistant player" "Enqueueing on %s"
    (lambda (target) (supersonic-music-assistant-player--enqueue target ids))))
 
 (defun supersonic-music-assistant-player-toggle-play ()
-  "Toggle the player between playing and paused."
+  "Pause or resume the player."
   (ignore
    (supersonic-music-assistant-player--run
     (supersonic-music-assistant-player--target) "toggle Music Assistant playback" "player_queues/play_pause")))
@@ -350,39 +303,29 @@ With no player selected, offers one first; see
     (supersonic-music-assistant-player--target) "skip to the next Music Assistant track" "player_queues/next")))
 
 (defun supersonic-music-assistant-player-prev ()
-  "Go back to the previous entry in the player's queue.
-As MA's own previous: more than a few seconds into an entry, it starts
-that entry over instead."
+  "Go back to the previous entry, or to the start of the current one."
   (ignore
    (supersonic-music-assistant-player--run
     (supersonic-music-assistant-player--target) "skip to the previous Music Assistant track" "player_queues/previous")))
 
 (defun supersonic-music-assistant-player-stop ()
-  "Stop the player.
-Does nothing with no player or no server, so that
-`supersonic-playback-switch-backend' can still switch away."
+  "Stop the player, if one is selected."
   (let ((target (ignore-error user-error (supersonic-music-assistant-player--target))))
     (when target
       (ignore
        (supersonic-music-assistant-player--run target "stop the Music Assistant player" "player_queues/stop")))))
 
-(aio-defun
- supersonic-music-assistant-player--seek-to (target position)
- "Seek TARGET's current entry to POSITION seconds, then say it moved.
-POSITION is clamped to the current entry's duration, past which MA
-refuses to seek."
- (supersonic--with-async-error-handling nil "seek the Music Assistant player"
-   (let ((duration (plist-get (supersonic-music-assistant-player--snapshot) :duration)))
-     (aio-await (supersonic-music-assistant-player--send
-                 target "player_queues/seek"
-                 `(("position" . ,(max 0 (round (if duration (min position duration) position))))))))
-   (aio-await (supersonic-poller-finish-seek supersonic-music-assistant-player--poller))))
+(aio-defun supersonic-music-assistant-player--seek-to (target position)
+  "Seek TARGET's current entry to POSITION seconds."
+  (supersonic--with-async-error-handling nil "seek the Music Assistant player"
+    (let ((duration (plist-get (supersonic-music-assistant-player--snapshot) :duration)))
+      (aio-await (supersonic-music-assistant-player--send
+                  target "player_queues/seek"
+                  `(("position" . ,(max 0 (round (if duration (min position duration) position))))))))
+    (aio-await (supersonic-poller-finish-seek supersonic-music-assistant-player--poller))))
 
 (defun supersonic-music-assistant-player-seek (offset)
-  "Seek OFFSET seconds relative to the player's current position.
-OFFSET is added to the position counted on from the latest poll,
-not left to MA's `skip', whose position may be seconds old.  Signals a
-`user-error' before any poll found a position to seek from."
+  "Seek OFFSET seconds from the player's current position."
   (let ((target (supersonic-music-assistant-player--target))
         (position (supersonic-music-assistant-player--position)))
     (unless position
@@ -390,9 +333,7 @@ not left to MA's `skip', whose position may be seconds old.  Signals a
     (ignore (supersonic-music-assistant-player--seek-to target (+ position offset)))))
 
 (defun supersonic-music-assistant-player-seek-fraction (fraction)
-  "Seek to FRACTION (0.0 to 1.0) of the way through the player's current entry.
-Of the duration the latest poll found.  Signals a `user-error' if it
-found none, as MA cannot seek within an entry of unknown duration."
+  "Seek the player to FRACTION, between 0.0 and 1.0, of the current entry."
   (let ((target (supersonic-music-assistant-player--target))
         (duration (plist-get (supersonic-music-assistant-player--snapshot) :duration)))
     (unless duration
@@ -404,23 +345,19 @@ found none, as MA cannot seek within an entry of unknown duration."
 ;;;
 
 (defun supersonic-music-assistant-player--selectable (players)
-  "Return those of PLAYERS, as `players/all' answers, a queue can play on.
-The enabled and available ones.  Those MA's own client hides are kept:
-that includes the web player of a browser, which MA's web UI hides
-from every other browser, and which may well be what is listening."
+  "Return the enabled and available ones of PLAYERS."
   (seq-filter (lambda (player)
                 (and (assoc-default "enabled" player)
                      (assoc-default "available" player)))
               players))
 
 (defun supersonic-music-assistant-player--name (player)
-  "Return the name MA shows for PLAYER, as `players/all' answers it."
+  "Return the display name of PLAYER."
   (or (assoc-default "display_name" player) (assoc-default "name" player) (assoc-default "player_id" player)))
 
 (defun supersonic-music-assistant-player--choices (players)
-  "Return PLAYERS as a completion alist of label to (:id ID :name NAME).
-The label is the player's name, followed by its id where two players
-share a name."
+  "Return a completion alist of PLAYERS' names to (:id ID :name NAME).
+Names shared by several players get the id appended."
   (let ((names (mapcar #'supersonic-music-assistant-player--name players)))
     (mapcar (lambda (player)
               (let ((name (supersonic-music-assistant-player--name player))
@@ -431,73 +368,53 @@ share a name."
                       (list :id id :name name))))
             players)))
 
-(aio-defun
- supersonic-music-assistant-player--choose (connection then &optional sole-format)
- "Choose a player on the server at CONNECTION, then call THEN with its target.
-Offers the server's selectable players by name.  The choice becomes
-`supersonic-music-assistant-player' for this session, THEN is called
-with what a command is now sent to, as
-`supersonic-music-assistant-player--target' returns it, and the
-promise it returns, if any, awaited.  Saving the choice for future
-sessions is offered after; see `supersonic-playback-offer-to-save'.
+(aio-defun supersonic-music-assistant-player--choose (connection then &optional sole-format)
+  "Let the user choose a player at CONNECTION, then call THEN with its target.
+The choice is set for this session; saving it is offered afterwards.
+If SOLE-FORMAT is non-nil and there is only one player, take it
+without asking and show SOLE-FORMAT with its name.  Resolve to the
+chosen (:id ID :name NAME), or nil if none was chosen."
+  (let ((choices (supersonic-music-assistant-player--choices
+                  (supersonic-music-assistant-player--selectable
+                   (aio-await (supersonic-music-assistant--send connection "players/all"))))))
+    (unless choices
+      (user-error "Music Assistant at %s has no player available" (car connection)))
+    (let* ((sole (and sole-format (null (cdr choices))))
+           (player (if sole
+                       (cdar choices)
+                     (cdr (assoc (completing-read "Music Assistant player: " choices nil t) choices))))
+           (name (plist-get player :name)))
+      (if (not player)
+          (ignore (message "No Music Assistant player chosen"))
+        (customize-set-variable 'supersonic-music-assistant-player player)
+        ;; Before THEN, so that a failure it reports is what shows last.
+        (when sole
+          (message sole-format name))
+        (aio-await (funcall then (cons (plist-get player :id) connection)))
+        (unless sole
+          (supersonic-playback-offer-to-save 'supersonic-music-assistant-player "Music Assistant player" name))
+        player))))
 
-With SOLE-FORMAT, a server with only one player available has that
-one taken without asking, and SOLE-FORMAT shown with its name instead
--- nor is saving it offered, as it would be taken again next time.
-
-Resolves to the player chosen, as (:id ID :name NAME).  Resolves to
-nil, leaving the player unset and THEN uncalled, if the choice is
-left empty, and says so -- a command that enqueued may already have
-said it added the tracks.  Signals a `user-error' if the server has
-no player available."
- (let ((choices (supersonic-music-assistant-player--choices
-                 (supersonic-music-assistant-player--selectable
-                  (aio-await (supersonic-music-assistant--send connection "players/all"))))))
-   (unless choices
-     (user-error "Music Assistant at %s has no player available" (car connection)))
-   (let* ((sole (and sole-format (null (cdr choices))))
-          (player (if sole
-                      (cdar choices)
-                    (cdr (assoc (completing-read "Music Assistant player: " choices nil t) choices))))
-          (name (plist-get player :name)))
-     (if (not player)
-         (ignore (message "No Music Assistant player chosen"))
-       (customize-set-variable 'supersonic-music-assistant-player player)
-       ;; Before THEN, so that a failure it reports is what shows last.
-       (when sole
-         (message sole-format name))
-       (aio-await (funcall then (cons (plist-get player :id) connection)))
-       (unless sole
-         (supersonic-playback-offer-to-save 'supersonic-music-assistant-player "Music Assistant player" name))
-       player))))
-
-(aio-defun
- supersonic-music-assistant-player--choose-then (connection description sole-format action)
- "Choose a player on the server at CONNECTION, then call ACTION with its target.
-See `supersonic-music-assistant-player--choose', which SOLE-FORMAT is
-passed on to.  A failure is reported as failing to DESCRIPTION.  For
-`supersonic-music-assistant-player--with-chosen-target', whose
-command has returned by the time anything here can fail."
- (supersonic--with-async-error-handling nil description
-   (aio-await (supersonic-music-assistant-player--choose connection action sole-format))))
+(aio-defun supersonic-music-assistant-player--choose-then (connection description sole-format action)
+  "Choose a player at CONNECTION, then call ACTION with its target.
+See `supersonic-music-assistant-player--choose' for SOLE-FORMAT.
+Report a failure as failing to DESCRIPTION."
+  (supersonic--with-async-error-handling nil description
+    (aio-await (supersonic-music-assistant-player--choose connection action sole-format))))
 
 ;; An explicit cookie: the autoloads generator does not know `aio-defun'
 ;; and would copy the whole definition, which fails to load without aio.
 ;;;###autoload (autoload 'supersonic-music-assistant-select-player "supersonic-music-assistant-player" nil t)
-(aio-defun
- supersonic-music-assistant-select-player ()
- "Select the Music Assistant player the `music-assistant' backend plays on.
-Offers the players the server has by name.  The choice becomes
-`supersonic-music-assistant-player' for this session, and is saved
-for future ones only if confirmed: saving writes to `custom-file', or
-to the init file without one, which not everyone wants touched."
- (interactive)
- (supersonic--with-async-error-handling nil "select a Music Assistant player"
-   (aio-await (supersonic-music-assistant-player--choose
-               (supersonic-music-assistant--connection)
-               (aio-lambda (_target)
-                 (when (eq supersonic-playback-backend 'music-assistant)
-                   (aio-await (supersonic-music-assistant-player--poll))))))))
+(aio-defun supersonic-music-assistant-select-player ()
+  "Select the Music Assistant player the `music-assistant' backend plays on.
+The choice applies to this session; you are asked whether to save it."
+  (interactive)
+  (supersonic--with-async-error-handling nil "select a Music Assistant player"
+    (aio-await (supersonic-music-assistant-player--choose
+                (supersonic-music-assistant--connection)
+                (aio-lambda (_target)
+                  (when (eq supersonic-playback-backend 'music-assistant)
+                    (aio-await (supersonic-music-assistant-player--poll))))))))
 
 (supersonic-poller-register 'supersonic-music-assistant-player--poller)
 

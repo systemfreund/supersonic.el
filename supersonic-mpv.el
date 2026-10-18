@@ -20,17 +20,10 @@
 
 ;;; Commentary:
 
-;; mpv process/IPC layer for supersonic.el: starting and talking to an
-;; idle mpv instance over its JSON IPC socket, dispatching replies and
-;; events, and the handful of playback operations that are thin wrappers
-;; around it, which it registers with the backend facade in
-;; `supersonic-playback.el' under the name `mpv'.
-;;
-;; This file knows nothing about supersonic.el's buffers: it reports
-;; changes through the facade's hooks.  Nor does it know
-;; how to reach a track: it streams whatever URL
-;; `supersonic-provider-stream-url' resolves to, so it plays for any
-;; provider that implements `stream-url'.
+;; The `mpv' playback backend: plays in a local mpv process, driven
+;; over its JSON IPC socket.  It streams the URLs from
+;; `supersonic-provider-stream-url', so it plays for any provider
+;; implementing `stream-url'.
 
 ;;; Code:
 (require 'cl-lib)
@@ -45,41 +38,34 @@
 
 (defvar supersonic-mpv--process nil)
 (defvar supersonic-mpv--socket nil
-  "The network process connected to mpv's `--input-ipc-server' socket.
-Replies are matched to requests via `supersonic-mpv--pending-requests'.")
+  "The connection to mpv's IPC socket.")
 (defvar supersonic-mpv--socket-buffer ""
-  "Bytes read from the mpv IPC socket that don't yet form a complete line.
-See `supersonic--mpv-socket-filter'.")
+  "Output from mpv's IPC socket not yet ending in a newline.")
 
 (defvar supersonic-mpv--entry-counter 0
-  "Client-side mirror of the mpv playlist entry id mpv will assign next.
-mpv numbers `loadfile's in the order they are sent, and nothing else
-writes to the socket, so the id can be predicted rather than read back.")
+  "The id of the playlist entry mpv created last.
+mpv numbers entries in the order they are loaded, so the next id is
+known in advance.")
 
 (defvar supersonic--playlist (make-hash-table)
-  "Map of mpv playlist entry id (integer) to supersonic track id (string).
-Filled by `supersonic--mpv-load-track'.")
+  "Map of mpv playlist entry id to track id.")
 
 (defvar supersonic-mpv--pending-load nil
-  "Promise of the most recently requested load into mpv, or nil.
-Stream URLs are resolved asynchronously, so each load waits for the
-one before it, and loads land in the order they were asked for.")
+  "Promise of the last requested load into mpv, or nil.
+Each load waits for the previous one, so they happen in order.")
 
 (defvar supersonic-mpv--load-generation 0
-  "Bumped by `supersonic-mpv-kill' to drop loads still resolving URLs.
-A load that finds this changed gives up rather than starting mpv again
-right after it was stopped.")
+  "Counter incremented by `supersonic-mpv-kill'.
+A pending load that sees it change is dropped.")
 
 (defvar supersonic-mpv--request-counter 0
-  "Counter for `supersonic-mpv-command-with-callback' request_ids.")
+  "The request_id of the last mpv command sent with a callback.")
 
 (defvar supersonic-mpv--pending-requests (make-hash-table)
-  "Map of in-flight request_id (integer) to the callback awaiting its reply.")
+  "Map of request_id to the callback awaiting its reply.")
 
 (defvar supersonic--paused nil
-  "Non-nil if mpv currently reports its \"pause\" property as true.
-Kept in sync by the `observe_property' in
-`supersonic-mpv-ensure-running', so it costs no round trip.")
+  "Non-nil if mpv is paused.")
 
 ;;;###autoload
 (defun supersonic-mpv-kill ()
@@ -104,13 +90,11 @@ Kept in sync by the `observe_property' in
   (run-hooks 'supersonic-playback-track-change-hook))
 
 (defun supersonic-mpv-live-p ()
-  "Return non-nil if inferior mpv is running."
+  "Return non-nil if mpv is running."
   (and supersonic-mpv--process (eq (process-status supersonic-mpv--process) 'run)))
 
 (defun supersonic-mpv-ensure-running ()
-  "Make sure mpv is running as an idle player, starting it if necessary.
-Does nothing if mpv is already running, so it is safe to call before
-every play/enqueue action."
+  "Start mpv as an idle player unless it is running."
   (when (eq system-type 'windows-nt)
     (user-error
      "Supersonic talks to mpv over a Unix-domain socket, which native
@@ -145,24 +129,19 @@ Windows does not support; this is not implemented for windows-nt"))
              :family 'local
              :service socket
              :filter #'supersonic--mpv-socket-filter
-             ;; Notice mpv hanging up as early as possible, see
-             ;; `supersonic-mpv--send'.
              :sentinel
              (lambda (process _event)
                (unless (process-live-p process)
                  (setq supersonic-mpv--socket nil)))))
-      ;; Follow pause/resume, whoever triggered it.  mpv answers with the
-      ;; current value right away, which also seeds `supersonic--paused'.
+      ;; Keeps `supersonic--paused' up to date.
       (supersonic-mpv-command "observe_property" 2 "pause")))
   t)
 
 (defun supersonic--mpv-load-track (id url flag)
-  "Load supersonic track ID, streamed from URL, into mpv using loadfile FLAG.
-Records the entry id mpv will assign in `supersonic--playlist'.  If
-the command cannot be sent, that is rolled back and an error signalled,
-so `supersonic-mpv--entry-counter' never runs ahead of mpv.  URL goes
-over the socket, not the command line, keeping credentials out of the
-process list."
+  "Load track ID into mpv from URL with `loadfile' FLAG.
+Record the new entry in `supersonic--playlist'.  Signal an error if
+mpv isn't running.  The URL is sent over the socket so that the
+credentials in it stay out of the process list."
   (let ((entry-id (1+ supersonic-mpv--entry-counter)))
     (puthash entry-id id supersonic--playlist)
     (if (supersonic-mpv-command "loadfile" url flag)
@@ -171,49 +150,42 @@ process list."
         (remhash entry-id supersonic--playlist)
         (error "Failed to load track %s: mpv is not running" id)))))
 
-(aio-defun
- supersonic-mpv--stream-urls (ids)
- "Return a promise resolving to the stream URLs of IDS, in the same order.
-All are asked for at once, not one after the other."
- (let ((promises (mapcar #'supersonic-provider-stream-url ids))
-       (urls nil))
-   (dolist (promise promises)
-     (push (aio-await promise) urls))
-   (nreverse urls)))
+(aio-defun supersonic-mpv--stream-urls (ids)
+  "Return a promise resolving to the stream URLs of IDS."
+  (let ((promises (mapcar #'supersonic-provider-stream-url ids))
+        (urls nil))
+    (dolist (promise promises)
+      (push (aio-await promise) urls))
+    (nreverse urls)))
 
-(aio-defun
- supersonic-mpv--load-after (previous ids flags then)
- "Load IDS into mpv once PREVIOUS, the load before, is done.
-FLAGS is the `loadfile' flag for the first of IDS consed onto the flag
-for the rest; THEN is called with no arguments once all are loaded.
-Resolves the stream URLs first, so a failure leaves mpv untouched.
-Failures are reported rather than signalled: nobody awaits this, and
-the load after it must not see it reject."
- (let ((generation supersonic-mpv--load-generation))
-   (condition-case err
-       (let ((urls (aio-await (supersonic-mpv--stream-urls ids))))
-         (when previous
-           (aio-await previous))
-         (when (= generation supersonic-mpv--load-generation)
-           (supersonic-mpv-ensure-running)
-           (supersonic--mpv-load-track (car ids) (car urls) (car flags))
-           (cl-mapc
-            (lambda (id url) (supersonic--mpv-load-track id url (cdr flags)))
-            (cdr ids) (cdr urls))
-           (funcall then)))
-     (error
-      (message "[Supersonic] Failed to play: %s" (error-message-string err))))))
+(aio-defun supersonic-mpv--load-after (previous ids flags then)
+  "Load IDS into mpv once PREVIOUS, the previous load, is done.
+FLAGS is a cons of the `loadfile' flags for the first and the other
+ids.  THEN is called after loading.  Errors are reported, not
+signaled."
+  (let ((generation supersonic-mpv--load-generation))
+    (condition-case err
+        (let ((urls (aio-await (supersonic-mpv--stream-urls ids))))
+          (when previous
+            (aio-await previous))
+          (when (= generation supersonic-mpv--load-generation)
+            (supersonic-mpv-ensure-running)
+            (supersonic--mpv-load-track (car ids) (car urls) (car flags))
+            (cl-mapc
+             (lambda (id url) (supersonic--mpv-load-track id url (cdr flags)))
+             (cdr ids) (cdr urls))
+            (funcall then)))
+      (error
+       (message "[Supersonic] Failed to play: %s" (error-message-string err))))))
 
 (defun supersonic-mpv--load (ids flags then)
-  "Queue up loading IDS into mpv behind every load requested before.
-FLAGS and THEN are as for `supersonic-mpv--load-after'.  Returns a
-promise resolving once the load is done or has failed."
+  "Load IDS into mpv after all loads requested before.
+FLAGS and THEN are as for `supersonic-mpv--load-after'.  Return a
+promise resolving when done."
   (setq supersonic-mpv--pending-load (supersonic-mpv--load-after supersonic-mpv--pending-load ids flags then)))
 
 (defun supersonic-mpv-start (ids)
-  "Replace the current mpv queue with IDS and start playing.
-Returns before they reach mpv.  Unpauses, since `loadfile ... replace'
-leaves mpv's `pause' as it was."
+  "Replace mpv's playlist with IDS and start playing."
   (when ids
     (supersonic-mpv--load
      ids '("replace" . "append")
@@ -224,8 +196,7 @@ leaves mpv's `pause' as it was."
 
 ;;;###autoload
 (defun supersonic-mpv-enqueue (ids)
-  "Append IDS to the end of the current mpv queue.
-Starts playback if mpv is idle.  Returns before they reach mpv."
+  "Append IDS to mpv's playlist, starting playback if mpv is idle."
   (when ids
     (supersonic-mpv--load
      ids '("append-play" . "append-play")
@@ -235,7 +206,7 @@ Starts playback if mpv is idle.  Returns before they reach mpv."
   nil)
 
 (defun supersonic--mpv-handle-message (parsed-response)
-  "Handle PARSED-RESPONSE, one message parsed from mpv's IPC socket."
+  "Handle PARSED-RESPONSE, a message from mpv: a reply or an event."
   (let* ((request-id (alist-get 'request_id parsed-response))
          (callback (and request-id (gethash request-id supersonic-mpv--pending-requests))))
     (cond
@@ -246,11 +217,10 @@ Starts playback if mpv is idle.  Returns before they reach mpv."
       (let ((event (alist-get 'event parsed-response)))
         (when (member event '("start-file" "end-file"))
           (run-hooks 'supersonic-playback-track-change-hook))
-        ;; Only once `playback-restart' comes, not `seek', does
-        ;; `time-pos' read the position sought to.
+        ;; Not `seek': only after `playback-restart' is `time-pos' updated.
         (when (string-equal event "playback-restart")
           (run-hooks 'supersonic-playback-position-change-hook))
-        ;; Compare against t: `json-read' turns false into `:json-false'.
+        ;; false is read as `:json-false'.
         (when (and (string-equal event "property-change") (string-equal (alist-get 'name parsed-response) "pause"))
           (setq supersonic--paused (eq (alist-get 'data parsed-response) t))
           (run-hooks 'supersonic-playback-state-change-hook))
@@ -263,10 +233,7 @@ Starts playback if mpv is idle.  Returns before they reach mpv."
            (gethash (alist-get 'playlist_entry_id parsed-response) supersonic--playlist) t))))))))
 
 (defun supersonic--mpv-socket-filter (_ output)
-  "Filter the mpv socket connection.
-OUTPUT is the latest chunk read from mpv's IPC socket, which need not
-end on a whole message; the rest is kept in
-`supersonic-mpv--socket-buffer' until it does."
+  "Process OUTPUT from mpv's IPC socket, one line per message."
   (setq supersonic-mpv--socket-buffer (concat supersonic-mpv--socket-buffer output))
   (let ((lines (split-string supersonic-mpv--socket-buffer "\n")))
     (setq supersonic-mpv--socket-buffer (car (last lines)))
@@ -274,11 +241,7 @@ end on a whole message; the rest is kept in
       (supersonic--mpv-handle-message parsed-response))))
 
 (defun supersonic-mpv--send (string)
-  "Write STRING to the mpv IPC socket, returning non-nil on success.
-A dead socket or a `file-error' on writing counts as mpv having gone
-away.  That narrows, but cannot close, the race against mpv exiting
-mid-command: a SIGPIPE during the write itself is not a Lisp error
-\(#15)."
+  "Send STRING to mpv's IPC socket.  Return non-nil on success."
   (and (process-live-p supersonic-mpv--socket)
        (condition-case nil
            (progn
@@ -290,17 +253,16 @@ mid-command: a SIGPIPE during the write itself is not a Lisp error
           nil))))
 
 (defun supersonic-mpv-command (&rest args)
-  "Generate a mpv ipc command using ARGS.
-Returns non-nil if the command was sent, nil if mpv is not running."
+  "Send the mpv command ARGS.
+Return non-nil if it was sent, nil if mpv isn't running."
   (if (supersonic-mpv--send (concat (json-encode (list (cons 'command (apply #'vector args)))) "\n"))
       t
     (message "MPV not running")
     nil))
 
 (defun supersonic-mpv-command-with-callback (callback &rest args)
-  "Send an mpv IPC command built from ARGS, calling CALLBACK with its reply.
-CALLBACK gets the full parsed reply.  Returns non-nil if the command
-was sent, nil if mpv is not running, in which case CALLBACK is dropped."
+  "Send the mpv command ARGS, calling CALLBACK with the reply.
+Return non-nil if it was sent, nil if mpv isn't running."
   (let ((request-id (1+ supersonic-mpv--request-counter)))
     (puthash request-id callback supersonic-mpv--pending-requests)
     (if (supersonic-mpv--send
@@ -312,19 +274,18 @@ was sent, nil if mpv is not running, in which case CALLBACK is dropped."
       (message "MPV not running")
       nil)))
 
-(aio-defun
- supersonic-mpv-get-property (name)
- "Return a promise resolving to mpv's current value of property NAME.
-Resolves to nil if the request could not be sent."
- (let ((promise (aio-promise)))
-   (if (supersonic-mpv-command-with-callback (lambda (response)
-                                               (aio-resolve promise (lambda () (alist-get 'data response))))
-                                             "get_property" name)
-       (aio-await promise)
-     nil)))
+(aio-defun supersonic-mpv-get-property (name)
+  "Return a promise resolving to the value of mpv's property NAME.
+Resolve to nil if mpv isn't running."
+  (let ((promise (aio-promise)))
+    (if (supersonic-mpv-command-with-callback (lambda (response)
+                                                (aio-resolve promise (lambda () (alist-get 'data response))))
+                                              "get_property" name)
+        (aio-await promise)
+      nil)))
 
 (defun supersonic-mpv-toggle-play ()
-  "Toggle playing/paused state in mpv."
+  "Pause or resume mpv."
   (supersonic-mpv-command "cycle" "pause"))
 
 (defun supersonic-mpv-next ()
@@ -340,28 +301,24 @@ Resolves to nil if the request could not be sent."
   (supersonic-mpv-command "seek" (number-to-string offset) "relative"))
 
 (defun supersonic-mpv-seek-fraction (fraction)
-  "Seek mpv to FRACTION (0.0 to 1.0) of the way through the current track."
+  "Seek mpv to FRACTION, between 0.0 and 1.0, of the current track."
   (supersonic-mpv-command "seek" (number-to-string (* fraction 100)) "absolute-percent"))
 
-(aio-defun
- supersonic-mpv-queue ()
- "Return a promise resolving to mpv's playlist as generic queue entries.
-The mpv side of `supersonic-playback-queue'."
- (mapcar
-  (lambda (item)
-    (list :track-id (gethash (alist-get 'id item) supersonic--playlist) :current (and (alist-get 'current item) t)))
-  (aio-await (supersonic-mpv-get-property "playlist"))))
+(aio-defun supersonic-mpv-queue ()
+  "Return a promise resolving to mpv's playlist as queue entries."
+  (mapcar
+   (lambda (item)
+     (list :track-id (gethash (alist-get 'id item) supersonic--playlist) :current (and (alist-get 'current item) t)))
+   (aio-await (supersonic-mpv-get-property "playlist"))))
 
-(aio-defun
- supersonic-mpv-status (key)
- "Return a promise resolving to mpv's current value for status KEY.
-The mpv side of `supersonic-playback-status'."
- (pcase key
-   ('paused supersonic--paused)
-   ('position (aio-await (supersonic-mpv-get-property "time-pos")))
-   ('track-id
-    (let ((entry (seq-find (lambda (e) (plist-get e :current)) (aio-await (supersonic-mpv-queue)))))
-      (and entry (plist-get entry :track-id))))))
+(aio-defun supersonic-mpv-status (key)
+  "Return a promise resolving to mpv's value for the status KEY."
+  (pcase key
+    ('paused supersonic--paused)
+    ('position (aio-await (supersonic-mpv-get-property "time-pos")))
+    ('track-id
+     (let ((entry (seq-find (lambda (e) (plist-get e :current)) (aio-await (supersonic-mpv-queue)))))
+       (and entry (plist-get entry :track-id))))))
 
 (supersonic-playback-register-backend
  'mpv
