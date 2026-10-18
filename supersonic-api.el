@@ -34,9 +34,6 @@
 (require 'aio)
 (require 'supersonic-custom)
 
-;; Ahead of `supersonic-auth-function': a saved value of it calling
-;; `supersonic-cached' is evaluated as that `defcustom' runs.
-
 (defvar supersonic--credentials-cache (make-hash-table :test #'equal)
   "What the functions `supersonic-cached' returned have kept.
 Keyed by (ID . SERVER), ID telling those functions apart; each value
