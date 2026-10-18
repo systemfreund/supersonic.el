@@ -187,11 +187,11 @@ See `supersonic-now-playing-animate-art-overlay-scroll'."
 
 (defcustom supersonic-provider 'subsonic
   "The library provider supersonic.el browses.
-A symbol registered with `supersonic-provider-register'.  `subsonic'
-is built in; `music-assistant' needs `supersonic-music-assistant'
-loaded."
+A symbol registered with `supersonic-provider-register'.  The
+providers shipped with supersonic.el, `subsonic' and
+`music-assistant', are loaded on first use."
   :type '(choice (const :tag "Subsonic-compatible server" subsonic)
-                 (const :tag "Music Assistant server (load supersonic-music-assistant first)" music-assistant)
+                 (const :tag "Music Assistant server" music-assistant)
                  (symbol :tag "Other registered provider"))
   :group 'supersonic)
 
@@ -222,11 +222,16 @@ Changes made elsewhere show up within this interval."
 
 (defcustom supersonic-playback-backend 'mpv
   "The playback backend supersonic.el plays with.
-A symbol registered with `supersonic-playback-register-backend'.
-`mpv' is built in.  Not every backend can play for every
-`supersonic-provider'; `supersonic-playback-switch-backend' offers
-the ones that can."
-  :type '(choice (const :tag "Local mpv process" mpv) (symbol :tag "Other registered backend"))
+A symbol registered with `supersonic-playback-register-backend'.  The
+backends shipped with supersonic.el, `mpv', `jukebox', `upnp' and
+`music-assistant', are loaded on first use.  Not every backend can
+play for every `supersonic-provider'; `supersonic-playback-switch-backend'
+offers the ones that can."
+  :type '(choice (const :tag "Local mpv process" mpv)
+                 (const :tag "Subsonic server's jukebox" jukebox)
+                 (const :tag "UPnP/DLNA renderer" upnp)
+                 (const :tag "Music Assistant player" music-assistant)
+                 (symbol :tag "Other registered backend"))
   :group 'supersonic)
 
 (defcustom supersonic-mpv-timeout 0.5

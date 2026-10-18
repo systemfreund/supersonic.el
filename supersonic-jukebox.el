@@ -21,8 +21,8 @@
 ;;; Commentary:
 
 ;; Playback backend that plays on the Subsonic server's jukebox, out
-;; of the server's speakers.  Load this file and set
-;; `supersonic-playback-backend' to `jukebox'.
+;; of the server's speakers.  Set `supersonic-playback-backend' to
+;; `jukebox'; this file is loaded on first use.
 ;;
 ;; The jukebox is polled, see `supersonic-poller.el'.  Servers don't
 ;; scrobble jukebox playback, so track changes are scrobbled here.

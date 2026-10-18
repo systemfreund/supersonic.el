@@ -21,9 +21,9 @@
 ;;; Commentary:
 
 ;; The Music Assistant library provider, registered as
-;; `music-assistant'.  Enable it with:
+;; `music-assistant'.  It is loaded on first use, so selecting it is
+;; enough:
 ;;
-;;   (require 'supersonic-music-assistant)
 ;;   (setq supersonic-provider 'music-assistant)
 ;;
 ;; It uses the server's JSON-RPC endpoint `/api', authenticated with a

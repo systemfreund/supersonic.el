@@ -1,7 +1,8 @@
 # supersonic.el
 
 [![CI](https://github.com/systemfreund/supersonic.el/actions/workflows/ci.yml/badge.svg)](https://github.com/systemfreund/supersonic.el/actions/workflows/ci.yml)
-<!-- [![MELPA](https://melpa.org/packages/supersonic-badge.svg)](https://melpa.org/#/supersonic) -->
+[![MELPA](https://melpa.org/packages/supersonic-badge.svg)](https://melpa.org/#/supersonic)
+[![MELPA Stable](https://stable.melpa.org/packages/supersonic-badge.svg)](https://stable.melpa.org/#/supersonic)
 
 A music client for Emacs: browse your library's artists, albums,
 album lists and podcasts, search it, and play it locally or on the
@@ -43,19 +44,33 @@ Based on [subsonic.el](https://git.sr.ht/~amk/subsonic.el)
 
 ## Installation
 
-~The package is available on melpa as `supersonic`~ (not available, yet. Please clone the repository instead.)
+supersonic is available on [MELPA](https://melpa.org/#/supersonic)
+(and [MELPA Stable](https://stable.melpa.org/#/supersonic) for tagged
+releases) as `supersonic`. With MELPA among your `package-archives`,
+install it with `M-x package-install RET supersonic RET`, which also
+pulls in its dependencies [aio](https://github.com/skeeto/emacs-aio)
+and [transient](https://github.com/magit/transient). Local playback
+additionally needs [mpv](https://mpv.io/) on your `PATH`.
 
 Example use-package config, for a Subsonic server played with mpv:
 
 ```elisp
 (use-package supersonic
-  :load-path "~/src/supersonic.el" ;; clone the repository here
+  :ensure t
   :commands supersonic
   :bind (("C-c m" . supersonic))
   :custom
   (supersonic-host "https://mysubsonicserver:4355") ;; see "Connecting to a Subsonic server"
   (supersonic-enable-scrobbling t))
 ```
+
+To run it from a clone of this repository instead, install aio
+yourself and replace `:ensure t` with
+`:load-path "~/src/supersonic.el"`. A clone has no generated
+autoloads, so commands outside `supersonic.el` itself --
+`supersonic-mpris-mode`, `supersonic-upnp-select-renderer` and
+`supersonic-music-assistant-select-player` -- need a `require` of
+their file first, e.g. `(require 'supersonic-mpris)`.
 
 The sections below show what to add for the other backends and for
 Music Assistant. Use the `supersonic` command to open a transient
@@ -96,16 +111,13 @@ today is Subsonic.
 
 `supersonic-jukebox.el` plays back through the Subsonic server's own
 remote jukebox instead of a local mpv process, so tracks play out of
-the server's own speakers. It is not loaded or activated automatically,
-and supersonic.el has no dependency on it. Enable it explicitly and
-select it as the active backend:
+the server's own speakers. Select it as the active backend, and it is
+loaded the first time it is used:
 
 ```elisp
 (use-package supersonic
   :custom
-  (supersonic-playback-backend 'jukebox)
-  :config
-  (require 'supersonic-jukebox))
+  (supersonic-playback-backend 'jukebox))
 ```
 
 The jukebox only plays for the `subsonic` provider, since only a
@@ -116,17 +128,16 @@ playback commands report that the two do not fit, and
 ### UPnP/DLNA
 
 `supersonic-upnp.el` plays to UPnP/DLNA renderers: AV receivers,
-network speakers, smart TVs. Like the jukebox, it is opt-in:
+network speakers, smart TVs. Like the jukebox, select it as the
+active backend:
 
 ```elisp
 (use-package supersonic
   :custom
-  (supersonic-playback-backend 'upnp)
-  :config
-  (require 'supersonic-upnp))
+  (supersonic-playback-backend 'upnp))
 ```
 
-or `M-x supersonic-playback-switch-backend` once it is loaded. Like
+or with `M-x supersonic-playback-switch-backend`. Like
 mpv, it plays for any provider that can name a URL to stream from.
 
 To pick the renderer to play to, run
@@ -199,15 +210,13 @@ Its only backend is the [Music Assistant player](#playing-on-a-music-assistant-p
 
 ### Connecting to Music Assistant
 
-The provider is opt-in:
+Select the provider and the server to browse:
 
 ```elisp
 (use-package supersonic
   :custom
   (supersonic-provider 'music-assistant)
-  (supersonic-music-assistant-url "http://192.168.1.10:8095")
-  :config
-  (require 'supersonic-music-assistant))
+  (supersonic-music-assistant-url "http://192.168.1.10:8095"))
 ```
 
 It needs a long-lived token, created in Music Assistant's web UI under
@@ -238,17 +247,14 @@ commands while Music Assistant is the active provider.
 `supersonic-music-assistant-player.el` plays on one of Music
 Assistant's players -- a speaker, a Chromecast, an AirPlay device, the
 web player in your browser -- the way the jukebox plays on a Subsonic
-server. It loads the provider too, so this replaces the `require`
-above:
+server. Select it as the backend as well:
 
 ```elisp
 (use-package supersonic
   :custom
   (supersonic-provider 'music-assistant)
   (supersonic-music-assistant-url "http://192.168.1.10:8095")
-  (supersonic-playback-backend 'music-assistant)
-  :config
-  (require 'supersonic-music-assistant-player))
+  (supersonic-playback-backend 'music-assistant))
 ```
 
 Pick the player with `M-x supersonic-music-assistant-select-player`,
@@ -457,13 +463,11 @@ the now-playing buffer.
 
 `supersonic-mpris.el` exposes supersonic.el's playback as an MPRIS
 player on the D-Bus session bus, so desktop environments and tools such
-as `playerctl` can see and control it. It is not loaded or activated
-automatically, and supersonic.el has no dependency on it. Enable it
-explicitly:
+as `playerctl` can see and control it. It is not activated
+automatically. Enable it explicitly:
 
 ```elisp
 (use-package supersonic
   :config
-  (require 'supersonic-mpris)
   (supersonic-mpris-mode t))
 ```

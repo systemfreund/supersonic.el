@@ -20,31 +20,17 @@
 
 ;;; Commentary:
 
-;; The Music Assistant playback backend: plays on one of the
-;; Music Assistant (MA) server's own players -- speakers, Chromecasts,
-;; AirPlay devices, its web player -- the way `supersonic-jukebox.el'
-;; plays on a Subsonic server's jukebox.  Registers itself with the
-;; facade in `supersonic-playback.el' under the name `music-assistant',
-;; for the `music-assistant' provider only: the player's queue takes
-;; MA's item URIs, which only that provider hands out.  Opt-in, and
-;; loading it loads the provider too:
+;; Playback backend that plays on a Music Assistant player: a
+;; speaker, Chromecast, AirPlay device or web player.  It works with
+;; the `music-assistant' provider only, and is loaded on first use, so
+;; selecting both is enough:
 ;;
-;;   (require 'supersonic-music-assistant-player)
-;;   (setq supersonic-playback-backend 'music-assistant)
+;;   (setq supersonic-provider 'music-assistant
+;;         supersonic-playback-backend 'music-assistant)
 ;;
-;; The player is `supersonic-music-assistant-player', picked with
-;; `supersonic-music-assistant-select-player' -- or, with none picked
-;; yet, offered when playing or enqueueing, taking the server's only
-;; player without asking.  A player's queue has the player's id.
-;;
-;; MA's HTTP API pushes nothing, so the queue is polled through
-;; `supersonic-poller.el' while `music-assistant' is the active backend.
-;; Its entries, which carry whole media items, are only asked for when
-;; the queue's state says they may have changed; see
-;; `supersonic-music-assistant-player--items-key'.  Status, queue and
-;; liveness answer from what the latest poll found.
-;;
-;; No scrobbling: MA records play history itself.
+;; Select the player with `supersonic-music-assistant-select-player';
+;; if none is selected, you are asked when playing.  The player's
+;; queue is polled, see `supersonic-poller.el'.
 
 ;;; Code:
 
@@ -179,11 +165,6 @@ The entries are only fetched if they may have changed."
    :summarize #'supersonic-music-assistant-player--summarize
    :description "poll the Music Assistant player"))
 
-;; `defvar', so that re-evaluating this file keeps the poller and with
-;; it what polling found.  After changing the slots of
-;; `supersonic-poller', set this to
-;; (supersonic-music-assistant-player--make-poller) by hand before
-;; re-evaluating this file.
 (defvar supersonic-music-assistant-player--poller (supersonic-music-assistant-player--make-poller)
   "The poller of the selected player's queue.
 Its snapshot is a plist of `:items', the entries as (TRACK-ID . TRACK);
@@ -234,9 +215,7 @@ seconds as of `:polled-at'; `:duration'; `:items-key'; and
 ;;; The facade's playing operations
 ;;;
 
-;; Each is a plain function the facade fires and forgets, settling
-;; the player and the connection before handing the work to an
-;; `aio-defun' that reports its own errors, as the jukebox's do.
+;; Nobody awaits these, so each reports its own errors.
 
 (aio-defun supersonic-music-assistant-player--run (target description command &optional args)
   "Run queue COMMAND with ARGS on TARGET, then poll.
@@ -400,8 +379,7 @@ Report a failure as failing to DESCRIPTION."
   (supersonic--with-async-error-handling nil description
     (aio-await (supersonic-music-assistant-player--choose connection action sole-format))))
 
-;; An explicit cookie: the autoloads generator does not know `aio-defun'
-;; and would copy the whole definition, which fails to load without aio.
+;; Explicit, as the autoloads generator doesn't know `aio-defun'.
 ;;;###autoload (autoload 'supersonic-music-assistant-select-player "supersonic-music-assistant-player" nil t)
 (aio-defun supersonic-music-assistant-select-player ()
   "Select the Music Assistant player the `music-assistant' backend plays on.
@@ -416,8 +394,6 @@ The choice applies to this session; you are asked whether to save it."
 
 (supersonic-poller-register 'supersonic-music-assistant-player--poller)
 
-;; Only for the `music-assistant' provider: the queue takes MA's item
-;; URIs, and nothing but a Music Assistant server has its players.
 (supersonic-playback-register-backend
  'music-assistant
  '((start . supersonic-music-assistant-player-start)

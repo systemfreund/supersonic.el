@@ -205,6 +205,56 @@ loaded by this test suite."
       '("jukebox" "mpv" "music-assistant" "test-a" "upnp")
       (sort (mapcar #'symbol-name (supersonic-playback-backend-names)) #'string<)))))
 
+(defvar supersonic-tests--lazy-calls nil
+  "What the files written by `supersonic-tests--with-lazy-library' did.")
+
+(defmacro supersonic-tests--with-lazy-library (feature form &rest body)
+  "Run BODY with FEATURE on `load-path' as a file evaluating FORM.
+The file is written to a fresh directory and provides FEATURE.  BODY
+runs with the provider and backend registries copied, and FEATURE is
+dropped from `features' afterwards, so the next test loads it afresh
+and nothing it registered outlives BODY."
+  (declare (indent 2))
+  `(let* ((dir (make-temp-file "supersonic-tests-lazy-" t))
+          (load-path (cons dir load-path))
+          (supersonic-provider--providers (copy-hash-table supersonic-provider--providers))
+          (supersonic-playback--backends (copy-hash-table supersonic-playback--backends))
+          (supersonic-playback--compatibility (copy-hash-table supersonic-playback--compatibility))
+          (supersonic-tests--lazy-calls nil))
+     (unwind-protect
+         (progn
+           (with-temp-file (expand-file-name (format "%s.el" ,feature) dir)
+             (insert ";;; -*- lexical-binding: t; -*-\n")
+             (prin1 '(progn ,form (provide ,feature)) (current-buffer)))
+           ,@body)
+       (setq features (delq ,feature features))
+       (delete-directory dir t))))
+
+(ert-deftest supersonic-tests-playback-loads-a-known-backend-on-first-use ()
+  "A backend named in `supersonic-playback-backend-libraries' but not yet
+registered is loaded the first time it is dispatched to, so selecting
+it is all a user has to do."
+  (supersonic-tests--with-lazy-library 'supersonic-tests-lazy-backend
+      (supersonic-playback-register-backend
+       'lazy `((toggle-play . ,(lambda () (push 'toggled supersonic-tests--lazy-calls)))))
+    (let ((supersonic-playback-backend 'lazy)
+          (supersonic-playback-backend-libraries '((lazy . supersonic-tests-lazy-backend))))
+      (should-not (gethash 'lazy supersonic-playback--backends))
+      (supersonic-playback-toggle-play)
+      (should (equal '(toggled) supersonic-tests--lazy-calls)))))
+
+(ert-deftest supersonic-tests-playback-names-include-known-backends ()
+  "`supersonic-playback-backend-names' loads the known backends, so the
+switch command offers one nothing has used yet; an unknown name is
+still refused."
+  (supersonic-tests--with-lazy-library 'supersonic-tests-lazy-backend
+      (supersonic-playback-register-backend 'lazy '((stop . ignore)))
+    (let ((supersonic-playback-backend-libraries '((lazy . supersonic-tests-lazy-backend))))
+      (should (memq 'lazy (supersonic-playback-backend-names)))
+      (should (supersonic-playback-compatible-p 'lazy))
+      (let ((supersonic-playback-backend 'nonexistent))
+        (should-error (supersonic-playback-toggle-play) :type 'user-error)))))
+
 (ert-deftest supersonic-tests-switch-backend-stops-the-outgoing-backend ()
   "Switching backends calls `supersonic-playback-stop' against whichever
 backend was active *before* the switch -- so mpv gets killed / the
@@ -4299,6 +4349,40 @@ refresh's own error handling gets to show it -- and
     (condition-case err
         (aio-wait-for (supersonic-provider-search "x"))
       (user-error (should (string-match-p "does not support .search." (error-message-string err)))))))
+
+(ert-deftest supersonic-tests-provider-loads-a-known-provider-on-first-use ()
+  "A provider named in `supersonic-provider-libraries' but not yet
+registered is loaded the first time it is asked for anything, and is
+then among `supersonic-provider-names'."
+  (supersonic-tests--with-lazy-library 'supersonic-tests-lazy-provider
+      (supersonic-provider-register 'lazy `((artists . ,(supersonic-tests--resolved '((:id "ar/1"))))))
+    (let ((supersonic-provider 'lazy)
+          (supersonic-provider-libraries '((lazy . supersonic-tests-lazy-provider))))
+      (should-not (gethash 'lazy supersonic-provider--providers))
+      (should (supersonic-provider-supports-p 'artists))
+      (should (equal '((:id "ar/1")) (aio-wait-for (supersonic-provider-artists))))
+      (should (memq 'lazy (supersonic-provider-names))))))
+
+(ert-deftest supersonic-tests-provider-supports-p-survives-a-failing-load ()
+  "A provider library that fails to load makes
+`supersonic-provider-supports-p' answer nil rather than signal: it is
+asked while reporting other failures."
+  (supersonic-tests--with-lazy-library 'supersonic-tests-lazy-provider
+      (error "Boom")
+    (let ((supersonic-provider-libraries '((lazy . supersonic-tests-lazy-provider)))
+          (inhibit-message t))
+      (should-not (supersonic-provider-supports-p 'artists 'lazy)))))
+
+(ert-deftest supersonic-tests-provider-registered-p-loads-only-what-it-is-asked ()
+  "`supersonic-provider-registered-p' loads the provider it is asked
+about and no other, so the transient's predicates do not load every
+provider just to check the active one."
+  (supersonic-tests--with-lazy-library 'supersonic-tests-lazy-provider
+      (supersonic-provider-register 'lazy '())
+    (let ((supersonic-provider-libraries '((lazy . supersonic-tests-lazy-provider))))
+      (should-not (supersonic-provider-registered-p 'supersonic-tests-nobody))
+      (should-not (featurep 'supersonic-tests-lazy-provider))
+      (should (supersonic-provider-registered-p 'lazy)))))
 
 (ert-deftest supersonic-tests-provider-failing-hooks-are-logged-not-raised ()
   "A provider whose `cache-namespace' or `config-hints' signals still

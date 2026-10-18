@@ -1578,7 +1578,7 @@ the old provider."
        (when (equal answer "")
          (user-error "Kept the `%s' provider" supersonic-provider))
        (list (intern answer)))))
-  (unless (memq provider (supersonic-provider-names))
+  (unless (supersonic-provider-registered-p provider)
     (user-error "No library provider named `%s' is registered" provider))
   (let ((backend (or backend (supersonic-playback-backend-for-provider provider)))
         (provider-changes (not (eq provider supersonic-provider))))
@@ -1599,7 +1599,7 @@ the old provider."
   "Return non-nil if the transient should offer commands needing OPERATION.
 That is, if the active provider implements OPERATION or isn't
 registered; in the latter case the command reports the problem."
-  (or (not (memq supersonic-provider (supersonic-provider-names)))
+  (or (not (supersonic-provider-registered-p supersonic-provider))
       (supersonic-provider-supports-p operation)))
 
 (defun supersonic--offer-artists-p ()

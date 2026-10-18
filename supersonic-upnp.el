@@ -23,7 +23,7 @@
 ;; The `upnp' playback backend: plays to a UPnP MediaRenderer, such
 ;; as an AV receiver, network speaker or smart TV, by sending it stream
 ;; URLs over SOAP.  It works with any provider implementing
-;; `stream-url'.  Select the renderer with
+;; `stream-url', and is loaded on first use.  Select the renderer with
 ;; `supersonic-upnp-select-renderer'.
 ;;
 ;; Most renderers hold one track at a time, so the queue is kept here.
