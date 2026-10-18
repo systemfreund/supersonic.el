@@ -53,8 +53,8 @@
 
 (defconst supersonic-provider-operations
   '(artists artist-albums album-list album-tracks track search
-    podcasts podcast-episodes add-podcast download-podcast-episode
-    stream-url scrobble cover-art cover-art-url cache-namespace config-hints)
+            podcasts podcast-episodes add-podcast download-podcast-episode
+            stream-url scrobble cover-art cover-art-url cache-namespace config-hints)
   "The library operations a provider can implement.
 All but `scrobble', `cache-namespace' and `config-hints' return a
 promise.  Items are plists as described in the Commentary of

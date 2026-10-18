@@ -115,21 +115,21 @@ a poll sent before polling stopped is ignored."
             (error (setq failure err)))
           (when (eql generation (supersonic-poller-generation poller))
             (supersonic--with-async-error-handling nil "run the playback hooks"
-                                                   (if failure
-                                                       (progn
-                                                         (setf (supersonic-poller-live poller) nil)
-                                                         (when (supersonic-poller-on-failure poller)
-                                                           (funcall (supersonic-poller-on-failure poller)))
-                                                         (unless (supersonic-poller-failing poller)
-                                                           (setf (supersonic-poller-failing poller) t)
-                                                           (supersonic--report-async-error (supersonic-poller-description poller) failure)
-                                                           (run-hooks 'supersonic-playback-track-change-hook)))
-                                                     (setf (supersonic-poller-snapshot poller) snapshot)
-                                                     (setf (supersonic-poller-live poller) t)
-                                                     (setf (supersonic-poller-failing poller) nil)
-                                                     (when (supersonic-poller-on-landed poller)
-                                                       (setq then (funcall (supersonic-poller-on-landed poller) previous snapshot)))
-                                                     (supersonic-poller-announce poller (not was-live))))))
+              (if failure
+                  (progn
+                    (setf (supersonic-poller-live poller) nil)
+                    (when (supersonic-poller-on-failure poller)
+                      (funcall (supersonic-poller-on-failure poller)))
+                    (unless (supersonic-poller-failing poller)
+                      (setf (supersonic-poller-failing poller) t)
+                      (supersonic--report-async-error (supersonic-poller-description poller) failure)
+                      (run-hooks 'supersonic-playback-track-change-hook)))
+                (setf (supersonic-poller-snapshot poller) snapshot)
+                (setf (supersonic-poller-live poller) t)
+                (setf (supersonic-poller-failing poller) nil)
+                (when (supersonic-poller-on-landed poller)
+                  (setq then (funcall (supersonic-poller-on-landed poller) previous snapshot)))
+                (supersonic-poller-announce poller (not was-live))))))
       (setf (supersonic-poller-in-flight poller) nil)
       (aio-resolve done #'ignore))
     (when then

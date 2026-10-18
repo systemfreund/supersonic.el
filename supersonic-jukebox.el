@@ -149,12 +149,10 @@ The value comes from the latest poll."
 
 (aio-defun supersonic-jukebox--start (ids)
   "Replace the jukebox playlist with IDS and start playing."
-  (supersonic--with-async-error-handling
-   nil
-   "start jukebox playback"
-   (aio-await (supersonic-jukebox--request "set" (supersonic-jukebox--id-query ids)))
-   (aio-await (supersonic-jukebox--request "start"))
-   (aio-await (supersonic-jukebox--poll))))
+  (supersonic--with-async-error-handling nil "start jukebox playback"
+    (aio-await (supersonic-jukebox--request "set" (supersonic-jukebox--id-query ids)))
+    (aio-await (supersonic-jukebox--request "start"))
+    (aio-await (supersonic-jukebox--poll))))
 
 (defun supersonic-jukebox-start (ids)
   "Replace the jukebox playlist with IDS and start playing immediately."
@@ -163,22 +161,21 @@ The value comes from the latest poll."
 (aio-defun supersonic-jukebox--enqueue (ids)
   "Append IDS to the jukebox playlist.
 Start playing them if the playlist was empty or played to its end."
-  (supersonic--with-async-error-handling
-   nil "enqueue on the jukebox"
-   (aio-await (supersonic-jukebox--poll))
-   (let* ((snapshot (supersonic-jukebox--snapshot))
-          (length (length (plist-get snapshot :entries)))
-          (finished (and (not (plist-get snapshot :playing))
-                         (eql (plist-get snapshot :current-index) (1- length))
-                         (eql (plist-get snapshot :position) 0))))
-     (aio-await (supersonic-jukebox--request "add" (supersonic-jukebox--id-query ids)))
-     (cond
-      ((zerop length)
-       (aio-await (supersonic-jukebox--request "start")))
-      (finished
-       (aio-await (supersonic-jukebox--request "skip" `(("index" . ,(number-to-string length)))))
-       (aio-await (supersonic-jukebox--request "start")))))
-   (aio-await (supersonic-jukebox--poll))))
+  (supersonic--with-async-error-handling nil "enqueue on the jukebox"
+    (aio-await (supersonic-jukebox--poll))
+    (let* ((snapshot (supersonic-jukebox--snapshot))
+           (length (length (plist-get snapshot :entries)))
+           (finished (and (not (plist-get snapshot :playing))
+                          (eql (plist-get snapshot :current-index) (1- length))
+                          (eql (plist-get snapshot :position) 0))))
+      (aio-await (supersonic-jukebox--request "add" (supersonic-jukebox--id-query ids)))
+      (cond
+       ((zerop length)
+        (aio-await (supersonic-jukebox--request "start")))
+       (finished
+        (aio-await (supersonic-jukebox--request "skip" `(("index" . ,(number-to-string length)))))
+        (aio-await (supersonic-jukebox--request "start")))))
+    (aio-await (supersonic-jukebox--poll))))
 
 (defun supersonic-jukebox-enqueue (ids)
   "Append IDS to the jukebox playlist, playing them if nothing is left to play."
@@ -186,14 +183,13 @@ Start playing them if the playlist was empty or played to its end."
 
 (aio-defun supersonic-jukebox--toggle-play ()
   "Start or stop the jukebox."
-  (supersonic--with-async-error-handling
-   nil "toggle jukebox playback"
-   (aio-await
-    (supersonic-jukebox--request
-     (if (plist-get (supersonic-jukebox--snapshot) :playing)
-         "stop"
-       "start")))
-   (aio-await (supersonic-jukebox--poll))))
+  (supersonic--with-async-error-handling nil "toggle jukebox playback"
+    (aio-await
+     (supersonic-jukebox--request
+      (if (plist-get (supersonic-jukebox--snapshot) :playing)
+          "stop"
+        "start")))
+    (aio-await (supersonic-jukebox--poll))))
 
 (defun supersonic-jukebox-toggle-play ()
   "Toggle between playing and paused on the jukebox."
@@ -201,14 +197,13 @@ Start playing them if the playlist was empty or played to its end."
 
 (aio-defun supersonic-jukebox--next ()
   "Skip the jukebox to the next entry, if there is one."
-  (supersonic--with-async-error-handling
-   nil "skip to the next jukebox track"
-   (let* ((snapshot (supersonic-jukebox--snapshot))
-          (index (1+ (or (plist-get snapshot :current-index) -1)))
-          (length (length (plist-get snapshot :entries))))
-     (when (< index length)
-       (aio-await (supersonic-jukebox--request "skip" `(("index" . ,(number-to-string index)))))))
-   (aio-await (supersonic-jukebox--poll))))
+  (supersonic--with-async-error-handling nil "skip to the next jukebox track"
+    (let* ((snapshot (supersonic-jukebox--snapshot))
+           (index (1+ (or (plist-get snapshot :current-index) -1)))
+           (length (length (plist-get snapshot :entries))))
+      (when (< index length)
+        (aio-await (supersonic-jukebox--request "skip" `(("index" . ,(number-to-string index)))))))
+    (aio-await (supersonic-jukebox--poll))))
 
 (defun supersonic-jukebox-next ()
   "Skip to the next track in the jukebox playlist."
@@ -216,12 +211,11 @@ Start playing them if the playlist was empty or played to its end."
 
 (aio-defun supersonic-jukebox--prev ()
   "Skip the jukebox to the previous entry, if there is one."
-  (supersonic--with-async-error-handling
-   nil "skip to the previous jukebox track"
-   (let ((index (1- (or (plist-get (supersonic-jukebox--snapshot) :current-index) -1))))
-     (when (>= index 0)
-       (aio-await (supersonic-jukebox--request "skip" `(("index" . ,(number-to-string index)))))))
-   (aio-await (supersonic-jukebox--poll))))
+  (supersonic--with-async-error-handling nil "skip to the previous jukebox track"
+    (let ((index (1- (or (plist-get (supersonic-jukebox--snapshot) :current-index) -1))))
+      (when (>= index 0)
+        (aio-await (supersonic-jukebox--request "skip" `(("index" . ,(number-to-string index)))))))
+    (aio-await (supersonic-jukebox--poll))))
 
 (defun supersonic-jukebox-prev ()
   "Go to the previous track in the jukebox playlist."
@@ -229,15 +223,14 @@ Start playing them if the playlist was empty or played to its end."
 
 (aio-defun supersonic-jukebox--seek (offset)
   "Seek OFFSET seconds from the jukebox's current position."
-  (supersonic--with-async-error-handling
-   nil "seek the jukebox"
-   (let* ((index (or (plist-get (supersonic-jukebox--snapshot) :current-index) -1))
-          (position (or (supersonic-jukebox--position) 0))
-          (target (max 0 (round (+ position offset)))))
-     (aio-await
-      (supersonic-jukebox--request
-       "skip" `(("index" . ,(number-to-string index)) ("offset" . ,(number-to-string target))))))
-   (aio-await (supersonic-poller-finish-seek supersonic-jukebox--poller))))
+  (supersonic--with-async-error-handling nil "seek the jukebox"
+    (let* ((index (or (plist-get (supersonic-jukebox--snapshot) :current-index) -1))
+           (position (or (supersonic-jukebox--position) 0))
+           (target (max 0 (round (+ position offset)))))
+      (aio-await
+       (supersonic-jukebox--request
+        "skip" `(("index" . ,(number-to-string index)) ("offset" . ,(number-to-string target))))))
+    (aio-await (supersonic-poller-finish-seek supersonic-jukebox--poller))))
 
 (defun supersonic-jukebox-seek (offset)
   "Seek OFFSET seconds relative to the current position on the jukebox."
@@ -245,16 +238,15 @@ Start playing them if the playlist was empty or played to its end."
 
 (aio-defun supersonic-jukebox--seek-fraction (fraction)
   "Seek the jukebox to FRACTION, between 0.0 and 1.0, of the current track."
-  (supersonic--with-async-error-handling
-   nil "seek the jukebox"
-   (let* ((snapshot (supersonic-jukebox--snapshot))
-          (index (or (plist-get snapshot :current-index) -1))
-          (duration (or (plist-get snapshot :duration) 0))
-          (target (round (* fraction duration))))
-     (aio-await
-      (supersonic-jukebox--request
-       "skip" `(("index" . ,(number-to-string index)) ("offset" . ,(number-to-string target))))))
-   (aio-await (supersonic-poller-finish-seek supersonic-jukebox--poller))))
+  (supersonic--with-async-error-handling nil "seek the jukebox"
+    (let* ((snapshot (supersonic-jukebox--snapshot))
+           (index (or (plist-get snapshot :current-index) -1))
+           (duration (or (plist-get snapshot :duration) 0))
+           (target (round (* fraction duration))))
+      (aio-await
+       (supersonic-jukebox--request
+        "skip" `(("index" . ,(number-to-string index)) ("offset" . ,(number-to-string target))))))
+    (aio-await (supersonic-poller-finish-seek supersonic-jukebox--poller))))
 
 (defun supersonic-jukebox-seek-fraction (fraction)
   "Seek the jukebox to FRACTION, between 0.0 and 1.0, of the current track."
@@ -262,10 +254,9 @@ Start playing them if the playlist was empty or played to its end."
 
 (aio-defun supersonic-jukebox--stop ()
   "Stop the jukebox."
-  (supersonic--with-async-error-handling
-   nil "stop the jukebox"
-   (aio-await (supersonic-jukebox--request "stop"))
-   (aio-await (supersonic-jukebox--poll))))
+  (supersonic--with-async-error-handling nil "stop the jukebox"
+    (aio-await (supersonic-jukebox--request "stop"))
+    (aio-await (supersonic-jukebox--poll))))
 
 (defun supersonic-jukebox-stop ()
   "Stop playback on the jukebox."

@@ -113,8 +113,8 @@ Emacs 28 lacks `string-pixel-width', so estimate it there."
   (if (fboundp 'string-pixel-width)
       (string-pixel-width
        (propertize text 'face
-                    (list :weight (face-attribute 'supersonic-now-playing-art-overlay-label :weight)
-                          :font (font-spec :size font-size :family (supersonic-art-overlay-font-family)))))
+                   (list :weight (face-attribute 'supersonic-now-playing-art-overlay-label :weight)
+                         :font (font-spec :size font-size :family (supersonic-art-overlay-font-family)))))
     (* (length text) font-size 0.6)))
 
 (defun supersonic-art-scroll-pad (size)

@@ -993,30 +993,29 @@ PAUSED, POSITION in seconds, TRACK-ID and QUEUE-PLACE, (POSITION
 (aio-defun supersonic-now-playing-fetch-and-render (buff)
   "Show the current track of the active backend in BUFF.
 If the track can't be looked up, show its id."
-  (supersonic--with-async-error-handling
-   buff "refresh the now-playing buffer"
-   (if (supersonic-playback-live-p)
-       (let ((track-id (aio-await (supersonic-playback-status 'track-id))))
-         (if track-id
-             (let* ((outcome (aio-await (aio-catch (supersonic-provider-track track-id))))
-                    (song
-                     (if (eq (car outcome) :success)
-                         (cdr outcome)
-                       (list :id track-id :title track-id))))
-               (when (and (supersonic-art-available-p) (plist-get song :art))
-                 (aio-await (aio-catch (supersonic--fetch-art (plist-get song :art) supersonic-now-playing-art-size))))
-               ;; After the art fetch, which may be slow, so they are current.
-               (let* ((position-promise (supersonic-playback-status 'position))
-                      (paused-promise (supersonic-playback-status 'paused))
-                      (queue-promise (supersonic-playback-queue))
-                      (position (aio-await position-promise))
-                      (paused (aio-await paused-promise))
-                      (queue-place (supersonic-now-playing--current-queue-place (aio-await queue-promise))))
-                 (supersonic-now-playing--render
-                  buff song paused position track-id queue-place)
-                 (supersonic-now-playing-maybe-fetch-waveform buff position)))
-           (supersonic-now-playing--render buff nil nil nil nil)))
-     (supersonic-now-playing--render buff nil nil nil nil))))
+  (supersonic--with-async-error-handling buff "refresh the now-playing buffer"
+    (if (supersonic-playback-live-p)
+        (let ((track-id (aio-await (supersonic-playback-status 'track-id))))
+          (if track-id
+              (let* ((outcome (aio-await (aio-catch (supersonic-provider-track track-id))))
+                     (song
+                      (if (eq (car outcome) :success)
+                          (cdr outcome)
+                        (list :id track-id :title track-id))))
+                (when (and (supersonic-art-available-p) (plist-get song :art))
+                  (aio-await (aio-catch (supersonic--fetch-art (plist-get song :art) supersonic-now-playing-art-size))))
+                ;; After the art fetch, which may be slow, so they are current.
+                (let* ((position-promise (supersonic-playback-status 'position))
+                       (paused-promise (supersonic-playback-status 'paused))
+                       (queue-promise (supersonic-playback-queue))
+                       (position (aio-await position-promise))
+                       (paused (aio-await paused-promise))
+                       (queue-place (supersonic-now-playing--current-queue-place (aio-await queue-promise))))
+                  (supersonic-now-playing--render
+                   buff song paused position track-id queue-place)
+                  (supersonic-now-playing-maybe-fetch-waveform buff position)))
+            (supersonic-now-playing--render buff nil nil nil nil)))
+      (supersonic-now-playing--render buff nil nil nil nil))))
 
 (defun supersonic-now-playing--show-waveform (buff track-id envelope)
   "Show ENVELOPE in BUFF, if TRACK-ID is still its current track."
@@ -1111,12 +1110,11 @@ Each entry's id is (ID . TYPE), TYPE being \"artist\", \"album\" or
 
 (aio-defun supersonic-search-refresh (query buff)
   "Show the search results for QUERY in BUFF."
-  (supersonic--with-async-error-handling
-   buff "search"
-   (let ((results (aio-await (supersonic-provider-search query))))
-     (when (buffer-live-p buff)
-       (with-current-buffer buff
-         (supersonic--print-list (supersonic-search-rows results)))))))
+  (supersonic--with-async-error-handling buff "search"
+    (let ((results (aio-await (supersonic-provider-search query))))
+      (when (buffer-live-p buff)
+        (with-current-buffer buff
+          (supersonic--print-list (supersonic-search-rows results)))))))
 
 (defun supersonic-open-search-appropriate-result (result)
   "Open the search RESULT, an (ID . TYPE)."
@@ -1183,12 +1181,11 @@ Each entry's id is (ID . TYPE), TYPE being \"artist\", \"album\" or
 
 (aio-defun supersonic-tracks-refresh (id buff)
   "Show the tracks of album ID in BUFF."
-  (supersonic--with-async-error-handling
-   buff "fetch tracks"
-   (let ((tracks (aio-await (supersonic-provider-album-tracks id))))
-     (when (buffer-live-p buff)
-       (with-current-buffer buff
-         (supersonic--print-list (supersonic-tracks-rows tracks)))))))
+  (supersonic--with-async-error-handling buff "fetch tracks"
+    (let ((tracks (aio-await (supersonic-provider-album-tracks id))))
+      (when (buffer-live-p buff)
+        (with-current-buffer buff
+          (supersonic--print-list (supersonic-tracks-rows tracks)))))))
 
 (defun supersonic-play-tracks ()
   "Play the track at point and the ones after it."
@@ -1255,25 +1252,23 @@ Each entry's id is (ID . TYPE), TYPE being \"artist\", \"album\" or
 
 (aio-defun supersonic-albums-refresh (id buff)
   "Show the albums of artist ID in BUFF."
-  (supersonic--with-async-error-handling
-   buff "fetch albums"
-   (let ((albums (aio-await (supersonic-provider-artist-albums id))))
-     (when (buffer-live-p buff)
-       (with-current-buffer buff
-         (supersonic--print-list (supersonic-albums-rows albums))
-         (supersonic-get-images tabulated-list-entries (supersonic--arts albums) 2 buff))))))
+  (supersonic--with-async-error-handling buff "fetch albums"
+    (let ((albums (aio-await (supersonic-provider-artist-albums id))))
+      (when (buffer-live-p buff)
+        (with-current-buffer buff
+          (supersonic--print-list (supersonic-albums-rows albums))
+          (supersonic-get-images tabulated-list-entries (supersonic--arts albums) 2 buff))))))
 
 
 (aio-defun supersonic-albums-refresh-type (type buff)
   "Show the albums of list TYPE in BUFF.
 TYPE is one of `supersonic-provider-album-list-types'."
-  (supersonic--with-async-error-handling
-   buff "fetch albums"
-   (let ((albums (aio-await (supersonic-provider-album-list type supersonic-album-list-count))))
-     (when (buffer-live-p buff)
-       (with-current-buffer buff
-         (supersonic--print-list (supersonic-albums-type-rows albums))
-         (supersonic-get-images tabulated-list-entries (supersonic--arts albums) 2 buff))))))
+  (supersonic--with-async-error-handling buff "fetch albums"
+    (let ((albums (aio-await (supersonic-provider-album-list type supersonic-album-list-count))))
+      (when (buffer-live-p buff)
+        (with-current-buffer buff
+          (supersonic--print-list (supersonic-albums-type-rows albums))
+          (supersonic-get-images tabulated-list-entries (supersonic--arts albums) 2 buff))))))
 
 (defun supersonic-open-tracks ()
   "Show the tracks of the album at point."
@@ -1282,12 +1277,11 @@ TYPE is one of `supersonic-provider-album-list-types'."
 
 (aio-defun supersonic-enqueue-album ()
   "Add all the tracks of the album at point to the play queue." (interactive)
-  (supersonic--with-async-error-handling
-   nil "enqueue album"
-   (let* ((track-id (tabulated-list-get-id))
-          (ids (aio-await (supersonic-get-album-track-ids track-id))))
-     (supersonic-playback-enqueue ids)
-     (message "Added %d track(s) to the queue" (length ids)))))
+  (supersonic--with-async-error-handling nil "enqueue album"
+    (let* ((track-id (tabulated-list-get-id))
+           (ids (aio-await (supersonic-get-album-track-ids track-id))))
+      (supersonic-playback-enqueue ids)
+      (message "Added %d track(s) to the queue" (length ids)))))
 
 (defvar supersonic-album-mode-map
   (let ((map (make-sparse-keymap)))
@@ -1368,14 +1362,13 @@ TYPE is one of `supersonic-provider-album-list-types', or its name."
 
 (aio-defun supersonic-artists-refresh (buff)
   "Show the artists in BUFF."
-  (supersonic--with-async-error-handling
-   buff "fetch artists"
-   (let ((artists (aio-await (supersonic-provider-artists))))
-     (when (buffer-live-p buff)
-       (with-current-buffer buff
-         (supersonic--print-list (supersonic-artists-rows artists))
-         (when (> (length tabulated-list-format) 1)
-           (supersonic-art-fill-visible artists 1 supersonic-artist-art-size buff)))))))
+  (supersonic--with-async-error-handling buff "fetch artists"
+    (let ((artists (aio-await (supersonic-provider-artists))))
+      (when (buffer-live-p buff)
+        (with-current-buffer buff
+          (supersonic--print-list (supersonic-artists-rows artists))
+          (when (> (length tabulated-list-format) 1)
+            (supersonic-art-fill-visible artists 1 supersonic-artist-art-size buff)))))))
 
 (defun supersonic-artists-revert ()
   "Refresh the artist list."
@@ -1422,13 +1415,12 @@ It has an Art column only if artist images are shown."
 
 (aio-defun supersonic-podcasts-refresh (buff)
   "Show the podcasts in BUFF."
-  (supersonic--with-async-error-handling
-   buff "fetch podcasts"
-   (let ((podcasts (aio-await (supersonic-provider-podcasts))))
-     (when (buffer-live-p buff)
-       (with-current-buffer buff
-         (supersonic--print-list (supersonic-podcasts-rows podcasts))
-         (supersonic-get-images tabulated-list-entries (supersonic--arts podcasts) 1 buff))))))
+  (supersonic--with-async-error-handling buff "fetch podcasts"
+    (let ((podcasts (aio-await (supersonic-provider-podcasts))))
+      (when (buffer-live-p buff)
+        (with-current-buffer buff
+          (supersonic--print-list (supersonic-podcasts-rows podcasts))
+          (supersonic-get-images tabulated-list-entries (supersonic--arts podcasts) 1 buff))))))
 
 
 (defun supersonic-open-podcast-episodes ()
@@ -1446,10 +1438,9 @@ It has an Art column only if artist images are shown."
 
 (aio-defun supersonic--add-podcast (url)
   "Subscribe to the podcast feed at URL, reporting the outcome."
-  (supersonic--with-async-error-handling
-   nil "add podcast"
-   (aio-await (supersonic-provider-add-podcast url))
-   (message "Podcast added")))
+  (supersonic--with-async-error-handling nil "add podcast"
+    (aio-await (supersonic-provider-add-podcast url))
+    (message "Podcast added")))
 
 (transient-define-prefix supersonic-podcast-help ()
   "Help transient for podcasts."
@@ -1506,12 +1497,11 @@ It has an Art column only if artist images are shown."
 
 (aio-defun supersonic-podcasts-episode-refresh (id buff)
   "Show the episodes of podcast ID in BUFF."
-  (supersonic--with-async-error-handling
-   buff "fetch episodes"
-   (let ((episodes (aio-await (supersonic-provider-podcast-episodes id))))
-     (when (buffer-live-p buff)
-       (with-current-buffer buff
-         (supersonic--print-list (supersonic-podcast-episodes-rows episodes)))))))
+  (supersonic--with-async-error-handling buff "fetch episodes"
+    (let ((episodes (aio-await (supersonic-provider-podcast-episodes id))))
+      (when (buffer-live-p buff)
+        (with-current-buffer buff
+          (supersonic--print-list (supersonic-podcast-episodes-rows episodes)))))))
 
 (defun supersonic-download-podcast-episode ()
   "Have the server download the podcast episode at point."
@@ -1521,10 +1511,9 @@ It has an Art column only if artist images are shown."
 
 (aio-defun supersonic--download-podcast-episode (id)
   "Start the download of episode ID, reporting the outcome."
-  (supersonic--with-async-error-handling
-   nil "download episode"
-   (aio-await (supersonic-provider-download-podcast-episode id))
-   (message "Episode download started")))
+  (supersonic--with-async-error-handling nil "download episode"
+    (aio-await (supersonic-provider-download-podcast-episode id))
+    (message "Episode download started")))
 
 (transient-define-prefix supersonic-podcast-episode-help ()
   "Help transient for podcast episodes."
@@ -1563,8 +1552,8 @@ It has an Art column only if artist images are shown."
 
 (defconst supersonic--provider-list-modes
   '(supersonic-artist-mode supersonic-album-mode supersonic-album-type-mode
-    supersonic-tracks-mode supersonic-search-mode
-    supersonic-podcast-mode supersonic-podcast-episodes-mode)
+                           supersonic-tracks-mode supersonic-search-mode
+                           supersonic-podcast-mode supersonic-podcast-episodes-mode)
   "Major modes of the list buffers showing a provider's items.
 `supersonic-provider-switch' kills these buffers.")
 

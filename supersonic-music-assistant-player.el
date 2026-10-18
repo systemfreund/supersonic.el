@@ -242,8 +242,8 @@ seconds as of `:polled-at'; `:duration'; `:items-key'; and
   "Run queue COMMAND with ARGS on TARGET, then poll.
 Report a failure as failing to DESCRIPTION."
   (supersonic--with-async-error-handling nil description
-                                         (aio-await (supersonic-music-assistant-player--send target command args))
-                                         (aio-await (supersonic-music-assistant-player--poll))))
+    (aio-await (supersonic-music-assistant-player--send target command args))
+    (aio-await (supersonic-music-assistant-player--poll))))
 
 (defun supersonic-music-assistant-player--with-chosen-target (description sole-format action)
   "Call ACTION with the target of a play command.
@@ -271,15 +271,15 @@ a failure as failing to DESCRIPTION."
   "Add IDS to the queue of TARGET.
 Start playing if the queue was empty or played to its end."
   (supersonic--with-async-error-handling nil "enqueue on the Music Assistant player"
-                                         (aio-await (supersonic-music-assistant-player--poll))
-                                         (let* ((snapshot (supersonic-music-assistant-player--snapshot))
-                                                (idle (or (null (plist-get snapshot :entries)) (plist-get snapshot :ended))))
-                                           (aio-await (supersonic-music-assistant-player--send
-                                                       target "player_queues/play_media"
-                                                       `(("media" . ,(vconcat ids)) ("option" . "add"))))
-                                           (when idle
-                                             (aio-await (supersonic-music-assistant-player--send target "player_queues/play"))))
-                                         (aio-await (supersonic-music-assistant-player--poll))))
+    (aio-await (supersonic-music-assistant-player--poll))
+    (let* ((snapshot (supersonic-music-assistant-player--snapshot))
+           (idle (or (null (plist-get snapshot :entries)) (plist-get snapshot :ended))))
+      (aio-await (supersonic-music-assistant-player--send
+                  target "player_queues/play_media"
+                  `(("media" . ,(vconcat ids)) ("option" . "add"))))
+      (when idle
+        (aio-await (supersonic-music-assistant-player--send target "player_queues/play"))))
+    (aio-await (supersonic-music-assistant-player--poll))))
 
 (defun supersonic-music-assistant-player-enqueue (ids)
   "Add IDS to the player's queue.
@@ -316,11 +316,11 @@ Start playing if the queue was empty or played to its end."
 (aio-defun supersonic-music-assistant-player--seek-to (target position)
   "Seek TARGET's current entry to POSITION seconds."
   (supersonic--with-async-error-handling nil "seek the Music Assistant player"
-                                         (let ((duration (plist-get (supersonic-music-assistant-player--snapshot) :duration)))
-                                           (aio-await (supersonic-music-assistant-player--send
-                                                       target "player_queues/seek"
-                                                       `(("position" . ,(max 0 (round (if duration (min position duration) position))))))))
-                                         (aio-await (supersonic-poller-finish-seek supersonic-music-assistant-player--poller))))
+    (let ((duration (plist-get (supersonic-music-assistant-player--snapshot) :duration)))
+      (aio-await (supersonic-music-assistant-player--send
+                  target "player_queues/seek"
+                  `(("position" . ,(max 0 (round (if duration (min position duration) position))))))))
+    (aio-await (supersonic-poller-finish-seek supersonic-music-assistant-player--poller))))
 
 (defun supersonic-music-assistant-player-seek (offset)
   "Seek OFFSET seconds from the player's current position."
@@ -398,7 +398,7 @@ chosen (:id ID :name NAME), or nil if none was chosen."
 See `supersonic-music-assistant-player--choose' for SOLE-FORMAT.
 Report a failure as failing to DESCRIPTION."
   (supersonic--with-async-error-handling nil description
-                                         (aio-await (supersonic-music-assistant-player--choose connection action sole-format))))
+    (aio-await (supersonic-music-assistant-player--choose connection action sole-format))))
 
 ;; An explicit cookie: the autoloads generator does not know `aio-defun'
 ;; and would copy the whole definition, which fails to load without aio.
@@ -408,11 +408,11 @@ Report a failure as failing to DESCRIPTION."
 The choice applies to this session; you are asked whether to save it."
   (interactive)
   (supersonic--with-async-error-handling nil "select a Music Assistant player"
-                                         (aio-await (supersonic-music-assistant-player--choose
-                                                     (supersonic-music-assistant--connection)
-                                                     (aio-lambda (_target)
-                                                       (when (eq supersonic-playback-backend 'music-assistant)
-                                                         (aio-await (supersonic-music-assistant-player--poll))))))))
+    (aio-await (supersonic-music-assistant-player--choose
+                (supersonic-music-assistant--connection)
+                (aio-lambda (_target)
+                  (when (eq supersonic-playback-backend 'music-assistant)
+                    (aio-await (supersonic-music-assistant-player--poll))))))))
 
 (supersonic-poller-register 'supersonic-music-assistant-player--poller)
 
